@@ -38,10 +38,10 @@ const ROCK_COLORS: [string, string][] = [
 ]
 
 /** Bushes, logs, boulders and small-rock clusters per run. */
-const BUSH_COUNT = 28
-const LOG_COUNT = 9
-const BOULDER_COUNT = 12
-const ROCK_CLUSTER_COUNT = 22
+const BUSH_COUNT = 14
+const LOG_COUNT = 5
+const BOULDER_COUNT = 6
+const ROCK_CLUSTER_COUNT = 11
 
 /** Parallax settings per background layer, farthest first (spacing is the average gap between trunks in view heights; small so trunks and crowns fill sightlines). */
 const FOREST_LAYERS = [
@@ -395,6 +395,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE),
     forest: spawnForest(width, viewWidth, viewHeight),
     npcs: [],
+    acornDropTimer: 0,
   }
   world.npcs = createNpcs(world, playerSize)
   return world

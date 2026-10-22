@@ -5,7 +5,7 @@ export const PLAYER_VIEW_FRACTION = 1 / 8
 export const ACORN_PLAYER_FRACTION = 1 / 4
 
 /** World width is this many times the viewport width. */
-export const WORLD_WIDTH_MULTIPLIER = 10
+export const WORLD_WIDTH_MULTIPLIER = 5
 
 /**
  * Extra world height above the altitude where the camera no longer
@@ -17,10 +17,10 @@ export const WORLD_TOP_EXTRA_FACTOR = 0.35
 export const GROUND_VIEW_FRACTION = 0.04
 
 /** Oak trees spawned when a run starts. */
-export const OAK_TREE_COUNT = 10
+export const OAK_TREE_COUNT = 5
 
 /** Acorns scattered on the ground at the start of a run. */
-export const ACORN_COUNT = 32
+export const ACORN_COUNT = 16
 
 /** Vertical climb/descend speed as a multiple of player size. */
 export const VERTICAL_SPEED_IN_SIZES = 2.7
@@ -28,8 +28,41 @@ export const VERTICAL_SPEED_IN_SIZES = 2.7
 /** Horizontal speed is twice the vertical speed. */
 export const MOVE_SPEED_IN_SIZES = VERTICAL_SPEED_IN_SIZES * 2
 
-/** Walking speed as a fraction of flying speed. */
+/** Seconds one hop takes; hops follow one another without pausing while A/D stay held. */
+export const HOP_DURATION = 0.28
+
+/** Seconds the pick-up animation lasts (the acorn changes hands halfway). */
+export const PICKUP_DURATION = 0.3
+
+/** Seconds the bury and dig-up animations last (the acorn changes hands halfway). */
+export const BURY_DURATION = 0.9
+
+/** Seconds an NPC pauses after picking up an acorn, after landing to bury, and before exploring. */
+export const NPC_WAIT_SECONDS = 1
+
+/**
+ * Chance per second that an oak drops a group of acorns. With 5 oaks and 3-10 acorns per group this
+ * is about 1 acorn per minute worldwide, matching what the 4 NPC jays eat once the starting acorns
+ * are gone (each hungry jay eats roughly one acorn a minute; in headless runs they ate 5-8 of the
+ * starting acorns in the first two minutes, then ran out).
+ */
+export const ACORN_DROP_CHANCE_PER_SECOND = 0.0005
+
+/** Acorns per dropped group. */
+export const ACORN_GROUP_MIN = 3
+export const ACORN_GROUP_MAX = 10
+
+/** No new acorns drop while the world already holds this many. */
+export const ACORN_WORLD_CAP = 160
+
+/** Walking speed as a fraction of flying speed (the average hopping speed). */
 export const WALK_SPEED_FACTOR = 0.5
+
+/** Hop length on the ground, as a multiple of player size: hopping speed is half the flying speed. */
+export const HOP_LENGTH_IN_SIZES = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * HOP_DURATION
+
+/** Where the beak tip touches the ground in a pecking pose, in sprite units ahead of the bird's center. */
+export const BEAK_REACH_X = 54
 
 /**
  * Takeoff hover gap (ground to sprite bottom) as a multiple of player size:
@@ -38,7 +71,7 @@ export const WALK_SPEED_FACTOR = 0.5
 export const HOVER_OFFSET_IN_SIZES = 140 / 48 / 3
 
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
-export const REACH_IN_SIZES = 0.8
+export const REACH_IN_SIZES = 0.9
 
 /** Fall acceleration of a dropped acorn, in player sizes per second squared. */
 export const ACORN_GRAVITY_IN_SIZES = 12
@@ -56,19 +89,19 @@ export const GROUND_COLOR = '#7b5232'
 export const FOREST_HAZE_COLOR = '#cfe2c6'
 
 /** Seconds for a full hunger bar to drain to empty. */
-export const HUNGER_DRAIN_SECONDS = 120
+export const HUNGER_DRAIN_SECONDS = 60
 
 /** Hunger level (0-1) below which the bar turns yellow and eating is allowed. */
-export const HUNGER_THRESHOLD = 0.5
+export const HUNGER_THRESHOLD = 2 / 3
 
-/** Hunger restored by eating one acorn (half of a full bar). */
-export const ACORN_NUTRITION = 0.5
+/** Hunger restored by eating one acorn (a third of a full bar). */
+export const ACORN_NUTRITION = 1 / 3
 
 /** Seconds the eating animation lasts. */
 export const EAT_DURATION = 0.7
 
 /** NPC blue jays spawned per run. */
-export const NPC_COUNT = 5
+export const NPC_COUNT = 4
 
 /** NPC viewing distance as a fraction of the viewport width. */
 export const NPC_VIEW_FRACTION = 1 / 3
@@ -82,11 +115,11 @@ export const NPC_BURIAL_SPAN_VIEWS = 2
 /** Leaf tones for foreground oaks, dark to light (distant layers blend these toward haze). */
 export const OAK_TONES = ['#1f5a2b', '#2a6e34', '#348040', '#439150']
 
-/** NPCs idle instead of exploring while hunger is above this. */
-export const NPC_IDLE_HUNGER = 0.8
+/** NPC jays fly and hop at this fraction of the main bird's speed. */
+export const NPC_SPEED_SCALE = 0.75
 
-/** Chance per second that a not-so-full idle NPC starts exploring. */
-export const NPC_IDLE_EXIT_PROBABILITY = 0.1
+/** NPCs idle instead of exploring while hunger is above this; below it they explore. */
+export const NPC_IDLE_HUNGER = 0.9
 
 /** Trees, rocks, bushes, logs and leaf litter are drawn this many times bigger than the base design. */
 export const SCENERY_SCALE = 2

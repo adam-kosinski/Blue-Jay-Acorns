@@ -1,12 +1,12 @@
 import { useEffect, useRef, type MouseEvent } from 'react'
-import { handleAcornActions, updateAcorns } from './acorns'
+import { handleAcornActions, updateAcorns, updateAction, updateTreeDrops } from './acorns'
 import { cameraForPlayer } from './camera'
 import { acornRadiusForPlayer, playerSizeForView } from './constants'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, syncPlayerToWorld, updatePlayer } from './player'
-import { renderScene } from './render'
+import { renderScene, warmUpScene } from './render'
 import { groundYAt } from './terrain'
 import type { Player, World } from './types'
 import { createWorld } from './world'
@@ -35,6 +35,8 @@ export function GameCanvas() {
     let world: World = createWorld(window.innerWidth, window.innerHeight)
     let player: Player = createPlayer(world, playerSizeForView(window.innerHeight))
     let animationId = 0
+    let gameOver = false
+    let warmUp: Generator<void> | null = warmUpScene(world, player, window.devicePixelRatio || 1)
     let lastTime = performance.now()
 
     /**
@@ -43,6 +45,8 @@ export function GameCanvas() {
     function regenerate(): void {
       world = createWorld(window.innerWidth, window.innerHeight)
       player = createPlayer(world, playerSizeForView(window.innerHeight))
+      warmUp = warmUpScene(world, player, window.devicePixelRatio || 1)
+      gameOver = false
     }
 
     restartRef.current = regenerate
@@ -83,14 +87,23 @@ export function GameCanvas() {
 
       const width = window.innerWidth
       const height = window.innerHeight
-      updatePlayer(player, keys, dt, world)
-      handleAcornActions(player, edges, world)
-      updateHunger(player, edges, world, dt)
+      if (warmUp && warmUp.next().done) {
+        warmUp = null
+      }
+      if (!gameOver) {
+        updatePlayer(player, keys, dt, world)
+        updateAction(player, world, dt)
+        handleAcornActions(player, edges, world)
+        updateHunger(player, edges, world, dt)
+        updateNpcs(world, width, dt)
+        updateTreeDrops(world, player.size, dt)
+        updateAcorns(world, player.size, dt)
+        // Running out of food ends the game.
+        gameOver = player.hunger <= 0
+      }
       clearEdges()
-      updateNpcs(world, width, dt)
-      updateAcorns(world, player.size, dt)
       const camera = cameraForPlayer(player, world, width, height)
-      renderScene(ctx, width, height, world, camera, player)
+      renderScene(ctx, width, height, world, camera, player, gameOver)
       animationId = window.requestAnimationFrame(frame)
     }
 

@@ -21,6 +21,31 @@ export type Player = {
   hunger: number
   /** Seconds left in the eating animation (0 when not eating). */
   eatTimer: number
+  /** Seconds since the current hop began; at or past `HOP_DURATION` the bird is not hopping. */
+  hopT: number
+  /** World x where the current hop began. */
+  hopStartX: number
+  /** Direction of the current hop. */
+  hopDir: 1 | -1
+  /** Pick-up, bury or dig-up animation in progress, if any. */
+  action: PlayerAction | null
+}
+
+/** A timed acorn action: the acorn changes hands at the halfway point of the animation. */
+export type PlayerAction = {
+  kind: 'pickup' | 'bury' | 'dig'
+  /** Seconds elapsed. */
+  timer: number
+  duration: number
+  acorn: Acorn
+  /** World x where a buried acorn is placed. */
+  spotX: number
+  /** True once the acorn has changed hands. */
+  transferred: boolean
+  /** Total sideways shift (world px) that brings the beak onto the acorn. */
+  slideTotal: number
+  /** Part of the slide applied so far. */
+  slideApplied: number
 }
 
 /** One-shot key presses (fresh key-downs, not auto-repeat) since the last frame. */
@@ -211,6 +236,12 @@ export type Npc = {
   targetX: number
   /** True once the eat state has tried to start eating. */
   eatAttempted: boolean
+  /** Seconds the NPC pauses (no movement or action) before carrying on. */
+  waitTimer: number
+  /** Short-trip destination while idle, or null to stay put. */
+  idleTargetX: number | null
+  /** Whether the idle trip is flown rather than walked. */
+  idleFly: boolean
 }
 
 /** Generated play space: bounds plus scenery. */
@@ -231,4 +262,6 @@ export type World = {
   rocks: Rock[]
   forest: ForestLayer[]
   npcs: Npc[]
+  /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
+  acornDropTimer: number
 }

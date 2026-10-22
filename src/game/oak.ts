@@ -243,35 +243,25 @@ function drawLeaf(
 }
 
 /**
- * Draws a leafy clump with an irregular, organic outline: a lumpy base blob (stretched and rotated
- * at random), scattered leaves shaded lighter toward the upper left and darker toward the lower
- * right (hanging mostly downward), and a ring of leaves lying along the edge.
+ * Fills one lumpy blob (random radii, stretch, and orientation) and returns its outline corners.
  *
  * @param ctx - 2D canvas context.
  * @param x - Center X.
  * @param y - Center Y.
- * @param r - Rough clump radius.
- * @param tones - Leaf colors from dark to light.
- * @param baseTone - Index of the base blob color.
+ * @param r - Rough radius.
+ * @param color - Fill color.
  * @param rand - Deterministic random source.
- * @param detail - Leaf density from 0 (blob only) to 1 (full).
+ * @returns The outline corner points.
  */
-export function drawLeafyDisk(
+function fillBlob(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
   r: number,
-  tones: string[],
-  baseTone: number,
+  color: string,
   rand: () => number,
-  detail: number,
-): void {
-  const last = tones.length - 1
-  const tone = (i: number): string => tones[Math.max(0, Math.min(last, Math.round(i)))] ?? '#2f7a3a'
-  const leafLen = r * 0.27
-
-  // Lumpy outline: random radii, a random stretch, and a random orientation.
-  const corners = 9
+): [number, number][] {
+  const corners = 8
   const spin = rand() * Math.PI * 2
   const stretch = 0.82 + rand() * 0.4
   const squash = 0.78 + rand() * 0.3
@@ -282,8 +272,7 @@ export function drawLeafyDisk(
     pts.push([x + Math.cos(a) * rad * stretch, y + Math.sin(a) * rad * squash])
   }
   const at = (i: number): [number, number] => pts[((i % corners) + corners) % corners] ?? [x, y]
-
-  ctx.fillStyle = tone(baseTone)
+  ctx.fillStyle = color
   ctx.beginPath()
   const startA = at(corners - 1)
   const startB = at(0)
@@ -295,57 +284,179 @@ export function drawLeafyDisk(
   }
   ctx.closePath()
   ctx.fill()
+  return pts
+}
+
+/**
+ * Draws a leafy clump with an organic, fluffy look: several lumpy sub-blobs leave natural gaps
+ * between them, leaves are scattered throughout (shaded lighter toward the upper left, hanging
+ * mostly downward), and a few leaves straddle each outline so they poke partly outside.
+ *
+ * @param ctx - 2D canvas context.
+ * @param x - Center X.
+ * @param y - Center Y.
+ * @param r - Rough clump radius.
+ * @param tones - Leaf colors from dark to light.
+ * @param baseTone - Index of the base blob color.
+ * @param rand - Deterministic random source.
+ * @param detail - Leaf density from 0 (single plain blob) to 1 (full).
+ * @param overlap - 0 for airy foliage with gaps (trees); toward 1 the sub-blobs pack tighter.
+ */
+export function drawLeafyDisk(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  tones: string[],
+  baseTone: number,
+  rand: () => number,
+  detail: number,
+  overlap = 0,
+): void {
+  const last = tones.length - 1
+  const tone = (i: number): string => tones[Math.max(0, Math.min(last, Math.round(i)))] ?? '#2f7a3a'
+  const base = tone(baseTone)
+
   if (detail < 0.12) {
+    fillBlob(ctx, x, y, r * 0.95, base, rand)
     return
   }
 
-  // Scattered leaves inside the outline (random points in the fan of triangles around the center).
-  const inner = Math.min(36, Math.round(((r * r) / (leafLen * leafLen)) * 0.9 * detail))
-  for (let n = 0; n < inner; n += 1) {
-    const p = at(Math.floor(rand() * corners))
-    const q = at(Math.floor(rand() * corners) + 1)
-    let u = rand()
-    let v = rand()
-    if (u + v > 1) {
-      u = 1 - u
-      v = 1 - v
-    }
-    const lx = x + u * 0.9 * (p[0] - x) + v * 0.9 * (q[0] - x)
-    const ly = y + u * 0.9 * (p[1] - y) + v * 0.9 * (q[1] - y)
-    const light = (-(lx - x) - (ly - y)) / (r * 1.1)
-    drawLeaf(
-      ctx,
-      lx,
-      ly,
-      leafLen * (0.8 + rand() * 0.5),
-      Math.PI + (rand() - 0.5) * 1.5,
-      tone(baseTone + light * 1.5 + (rand() - 0.5) * 1.4),
-      detail >= 0.6,
-    )
+  // Sub-blobs ringed around the center: gaps appear between them and often in the middle.
+  const count = rand() < 0.4 ? 5 : 4
+  const offset = rand() * Math.PI * 2
+  const blobs: { cx: number; cy: number; pts: [number, number][] }[] = []
+  for (let j = 0; j < count; j += 1) {
+    const a = offset + (j / count) * Math.PI * 2 + (rand() - 0.5) * 0.6
+    const dist = r * (0.5 + rand() * 0.18 - overlap * 0.2)
+    const cx = x + Math.cos(a) * dist
+    const cy = y + Math.sin(a) * dist
+    blobs.push({ cx, cy, pts: fillBlob(ctx, cx, cy, r * (0.42 + rand() * 0.1 + overlap * 0.12), base, rand) })
   }
 
-  // Leaves lying along the outline, pointing along the edge, for a soft organic rim.
-  const perEdge = Math.max(1, Math.round((Math.min(34, Math.max(4, ((Math.PI * 2 * r) / (leafLen * 0.8)) * (0.4 + 0.6 * detail))) / corners)))
-  for (let i = 0; i < corners; i += 1) {
-    const p = at(i)
-    const q = at(i + 1)
-    const tx = q[0] - p[0]
-    const ty = q[1] - p[1]
-    for (let m = 0; m < perEdge; m += 1) {
-      const t = (m + rand() * 0.6) / perEdge
-      const ex = x + (p[0] + tx * t - x) * 0.88
-      const ey = y + (p[1] + ty * t - y) * 0.88
+  const leafLen = r * 0.25
+  const innerTotal = Math.min(70, Math.round(((r * r) / (leafLen * leafLen)) * 2.4 * detail))
+  const perBlob = Math.max(1, Math.round(innerTotal / count))
+  const edgeLeaves = Math.max(1, Math.round(1 + 2 * detail))
+
+  for (const blob of blobs) {
+    const corners = blob.pts.length
+    const at = (i: number): [number, number] =>
+      blob.pts[((i % corners) + corners) % corners] ?? [blob.cx, blob.cy]
+
+    // Leaves scattered throughout the blob, not only near its edge.
+    for (let n = 0; n < perBlob; n += 1) {
+      const p = at(Math.floor(rand() * corners))
+      const q = at(Math.floor(rand() * corners) + 1)
+      let u = rand()
+      let v = rand()
+      if (u + v > 1) {
+        u = 1 - u
+        v = 1 - v
+      }
+      const lx = blob.cx + u * (p[0] - blob.cx) + v * (q[0] - blob.cx)
+      const ly = blob.cy + u * (p[1] - blob.cy) + v * (q[1] - blob.cy)
+      const light = (-(lx - x) - (ly - y)) / (r * 1.1)
+      drawLeaf(
+        ctx,
+        lx,
+        ly,
+        leafLen * (0.8 + rand() * 0.5),
+        Math.PI + (rand() - 0.5) * 1.5,
+        tone(baseTone + light * 1.5 + (rand() - 0.5) * 1.4),
+        detail >= 0.6,
+      )
+    }
+
+    // A few leaves centered on the outline, so they stick partly outside for a fluffy edge.
+    for (let m = 0; m < edgeLeaves; m += 1) {
+      const i = Math.floor(rand() * corners)
+      const p = at(i)
+      const q = at(i + 1)
+      const t = rand()
+      const ex = p[0] + (q[0] - p[0]) * t
+      const ey = p[1] + (q[1] - p[1]) * t
       const light = (-(ex - x) - (ey - y)) / (r * 1.1)
       drawLeaf(
         ctx,
         ex,
         ey,
         leafLen * (0.9 + rand() * 0.4),
-        Math.atan2(tx, -ty) + (rand() - 0.5) * 0.5,
+        Math.PI + (rand() - 0.5) * 2 + (ex - blob.cx > 0 ? 0.4 : -0.4),
         tone(baseTone + light * 1.1 + (rand() - 0.5) * 1.2),
         detail >= 0.6,
       )
     }
+  }
+}
+
+/**
+ * Adds subtle bark texture like the logs have: a few straight dark grain lines running unbroken
+ * up the trunk (joined smoothly at the trunk's joints), plus one line on each thick branch that
+ * starts outside the trunk so nothing is drawn over the junctions.
+ *
+ * @param ctx - 2D canvas context (tree space).
+ * @param shape - Generated tree.
+ */
+function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
+  const trunk = shape.segments.slice(0, 3)
+  const first = trunk[0]
+  if (!first) {
+    return
+  }
+  ctx.strokeStyle = 'rgba(40, 20, 5, 0.38)'
+  ctx.lineWidth = Math.max(1.5, first.w0 * 0.03)
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'butt'
+
+  // Trunk points with the thickness and averaged normal at each joint.
+  const joints = [
+    { x: first.x0, y: first.y0, w: first.w0, nx: 0, ny: 0 },
+    ...trunk.map((seg) => ({ x: seg.x1, y: seg.y1, w: seg.w1, nx: 0, ny: 0 })),
+  ]
+  const normals = trunk.map((seg) => {
+    const dx = seg.x1 - seg.x0
+    const dy = seg.y1 - seg.y0
+    const len = Math.hypot(dx, dy) || 1
+    return { nx: -dy / len, ny: dx / len }
+  })
+  joints.forEach((joint, i) => {
+    const before = normals[i - 1] ?? normals[i]
+    const after = normals[i] ?? normals[i - 1]
+    if (before && after) {
+      const mx = before.nx + after.nx
+      const my = before.ny + after.ny
+      const len = Math.hypot(mx, my) || 1
+      joint.nx = mx / len
+      joint.ny = my / len
+    }
+  })
+  for (const f of [-0.3, 0, 0.3]) {
+    ctx.beginPath()
+    joints.forEach((joint, i) => {
+      // Start a little above the ground-covering base and stop short of the top.
+      const px = joint.x + joint.nx * joint.w * f
+      const py = joint.y + joint.ny * joint.w * f
+      if (i === 0) {
+        ctx.moveTo(px, py)
+      } else {
+        ctx.lineTo(px, py)
+      }
+    })
+    ctx.stroke()
+  }
+
+  ctx.lineWidth = Math.max(1.5, first.w0 * 0.025)
+  for (const seg of shape.segments.slice(3)) {
+    if (seg.w0 < 26) {
+      continue
+    }
+    const dx = seg.x1 - seg.x0
+    const dy = seg.y1 - seg.y0
+    ctx.beginPath()
+    ctx.moveTo(seg.x0 + dx * 0.3, seg.y0 + dy * 0.3)
+    ctx.lineTo(seg.x0 + dx * 0.92, seg.y0 + dy * 0.92)
+    ctx.stroke()
   }
 }
 
@@ -391,6 +502,9 @@ export function drawOakVector(
     ctx.fill()
   }
 
+  if (leafDetail >= 0.12) {
+    drawBark(ctx, shape)
+  }
   const rand = seededRandom(shape.id * 7919 + 13)
   shape.lobes.forEach((lobe) => {
     drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail)
@@ -436,29 +550,20 @@ function buildSprite(
 }
 
 /**
- * Draws an oak from a cached bitmap (built on first use) with its base at (x, y).
+ * Returns an oak's cached bitmap, building it if needed (the expensive part).
  *
- * Distant layers can pass `detail` below 1 for a smaller, cheaper bitmap.
- *
- * @param ctx - 2D canvas context.
  * @param shape - Generated tree.
- * @param x - Base X.
- * @param y - Base Y.
  * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
  * @param trunkColor - Trunk and branch fill.
- * @param detail - Bitmap resolution multiplier relative to the screen (1 is full).
+ * @param resolution - Bitmap pixels per CSS pixel.
  */
-export function drawOak(
-  ctx: CanvasRenderingContext2D,
+export function getOakSprite(
   shape: TreeShape,
-  x: number,
-  y: number,
   tones: string[],
   trunkColor: string,
-  detail = 1,
-): void {
-  const resolution = ctx.getTransform().a * detail
-  const key = `${shape.id}|${trunkColor}|${detail}|${resolution}`
+  resolution: number,
+): TreeSprite {
+  const key = `${shape.id}|${trunkColor}|${resolution}`
   let sprite = spriteCache.get(key)
   if (sprite) {
     spriteCache.delete(key)
@@ -472,5 +577,27 @@ export function drawOak(
     }
   }
   spriteCache.set(key, sprite)
+  return sprite
+}
+
+/**
+ * Draws an oak from a cached bitmap (built on first use) with its base at (x, y).
+ *
+ * @param ctx - 2D canvas context.
+ * @param shape - Generated tree.
+ * @param x - Base X.
+ * @param y - Base Y.
+ * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
+ * @param trunkColor - Trunk and branch fill.
+ */
+export function drawOak(
+  ctx: CanvasRenderingContext2D,
+  shape: TreeShape,
+  x: number,
+  y: number,
+  tones: string[],
+  trunkColor: string,
+): void {
+  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a)
   ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
 }

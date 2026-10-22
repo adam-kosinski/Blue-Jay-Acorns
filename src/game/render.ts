@@ -1,5 +1,6 @@
 import {
   ACORN_COLOR,
+  HOP_DURATION,
   CROWN_COLOR,
   EAT_DURATION,
   FOREST_HAZE_COLOR,
@@ -9,7 +10,7 @@ import {
   PLAYER_COLOR,
   TRUNK_COLOR,
 } from './constants'
-import { drawLeafyDisk, drawOak, drawOakVector, seededRandom } from './oak'
+import { drawLeafyDisk, drawOakVector, getOakSprite, seededRandom, drawOak } from './oak'
 import { groundYAt } from './terrain'
 import type {
   Acorn,
@@ -38,6 +39,7 @@ import type {
  * @param world - Generated play space.
  * @param camera - Current view origin in world space.
  * @param player - Current player pose.
+ * @param gameOver - True to cover the scene with the game-over screen.
  */
 export function renderScene(
   ctx: CanvasRenderingContext2D,
@@ -46,6 +48,7 @@ export function renderScene(
   world: World,
   camera: Camera,
   player: Player,
+  gameOver = false,
 ): void {
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   haze.addColorStop(0, '#9dbf9c')
@@ -58,15 +61,19 @@ export function renderScene(
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
 
-  drawLogs(ctx, world, camera.x, viewWidth)
+  // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
+  drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth)
+  drawBuriedProps(ctx, world, camera.x, viewWidth)
   drawGround(ctx, world, camera.x, viewWidth)
   drawLeafLitter(ctx, world.leaves, camera.x, viewWidth)
   drawMounds(ctx, world.acorns, world.terrain, camera.x, viewWidth)
-  drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth)
   drawProps(ctx, world, camera.x, viewWidth)
   for (const npc of world.npcs) {
-    drawBird(ctx, npc.bird)
-    drawNpcLabel(ctx, npc)
+    const bx = npc.bird.x + npc.bird.size / 2
+    if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
+      drawBird(ctx, npc.bird)
+      drawNpcLabel(ctx, npc)
+    }
   }
   drawBird(ctx, player)
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
@@ -74,7 +81,7 @@ export function renderScene(
   ctx.restore()
 
   drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
-  drawHungerBar(ctx, viewWidth, player)
+  drawHungerBar(ctx, viewWidth, viewHeight, player)
 
   ctx.fillStyle = '#1b2838'
   ctx.font = '18px Georgia, serif'
@@ -86,6 +93,118 @@ export function renderScene(
     16,
     viewHeight - 14,
   )
+
+  if (gameOver) {
+    if (gameOverSince === 0) {
+      gameOverSince = performance.now()
+    }
+    drawGameOver(ctx, viewWidth, viewHeight, performance.now() - gameOverSince)
+  } else {
+    gameOverSince = 0
+  }
+}
+
+/** When the game-over screen first appeared (ms timestamp), or 0 while the game is running. */
+let gameOverSince = 0
+
+/**
+ * Draws the game-over screen: a vignette, a parchment card that eases in with the message,
+ * a divider flanked by acorns, and a pulsing pointer to the Restart button.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param viewWidth - Viewport width.
+ * @param viewHeight - Viewport height.
+ * @param elapsed - Milliseconds since the screen appeared (drives the fade-in).
+ */
+function drawGameOver(
+  ctx: CanvasRenderingContext2D,
+  viewWidth: number,
+  viewHeight: number,
+  elapsed: number,
+): void {
+  const fade = Math.min(1, elapsed / 600)
+  const ease = 1 - (1 - fade) * (1 - fade)
+
+  const veil = ctx.createRadialGradient(
+    viewWidth / 2,
+    viewHeight / 2,
+    viewHeight * 0.15,
+    viewWidth / 2,
+    viewHeight / 2,
+    Math.max(viewWidth, viewHeight) * 0.7,
+  )
+  veil.addColorStop(0, `rgba(30, 18, 10, ${0.55 * ease})`)
+  veil.addColorStop(1, `rgba(4, 6, 12, ${0.92 * ease})`)
+  ctx.fillStyle = veil
+  ctx.fillRect(0, 0, viewWidth, viewHeight)
+
+  const cardW = Math.min(780, viewWidth * 0.84)
+  const cardH = Math.min(280, viewHeight * 0.6)
+  ctx.save()
+  ctx.globalAlpha = ease
+  ctx.translate(viewWidth / 2, viewHeight / 2)
+  ctx.scale(0.92 + 0.08 * ease, 0.92 + 0.08 * ease)
+
+  // Card: parchment with a double wooden border and a soft shadow
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+  ctx.shadowBlur = 30
+  ctx.shadowOffsetY = 10
+  ctx.fillStyle = '#f4ead2'
+  ctx.beginPath()
+  ctx.roundRect(-cardW / 2, -cardH / 2, cardW, cardH, 22)
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  ctx.strokeStyle = '#6b3e1d'
+  ctx.lineWidth = 6
+  ctx.stroke()
+  ctx.strokeStyle = 'rgba(107, 62, 29, 0.45)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.roundRect(-cardW / 2 + 14, -cardH / 2 + 14, cardW - 28, cardH - 28, 14)
+  ctx.stroke()
+
+  // Title, sized to fit the card
+  const title = 'You got a rumbly in your tumbly'
+  let fontSize = Math.min(56, cardW * 0.075)
+  ctx.font = `bold ${fontSize}px Georgia, serif`
+  const maxTitleWidth = cardW - 80
+  const measured = ctx.measureText(title).width
+  if (measured > maxTitleWidth) {
+    fontSize *= maxTitleWidth / measured
+    ctx.font = `bold ${fontSize}px Georgia, serif`
+  }
+  ctx.textAlign = 'center'
+  ctx.fillStyle = '#4a2d14'
+  ctx.fillText(title, 0, -cardH * 0.1)
+
+  // Divider with an acorn at each end and one in the middle
+  const dividerY = cardH * 0.06
+  ctx.strokeStyle = 'rgba(107, 62, 29, 0.6)'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(-cardW * 0.3, dividerY)
+  ctx.lineTo(-24, dividerY)
+  ctx.moveTo(24, dividerY)
+  ctx.lineTo(cardW * 0.3, dividerY)
+  ctx.stroke()
+  drawAcornShape(ctx, 0, dividerY, 13, 0)
+  drawAcornShape(ctx, -cardW * 0.3 - 16, dividerY, 9, -0.9)
+  drawAcornShape(ctx, cardW * 0.3 + 16, dividerY, 9, 0.9)
+
+  ctx.fillStyle = '#6b4a2b'
+  ctx.font = 'italic 24px Georgia, serif'
+  ctx.fillText('The jay went hungry. Click Restart to try again.', 0, cardH * 0.26)
+  ctx.restore()
+
+  // Pulsing pointer toward the Restart button
+  const pulse = 0.6 + 0.4 * Math.sin(elapsed / 220)
+  ctx.globalAlpha = ease * pulse
+  ctx.fillStyle = '#f4ead2'
+  ctx.font = 'bold 20px Georgia, serif'
+  ctx.textAlign = 'right'
+  ctx.fillText('Restart ↗', viewWidth - 24, 78)
+  ctx.globalAlpha = 1
+  ctx.textAlign = 'left'
 }
 
 /**
@@ -220,7 +339,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       const bushY = originY + offset(bush.x)
       const rand = seededRandom(Math.floor(bush.x * 13))
       for (const lobe of bush.lobes) {
-        drawLeafyDisk(ctx, bush.x + lobe.dx, bushY + lobe.dy, lobe.radius, layer.tones, 1, rand, 0.3)
+        drawLeafyDisk(ctx, bush.x + lobe.dx, bushY + lobe.dy, lobe.radius, layer.tones, 1, rand, 0.3, 1)
       }
     }
   }
@@ -366,16 +485,17 @@ function drawTrees(
 }
 
 /**
- * Draws fallen logs that overlap the view, resting on the average ground height under them.
+ * Draws logs and rocks that overlap the view, partly buried: logs rest on the average ground height
+ * under them, rocks sit slightly sunk.
  *
- * Called before the ground so the ground (and leaf litter) covers the lower part of each log.
+ * Called before the ground so the ground (and leaf litter) covers their lower part.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - Play space.
  * @param cameraX - View left edge.
  * @param viewWidth - Viewport width.
  */
-function drawLogs(
+function drawBuriedProps(
   ctx: CanvasRenderingContext2D,
   world: World,
   cameraX: number,
@@ -383,6 +503,11 @@ function drawLogs(
 ): void {
   const left = cameraX - 600
   const right = cameraX + viewWidth + 600
+  for (const rock of world.rocks) {
+    if (rock.x > left && rock.x < right) {
+      drawRock(ctx, rock, groundYAt(world.terrain, rock.x))
+    }
+  }
   for (const log of world.logs) {
     if (log.x > left && log.x < right) {
       const under =
@@ -396,8 +521,8 @@ function drawLogs(
 }
 
 /**
- * Draws bushes and rocks that overlap the view (no collision).
- * (Logs are drawn earlier, behind the ground.)
+ * Draws bushes that overlap the view (no collision).
+ * (Logs and rocks are drawn earlier, behind the ground.)
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - Play space.
@@ -412,11 +537,6 @@ function drawProps(
 ): void {
   const left = cameraX - 400
   const right = cameraX + viewWidth + 400
-  for (const rock of world.rocks) {
-    if (rock.x > left && rock.x < right) {
-      drawRock(ctx, rock, groundYAt(world.terrain, rock.x))
-    }
-  }
   for (const bush of world.bushes) {
     if (bush.x > left && bush.x < right) {
       drawBush(ctx, bush, groundYAt(world.terrain, bush.x))
@@ -443,6 +563,7 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number): v
       2,
       rand,
       0.9,
+      1,
     )
   }
 }
@@ -510,7 +631,7 @@ function drawLog(ctx: CanvasRenderingContext2D, log: Log, groundY: number): void
  */
 function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): void {
   const n = rock.jitter.length
-  const baseY = groundY + rock.ry * 0.15
+  const baseY = groundY + rock.ry * 0.4
   ctx.fillStyle = rock.color
   ctx.beginPath()
   rock.jitter.forEach((j, i) => {
@@ -640,12 +761,15 @@ function drawAcorns(
     }
     // Lying acorns rest at a varied angle, derived from position so it stays stable.
     const lean = (((acorn.x * 0.137) % 1) + 1) % 1
-    // Settle slightly into the ground with a soft contact shadow.
-    ctx.fillStyle = 'rgba(30, 15, 5, 0.35)'
-    ctx.beginPath()
-    ctx.ellipse(acorn.x, acorn.y + acorn.radius * 0.8, acorn.radius * 1.05, acorn.radius * 0.3, 0, 0, Math.PI * 2)
-    ctx.fill()
-    drawAcornShape(ctx, acorn.x, acorn.y + acorn.radius * 0.2, acorn.radius, (lean < 0.5 ? 1 : -1) * (0.9 + lean * 0.6))
+    // Resting acorns settle slightly into the ground with a soft contact shadow; falling ones do not.
+    const resting = acorn.vy === 0
+    if (resting) {
+      ctx.fillStyle = 'rgba(30, 15, 5, 0.35)'
+      ctx.beginPath()
+      ctx.ellipse(acorn.x, acorn.y + acorn.radius * 0.8, acorn.radius * 1.05, acorn.radius * 0.3, 0, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    drawAcornShape(ctx, acorn.x, acorn.y + (resting ? acorn.radius * 0.2 : 0), acorn.radius, (lean < 0.5 ? 1 : -1) * (0.9 + lean * 0.6))
   }
 }
 
@@ -658,7 +782,149 @@ function bodyBob(player: Player): number {
   if (player.state === 'flying') {
     return Math.sin(player.animTime * 16) * 2.5
   }
-  return player.walking ? -Math.abs(Math.sin(player.animTime * 12)) * 5 : 0
+  const hop = hopProgress(player)
+  const lift = hop >= 0 ? -Math.sin(Math.PI * hop) * 8 : 0
+  return lift + actionDip(player) * 12
+}
+
+/**
+ * Progress through the current hop from 0 to 1, or -1 when the bird is not hopping.
+ *
+ * @param player - Bird pose.
+ */
+function hopProgress(player: Player): number {
+  return player.state === 'standing' && player.hopT < HOP_DURATION ? player.hopT / HOP_DURATION : -1
+}
+
+/**
+ * How far the bird is bent toward the ground for a pick-up, bury or dig-up animation (0 to 1):
+ * one dip for a pick-up, three pecks for burying and digging up.
+ *
+ * @param player - Bird pose.
+ */
+function actionDip(player: Player): number {
+  const action = player.action
+  if (!action) {
+    return 0
+  }
+  const p = Math.min(1, action.timer / action.duration)
+  return action.kind === 'pickup' ? Math.sin(Math.PI * p) : Math.abs(Math.sin(Math.PI * 3 * p))
+}
+
+/** Pre-rendered bird pose: the canvas and where the bird's center sits inside it. */
+type BirdSprite = {
+  canvas: HTMLCanvasElement
+  width: number
+  height: number
+  centerY: number
+}
+
+const birdSprites = new Map<string, BirdSprite>()
+
+/** Most bird poses kept before the least recently used one is dropped. */
+const BIRD_SPRITE_LIMIT = 300
+
+/** Wing-beat and walk-cycle phases quantized for caching. */
+const FLY_PHASES = 24
+const HOP_PHASES = 16
+const ACTION_PHASES = 30
+const EAT_PHASES = 20
+
+/**
+ * Draws the jay from a cached bitmap of its current pose (built on first use).
+ *
+ * Poses are quantized (24 wing phases, 16 walk phases, 20 eating phases), drawn once with the
+ * vector code in `drawBirdVector`, then blitted, flipped for facing. This keeps many jays in view
+ * cheap.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param player - Bird pose and animation clock.
+ */
+function birdSpriteFor(player: Player, dpr: number): BirdSprite {
+  const size = player.size
+  const flying = player.state === 'flying'
+  const eating = player.eatTimer > 0
+  const eatQ = eating ? Math.min(EAT_PHASES - 1, Math.floor((1 - player.eatTimer / EAT_DURATION) * EAT_PHASES)) : -1
+  const turn = Math.PI * 2
+  let phase = 0
+  let animTime = 0
+  let mode = 's'
+  const hop = hopProgress(player)
+  if (flying) {
+    mode = 'f'
+    phase = Math.floor((((player.animTime * 16) % turn) / turn) * FLY_PHASES)
+    animTime = ((phase + 0.5) / FLY_PHASES) * (turn / 16)
+  } else if (hop >= 0) {
+    mode = 'h'
+    phase = Math.min(HOP_PHASES - 1, Math.floor(hop * HOP_PHASES))
+  }
+  const actionQ = player.action
+    ? Math.min(ACTION_PHASES - 1, Math.floor((player.action.timer / player.action.duration) * ACTION_PHASES))
+    : -1
+  const key = [
+    Math.round(size),
+    Math.round(dpr * 100),
+    mode,
+    phase,
+    player.held ? Math.round(player.held.radius) : 0,
+    eatQ,
+    player.action ? player.action.kind : '',
+    actionQ,
+  ].join('|')
+
+  let sprite = birdSprites.get(key)
+  if (sprite) {
+    birdSprites.delete(key)
+  } else {
+    const width = size * 1.7
+    const height = size * 1.6
+    const centerY = size * 0.9
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(width * dpr)
+    canvas.height = Math.ceil(height * dpr)
+    const sctx = canvas.getContext('2d')
+    if (sctx) {
+      sctx.scale(dpr, dpr)
+      const pose: Player = {
+        ...player,
+        x: width / 2 - size / 2,
+        y: centerY - size / 2,
+        facing: 1,
+        animTime,
+        eatTimer: eatQ >= 0 ? (1 - (eatQ + 0.5) / EAT_PHASES) * EAT_DURATION : 0,
+        hopT: mode === 'h' ? ((phase + 0.5) / HOP_PHASES) * HOP_DURATION : HOP_DURATION,
+        action: player.action
+          ? { ...player.action, timer: ((actionQ + 0.5) / ACTION_PHASES) * player.action.duration }
+          : null,
+      }
+      drawBirdVector(sctx, pose)
+    }
+    sprite = { canvas, width, height, centerY }
+    if (birdSprites.size >= BIRD_SPRITE_LIMIT) {
+      const oldest = birdSprites.keys().next().value
+      if (oldest !== undefined) {
+        birdSprites.delete(oldest)
+      }
+    }
+  }
+  birdSprites.set(key, sprite)
+  return sprite
+}
+
+/**
+ * Draws the jay from its cached pose bitmap, flipped for facing.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param player - Bird pose and animation clock.
+ */
+function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
+  const size = player.size
+  const sprite = birdSpriteFor(player, ctx.getTransform().a)
+  ctx.save()
+  ctx.translate(player.x + size / 2, player.y + size / 2)
+  ctx.scale(player.facing, 1)
+  ctx.drawImage(sprite.canvas, -sprite.width / 2, -sprite.centerY, sprite.width, sprite.height)
+  ctx.restore()
 }
 
 /**
@@ -671,14 +937,16 @@ function bodyBob(player: Player): number {
  * @param ctx - 2D canvas context in world space.
  * @param player - Bird pose and animation clock.
  */
-function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
+function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   const u = player.size / 100
   const flying = player.state === 'flying'
   const t = player.animTime
   const eating = player.eatTimer > 0
   const eatProgress = eating ? 1 - player.eatTimer / EAT_DURATION : 0
   // Beak gap: open around the held acorn, chomping while eating.
-  const beakGap = !player.held ? 0 : eating ? 2 + Math.abs(Math.sin(eatProgress * Math.PI * 5)) * 7 : 8.5
+  const dip = actionDip(player)
+  const hopping = hopProgress(player)
+  const beakGap = !player.held ? dip * 6 : eating ? 2 + Math.abs(Math.sin(eatProgress * Math.PI * 5)) * 7 : 8.5
 
   ctx.save()
   ctx.translate(player.x + player.size / 2, player.y + player.size / 2 + bodyBob(player) * u)
@@ -690,6 +958,7 @@ function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.strokeStyle = '#3a3a3a'
   ctx.lineWidth = 4
   if (flying) {
+    // Legs tucked back in flight
     for (const dx of [-6, 4]) {
       ctx.beginPath()
       ctx.moveTo(dx, 24)
@@ -697,33 +966,33 @@ function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
       ctx.stroke()
     }
   } else {
-    const swing = player.walking ? Math.sin(t * 12) * 12 : 0
-    const lift = player.walking ? 5 : 0
-    const legs: [number, number, number][] = [
-      [-6, swing, Math.max(0, Math.cos(t * 12)) * lift],
-      [6, -swing, Math.max(0, -Math.cos(t * 12)) * lift],
-    ]
-    for (const [hipX, footDx, footLift] of legs) {
-      const footX = hipX + footDx
-      const footY = 47 - footLift
+    // Standing legs with the feet visible. In a hop they swing about the hip: pushing back as the
+    // bird launches, straight at the top, reaching forward as it lands.
+    const swing = hopping >= 0 ? 0.2 * Math.cos(Math.PI * hopping) : 0
+    for (const hipX of [-6, 6]) {
+      ctx.save()
+      ctx.translate(hipX, 24)
+      ctx.rotate(swing)
       ctx.beginPath()
-      ctx.moveTo(hipX, 24)
-      ctx.lineTo(footX, footY)
-      ctx.lineTo(footX + 7, footY)
+      ctx.moveTo(0, 0)
+      ctx.lineTo(0, 23)
+      ctx.lineTo(7, 23)
       ctx.stroke()
+      ctx.restore()
     }
   }
 
   // Posture: upright when standing, a slight incline in flight (wings hinge on this axis)
   ctx.save()
   ctx.translate(0, 6)
-  const bodyTilt = flying ? -0.04 : -0.3
+  const bodyTilt = (flying ? -0.04 : -0.3) + dip * 0.6
   ctx.rotate(bodyTilt)
   ctx.translate(0, -6)
   // The head keeps one world tilt in every pose; only the body tilt changes (pivot at the neck).
-  const headTurn = -0.04 - bodyTilt
+  const headTurn = -0.04 - bodyTilt + dip * 0.6
   const tiltHead = (): void => {
-    ctx.translate(16, -8)
+    // While pecking the neck stretches forward and down so the beak reaches the ground.
+    ctx.translate(16 + dip * 10, -8 + dip * 18)
     ctx.rotate(headTurn)
     ctx.translate(-16, 8)
   }
@@ -878,6 +1147,16 @@ function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
   }
 
   ctx.restore()
+
+  // Dirt flicked up while burying or digging
+  if (dip > 0.4 && player.action && player.action.kind !== 'pickup') {
+    ctx.fillStyle = '#6b4a2b'
+    for (let k = 0; k < 5; k += 1) {
+      ctx.beginPath()
+      ctx.arc(60 + k * 4, 46 - dip * 14 * (0.3 + k * 0.18) + (k % 2) * 3, 1.8, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
   ctx.restore()
 }
 
@@ -1452,6 +1731,33 @@ function drawMinimap(
   ctx.closePath()
   ctx.fill()
 
+  // Low-detail ground props: rocks, logs and bushes as tiny shapes sitting on the ground line.
+  for (const rock of world.rocks) {
+    const ground = groundYAt(world.terrain, rock.x) * scale
+    ctx.fillStyle = '#8a8780'
+    ctx.beginPath()
+    ctx.ellipse(rock.x * scale, ground, Math.max(1, rock.rx * scale), Math.max(1, rock.ry * scale), 0, Math.PI, 0)
+    ctx.fill()
+  }
+  ctx.fillStyle = '#4a2d14'
+  for (const log of world.logs) {
+    const ground = groundYAt(world.terrain, log.x) * scale
+    ctx.fillRect((log.x - log.length / 2) * scale, ground - Math.max(1.5, log.radius * 2 * scale), Math.max(2, log.length * scale), Math.max(1.5, log.radius * 2 * scale))
+  }
+  ctx.fillStyle = '#3f7d3f'
+  for (const bush of world.bushes) {
+    const ground = groundYAt(world.terrain, bush.x) * scale
+    let span = 0
+    let height = 0
+    for (const lobe of bush.lobes) {
+      span = Math.max(span, Math.abs(lobe.dx) + lobe.radius)
+      height = Math.max(height, -lobe.dy + lobe.radius)
+    }
+    ctx.beginPath()
+    ctx.ellipse(bush.x * scale, ground, Math.max(1.5, span * scale), Math.max(1.5, height * scale), 0, Math.PI, 0)
+    ctx.fill()
+  }
+
   for (const tree of world.trees) {
     const cx = (tree.x + tree.trunkWidth / 2) * scale
     const treeGround = groundYAt(world.terrain, tree.x + tree.trunkWidth / 2)
@@ -1495,62 +1801,158 @@ function drawMinimap(
   ctx.restore()
 }
 
+/** Pre-rendered NPC label text, keyed by its content. */
+const labelSprites = new Map<string, { canvas: HTMLCanvasElement; width: number; height: number }>()
+
 /**
- * Draws a debug label above an NPC: its state, hunger, and nosiness.
+ * Draws a debug label above an NPC (state, hunger, nosiness) from a cached bitmap, since text is
+ * expensive to render every frame.
  *
  * @param ctx - 2D canvas context in world space.
  * @param npc - NPC to annotate.
  */
 function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
+  const dpr = ctx.getTransform().a
+  const lines = [npc.state, `hunger ${npc.bird.hunger.toFixed(2)} · nosy ${npc.nosiness.toFixed(2)}`]
+  const key = `${lines.join('|')}|${Math.round(dpr * 100)}`
+  let label = labelSprites.get(key)
+  if (!label) {
+    const width = 150
+    const height = 36
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(width * dpr)
+    canvas.height = Math.ceil(height * dpr)
+    const lctx = canvas.getContext('2d')
+    if (lctx) {
+      lctx.scale(dpr, dpr)
+      lctx.font = '12px Georgia, serif'
+      lctx.textAlign = 'center'
+      lctx.lineWidth = 3
+      lctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
+      lctx.fillStyle = '#1b2838'
+      lines.forEach((line, i) => {
+        lctx.strokeText(line, width / 2, 14 + i * 14)
+        lctx.fillText(line, width / 2, 14 + i * 14)
+      })
+    }
+    label = { canvas, width, height }
+    if (labelSprites.size >= 80) {
+      const oldest = labelSprites.keys().next().value
+      if (oldest !== undefined) {
+        labelSprites.delete(oldest)
+      }
+    }
+    labelSprites.set(key, label)
+  }
   const x = npc.bird.x + npc.bird.size / 2
   const y = npc.bird.y - npc.bird.size * 0.75
-  ctx.font = '12px Georgia, serif'
-  ctx.textAlign = 'center'
+  ctx.drawImage(label.canvas, x - label.width / 2, y - 14, label.width, label.height)
+}
+
+/** Hunger level at or below which the bar flashes red. */
+const STARVING_LEVEL = 0.2
+
+/**
+ * Draws the hunger bar large at the bottom center: green when fed, yellow below the threshold
+ * marker, and flashing red when very low.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param viewWidth - Viewport width.
+ * @param viewHeight - Viewport height.
+ * @param player - Bird (hunger level and held acorn).
+ */
+function drawHungerBar(
+  ctx: CanvasRenderingContext2D,
+  viewWidth: number,
+  viewHeight: number,
+  player: Player,
+): void {
+  const w = Math.min(520, viewWidth * 0.55)
+  const h = 32
+  const x = (viewWidth - w) / 2
+  const y = viewHeight - 84
+  const hungry = player.hunger < HUNGER_THRESHOLD
+  const starving = player.hunger <= STARVING_LEVEL
+  const flashOn = starving && Math.floor(performance.now() / 300) % 2 === 0
+
+  ctx.fillStyle = 'rgba(27, 40, 56, 0.7)'
+  ctx.fillRect(x - 4, y - 4, w + 8, h + 8)
+  ctx.fillStyle = starving ? (flashOn ? '#ff3b30' : '#8f1d17') : hungry ? '#f2c230' : '#5cb85c'
+  ctx.fillRect(x, y, w * player.hunger, h)
+  if (starving) {
+    ctx.strokeStyle = flashOn ? '#ff3b30' : '#8f1d17'
+    ctx.lineWidth = 3
+    ctx.strokeRect(x - 4, y - 4, w + 8, h + 8)
+  }
+
+  ctx.strokeStyle = '#fff'
   ctx.lineWidth = 3
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)'
-  ctx.fillStyle = '#1b2838'
-  const lines = [npc.state, `hunger ${npc.bird.hunger.toFixed(2)} · nosy ${npc.nosiness.toFixed(2)}`]
-  lines.forEach((line, i) => {
-    const ly = y - (lines.length - 1 - i) * 14
-    ctx.strokeText(line, x, ly)
-    ctx.fillText(line, x, ly)
-  })
+  ctx.beginPath()
+  ctx.moveTo(x + w * HUNGER_THRESHOLD, y - 8)
+  ctx.lineTo(x + w * HUNGER_THRESHOLD, y + h + 8)
+  ctx.stroke()
+
+  ctx.fillStyle = starving ? (flashOn ? '#ff3b30' : '#f4efe4') : '#f4efe4'
+  ctx.font = 'bold 18px Georgia, serif'
+  ctx.textAlign = 'center'
+  const label = starving
+    ? 'Starving!'
+    : hungry && player.held
+      ? 'Hungry - press E to eat'
+      : hungry
+        ? 'Hungry - find an acorn'
+        : 'Hunger'
+  ctx.lineWidth = 4
+  ctx.strokeStyle = 'rgba(27, 40, 56, 0.85)'
+  ctx.strokeText(label, viewWidth / 2, y - 14)
+  ctx.fillText(label, viewWidth / 2, y - 14)
   ctx.textAlign = 'left'
 }
 
 /**
- * Draws the hunger bar (top right): green when fed, yellow below the threshold marker.
+ * Pre-builds the expensive cached bitmaps (forest layers, the oaks, and the common jay poses) in
+ * small steps so none of it has to happen mid-game as the camera moves. Run one `next()` per frame.
  *
- * @param ctx - 2D canvas context in screen space.
- * @param viewWidth - Viewport width.
- * @param player - Bird (hunger level and held acorn).
+ * @param world - Generated play space.
+ * @param player - The main bird (template for the jay poses).
+ * @param dpr - Device pixel ratio the game renders at.
  */
-function drawHungerBar(ctx: CanvasRenderingContext2D, viewWidth: number, player: Player): void {
-  const w = Math.min(220, viewWidth * 0.25)
-  const h = 18
-  const x = viewWidth - w - 120
-  const y = 16
-  const hungry = player.hunger < HUNGER_THRESHOLD
+export function* warmUpScene(world: World, player: Player, dpr: number): Generator<void> {
+  for (const layer of world.forest) {
+    forestStripFor(layer, world)
+    yield
+  }
+  for (const tree of world.trees) {
+    getOakSprite(tree.shape, OAK_TONES, TRUNK_COLOR, dpr)
+    yield
+  }
 
-  ctx.fillStyle = 'rgba(27, 40, 56, 0.55)'
-  ctx.fillRect(x - 2, y - 2, w + 4, h + 4)
-  ctx.fillStyle = hungry ? '#f2c230' : '#5cb85c'
-  ctx.fillRect(x, y, w * player.hunger, h)
-
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(x + w * HUNGER_THRESHOLD, y - 5)
-  ctx.lineTo(x + w * HUNGER_THRESHOLD, y + h + 5)
-  ctx.stroke()
-
-  ctx.fillStyle = '#1b2838'
-  ctx.font = '14px Georgia, serif'
-  ctx.textAlign = 'right'
-  ctx.fillText(
-    hungry && player.held ? 'Hungry - press E to eat' : hungry ? 'Hungry' : 'Hunger',
-    x + w,
-    y + h + 20,
-  )
-  ctx.textAlign = 'left'
+  const acorn = {
+    x: 0,
+    y: 0,
+    radius: world.acorns[0]?.radius ?? player.size / 8,
+    state: 'held' as const,
+    vy: 0,
+  }
+  let built = 0
+  const build = (pose: Partial<Player>): boolean => {
+    birdSpriteFor({ ...player, action: null, eatTimer: 0, hopT: HOP_DURATION, ...pose }, dpr)
+    built += 1
+    return built % 6 === 0
+  }
+  for (const held of [null, acorn]) {
+    for (let i = 0; i < FLY_PHASES; i += 1) {
+      const animTime = ((i + 0.5) / FLY_PHASES) * ((Math.PI * 2) / 16)
+      if (build({ state: 'flying', animTime, held })) {
+        yield
+      }
+    }
+    for (let i = 0; i < HOP_PHASES; i += 1) {
+      if (build({ state: 'standing', hopT: ((i + 0.5) / HOP_PHASES) * HOP_DURATION, held })) {
+        yield
+      }
+    }
+    build({ state: 'standing', held })
+    yield
+  }
 }

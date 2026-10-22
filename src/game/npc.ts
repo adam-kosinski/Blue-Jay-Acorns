@@ -3,13 +3,14 @@ import {
   NPC_BURIAL_SPAN_VIEWS,
   NPC_COUNT,
   NPC_GATHER_PROBABILITY,
-  NPC_IDLE_EXIT_PROBABILITY,
   NPC_IDLE_HUNGER,
+  NPC_SPEED_SCALE,
   NPC_VIEW_FRACTION,
+  NPC_WAIT_SECONDS,
 } from './constants'
+import { startBury, startPickup, updateAction } from './acorns'
 import { updateHunger } from './hunger'
 import { createPlayer, groundUnder, updatePlayer } from './player'
-import { groundYAt } from './terrain'
 import type { Acorn, KeyEdges, KeyState, Npc, Player, World } from './types'
 
 /** Altitude band (player sizes above ground) NPCs wander through while exploring. */
@@ -20,7 +21,11 @@ const MAX_EXPLORE_ALTITUDE = 4
 const TRAVEL_ALTITUDE = 1.8
 
 /** Horizontal gap (player sizes) at which an NPC counts as having reached its target. */
-const ARRIVE_IN_SIZES = 0.3
+const ARRIVE_IN_SIZES = 0.5
+
+/** Chance per second that an idle NPC wanders a short distance, and how often it flies it. */
+const IDLE_WANDER_PROBABILITY = 0.3
+const IDLE_FLY_PROBABILITY = 0.35
 
 /** Horizontal gap (player sizes) at which a gathering NPC starts its descent. */
 const LAND_DISTANCE_IN_SIZES = 2.5
@@ -63,7 +68,7 @@ export function createNpcs(world: World, size: number): Npc[] {
       bird,
       keys: { w: false, a: false, s: false, d: false },
       nosiness: Math.random(),
-      state: 'explore',
+      state: bird.hunger > NPC_IDLE_HUNGER ? 'idle' : 'explore',
       decisionTimer: Math.random(),
       direction: bird.facing,
       targetAltitude: randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE),
@@ -71,6 +76,9 @@ export function createNpcs(world: World, size: number): Npc[] {
       target: null,
       targetX: 0,
       eatAttempted: false,
+      waitTimer: 0,
+      idleTargetX: null,
+      idleFly: false,
     })
   }
   return npcs
@@ -132,7 +140,7 @@ function steerAltitude(npc: Npc, altitude: number, world: World): void {
  */
 function steerHorizontal(npc: Npc, x: number): void {
   const dx = x - (npc.bird.x + npc.bird.size / 2)
-  const arrive = ARRIVE_IN_SIZES * npc.bird.size * 0.5
+  const arrive = ARRIVE_IN_SIZES * npc.bird.size
   npc.keys.a = dx < -arrive
   npc.keys.d = dx > arrive
 }
@@ -160,6 +168,7 @@ function enterExplore(npc: Npc): void {
   npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
   npc.altitudeTimer = randRange(1, 3)
   npc.target = null
+  npc.waitTimer = NPC_WAIT_SECONDS
 }
 
 /**
@@ -171,6 +180,7 @@ function enterExploreOrIdle(npc: Npc): void {
   if (npc.bird.hunger > NPC_IDLE_HUNGER) {
     npc.state = 'idle'
     npc.target = null
+    npc.idleTargetX = null
   } else {
     enterExplore(npc)
   }
@@ -194,7 +204,8 @@ function enterFindBurialSpot(npc: Npc, world: World, viewWidth: number): void {
 }
 
 /**
- * Once-per-second probabilistic state decisions (explore -> gather, idle -> explore).
+ * Once-per-second state decisions: idle -> explore when hunger has dropped below the idle level,
+ * idle wandering, and explore -> gather (probabilistic).
  *
  * @param npc - NPC deciding.
  * @param world - Play space.
@@ -202,8 +213,14 @@ function enterFindBurialSpot(npc: Npc, world: World, viewWidth: number): void {
  */
 function decide(npc: Npc, world: World, viewWidth: number): void {
   if (npc.state === 'idle') {
-    if (npc.bird.hunger < NPC_IDLE_HUNGER && Math.random() < NPC_IDLE_EXIT_PROBABILITY) {
+    if (npc.bird.hunger < NPC_IDLE_HUNGER) {
       enterExplore(npc)
+    } else if (npc.idleTargetX === null && Math.random() < IDLE_WANDER_PROBABILITY) {
+      const size = npc.bird.size
+      const cx = npc.bird.x + size / 2
+      const trip = (Math.random() < 0.5 ? -1 : 1) * randRange(1.5, 5) * size
+      npc.idleTargetX = Math.max(size, Math.min(world.width - size, cx + trip))
+      npc.idleFly = Math.random() < IDLE_FLY_PROBABILITY
     }
     return
   }
@@ -214,6 +231,38 @@ function decide(npc: Npc, world: World, viewWidth: number): void {
   if (acorn && Math.random() < NPC_GATHER_PROBABILITY) {
     npc.state = 'gather'
     npc.target = acorn
+  }
+}
+
+/**
+ * Idle: stand still (landing if airborne), occasionally walking or flying a short distance.
+ *
+ * @param npc - Idle NPC.
+ * @param world - Play space.
+ */
+function runIdle(npc: Npc, world: World): void {
+  const { bird } = npc
+  if (npc.idleTargetX === null) {
+    npc.keys.s = bird.state === 'flying'
+    return
+  }
+  const dx = npc.idleTargetX - (bird.x + bird.size / 2)
+  const arrived = Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size
+  if (npc.idleFly) {
+    if (!arrived) {
+      steerHorizontal(npc, npc.idleTargetX)
+      steerAltitude(npc, 1.2, world)
+    } else if (bird.state === 'flying') {
+      npc.keys.s = true
+    } else {
+      npc.idleTargetX = null
+    }
+    return
+  }
+  if (arrived) {
+    npc.idleTargetX = null
+  } else {
+    steerHorizontal(npc, npc.idleTargetX)
   }
 }
 
@@ -252,6 +301,21 @@ function runExplore(npc: Npc, world: World, dt: number): void {
  */
 function runGather(npc: Npc, world: World, viewWidth: number): void {
   const { bird } = npc
+  if (bird.action) {
+    return
+  }
+  if (bird.held) {
+    // The pick-up animation finished: pause a moment, then eat or go bury it.
+    npc.target = null
+    npc.waitTimer = NPC_WAIT_SECONDS
+    if (bird.hunger < HUNGER_THRESHOLD) {
+      npc.state = 'eat'
+      npc.eatAttempted = false
+    } else {
+      enterFindBurialSpot(npc, world, viewWidth)
+    }
+    return
+  }
   if (!npc.target || npc.target.state !== 'ground') {
     npc.target = nearestFreeAcorn(bird, world, NPC_VIEW_FRACTION * viewWidth)
     if (!npc.target) {
@@ -273,16 +337,8 @@ function runGather(npc: Npc, world: World, viewWidth: number): void {
   }
 
   if (Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size) {
-    target.state = 'held'
-    bird.held = target
-    npc.target = null
     releaseKeys(npc.keys)
-    if (bird.hunger < HUNGER_THRESHOLD) {
-      npc.state = 'eat'
-      npc.eatAttempted = false
-    } else {
-      enterFindBurialSpot(npc, world, viewWidth)
-    }
+    startPickup(bird, target)
   }
 }
 
@@ -306,23 +362,24 @@ function runFindBurialSpot(npc: Npc, world: World): void {
   if (bird.state === 'standing') {
     releaseKeys(npc.keys)
     npc.state = 'bury'
+    npc.waitTimer = NPC_WAIT_SECONDS
   }
 }
 
 /**
- * Bury: always buries the held acorn in front of the bird, then returns to exploring.
+ * Bury: always buries the held acorn in front of the bird (with the pecking animation), then
+ * returns to exploring or idling.
  *
  * @param npc - Burying NPC.
- * @param world - Play space.
  */
-function runBury(npc: Npc, world: World): void {
+function runBury(npc: Npc): void {
   const { bird } = npc
-  const acorn = bird.held
-  if (acorn) {
-    acorn.state = 'buried'
-    acorn.x = bird.x + bird.size / 2 + bird.facing * bird.size * 0.45
-    acorn.y = groundYAt(world.terrain, acorn.x) + acorn.radius * 1.5
-    bird.held = null
+  if (bird.action) {
+    return
+  }
+  if (bird.held) {
+    startBury(bird)
+    return
   }
   enterExploreOrIdle(npc)
 }
@@ -336,40 +393,49 @@ function runBury(npc: Npc, world: World): void {
  */
 export function updateNpcs(world: World, viewWidth: number, dt: number): void {
   for (const npc of world.npcs) {
-    npc.decisionTimer += dt
-    while (npc.decisionTimer >= 1) {
-      npc.decisionTimer -= 1
-      decide(npc, world, viewWidth)
+    const waiting = npc.waitTimer > 0
+    if (waiting) {
+      npc.waitTimer -= dt
+    } else {
+      npc.decisionTimer += dt
+      while (npc.decisionTimer >= 1) {
+        npc.decisionTimer -= 1
+        decide(npc, world, viewWidth)
+      }
     }
 
     releaseKeys(npc.keys)
     const wasEatAttempted = npc.eatAttempted
-    switch (npc.state) {
-      case 'idle':
-        npc.keys.s = npc.bird.state === 'flying'
-        break
-      case 'explore':
-        runExplore(npc, world, dt)
-        break
-      case 'gather':
-        runGather(npc, world, viewWidth)
-        break
-      case 'findBurialSpot':
-        runFindBurialSpot(npc, world)
-        break
-      case 'bury':
-        runBury(npc, world)
-        break
-      case 'eat':
-        npc.eatAttempted = true
-        break
-      default:
-        // follow and hide are not implemented yet.
-        enterExplore(npc)
+    if (!waiting) {
+      switch (npc.state) {
+        case 'idle':
+          runIdle(npc, world)
+          break
+        case 'explore':
+          runExplore(npc, world, dt)
+          break
+        case 'gather':
+          runGather(npc, world, viewWidth)
+          break
+        case 'findBurialSpot':
+          runFindBurialSpot(npc, world)
+          break
+        case 'bury':
+          runBury(npc)
+          break
+        case 'eat':
+          npc.eatAttempted = true
+          break
+        default:
+          // follow and hide are not implemented yet.
+          enterExplore(npc)
+      }
     }
 
-    updatePlayer(npc.bird, npc.keys, dt, world)
-    updateHunger(npc.bird, npc.state === 'eat' && !wasEatAttempted ? EAT_EDGES : NO_EDGES, world, dt)
+    updatePlayer(npc.bird, npc.keys, dt, world, NPC_SPEED_SCALE)
+    updateAction(npc.bird, world, dt)
+    const startEating = npc.state === 'eat' && !wasEatAttempted && !waiting
+    updateHunger(npc.bird, startEating ? EAT_EDGES : NO_EDGES, world, dt)
     if (npc.state === 'eat' && wasEatAttempted && npc.bird.eatTimer === 0) {
       enterExploreOrIdle(npc)
     }
