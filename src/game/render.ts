@@ -446,7 +446,8 @@ function drawMounds(
   cameraX: number,
   viewWidth: number,
 ): void {
-  ctx.fillStyle = '#6b4a2b'
+  // Dark brown, darker than the dirt (and the original mound color), so the mound stands out.
+  ctx.fillStyle = '#472b14'
   for (const acorn of acorns) {
     if (acorn.state !== 'buried' || acorn.x < cameraX - 40 || acorn.x > cameraX + viewWidth + 40) {
       continue

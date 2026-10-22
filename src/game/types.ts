@@ -212,6 +212,7 @@ export type NpcState =
   | 'gather'
   | 'eat'
   | 'findBurialSpot'
+  | 'retrieve'
   | 'bury'
 
 /** Computer-controlled blue jay: a bird body driven by simulated keys plus AI state. */
@@ -242,6 +243,10 @@ export type Npc = {
   idleTargetX: number | null
   /** Whether the idle trip is flown rather than walked. */
   idleFly: boolean
+  /** World x of every spot where this NPC buried an acorn and has not yet checked. */
+  memory: number[]
+  /** The remembered spot currently being visited while retrieving, or null. */
+  digSpot: number | null
 }
 
 /** Generated play space: bounds plus scenery. */

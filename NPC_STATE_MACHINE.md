@@ -7,6 +7,7 @@ Source: `src/game/npc.ts`. Update this chart whenever the AI changes.
 - Viewing distance = 1/3 of the screen width (`NPC_VIEW_FRACTION`). Hunger thresholds: eat below 2/3 (`HUNGER_THRESHOLD`), idle above 0.9 (`NPC_IDLE_HUNGER`).
 - Pauses (`NPC_WAIT_SECONDS` = 1 s, no movement or action): after picking up an acorn, after landing to bury, and when entering explore.
 - Walking on the ground is done in hops; picking up, burying and digging play short animations (`PICKUP_DURATION`, `BURY_DURATION`).
+- Each NPC remembers the x position of every acorn it buries (`memory`); a spot is forgotten when it is visited, whether or not an acorn is still there.
 - Each NPC has a random `nosiness` (0-1, shown above it with its hunger). It has no effect yet.
 - `follow` and `hide` are placeholders: not reachable yet (an NPC in them falls back to explore).
 
@@ -24,9 +25,19 @@ flowchart TD
     hungry -- "no" --> idle
 
     explore["<b>explore</b><br/>wait 1 s, then fly in a random direction,<br/>vary altitude, bounce off world edges"]
-    explore --> sees{"Each second: free acorn<br/>within view and roll succeeds (p = 0.5)?"}
+    explore --> starving{"Each second: hunger below 0.2<br/>and remembers a burial spot?"}
+    starving -- "yes" --> retrieve
+    starving -- "no" --> sees{"Free acorn within view<br/>and roll succeeds (p = 0.5)?"}
     sees -- "no" --> explore
     sees -- "yes" --> gather
+
+    retrieve["<b>retrieve</b><br/>fly to the nearest remembered<br/>burial spot, land, hop to it,<br/>forget the spot"]
+    retrieve --> still{"Acorn still buried there?"}
+    still -- "yes" --> dug["dig it up (animation)<br/>wait 1 s"]
+    dug --> eat
+    still -- "no" --> more{"More remembered spots?"}
+    more -- "yes" --> retrieve
+    more -- "no" --> rest
 
     gather["<b>gather</b><br/>fly toward the acorn, land nearby,<br/>hop to it, peck it up (animation)"]
     gather --> free{"Target still free?"}
@@ -45,7 +56,7 @@ flowchart TD
     find["<b>find burial spot</b><br/>pick a distance up to 2 screen<br/>widths either way, fly there, land,<br/>wait 1 s"]
     find --> bury
 
-    bury["<b>bury</b><br/>peck a hole and bury the acorn<br/>(animation)"]
+    bury["<b>bury</b><br/>peck a hole and bury the acorn<br/>(animation); remember the spot"]
     bury --> rest
 
     explore -. "TBD (nosiness)" .-> follow

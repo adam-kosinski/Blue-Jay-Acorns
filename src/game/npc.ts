@@ -4,14 +4,15 @@ import {
   NPC_COUNT,
   NPC_GATHER_PROBABILITY,
   NPC_IDLE_HUNGER,
+  NPC_RETRIEVE_HUNGER,
   NPC_SPEED_SCALE,
   NPC_VIEW_FRACTION,
   NPC_WAIT_SECONDS,
 } from './constants'
-import { startBury, startPickup, updateAction } from './acorns'
+import { startBury, startDig, startPickup, updateAction } from './acorns'
 import { updateHunger } from './hunger'
 import { createPlayer, groundUnder, updatePlayer } from './player'
-import type { Acorn, KeyEdges, KeyState, Npc, Player, World } from './types'
+import type { Acorn, KeyEdges, KeyState, Npc, Player, PlayerAction, World } from './types'
 
 /** Altitude band (player sizes above ground) NPCs wander through while exploring. */
 const MIN_EXPLORE_ALTITUDE = 0.8
@@ -79,6 +80,8 @@ export function createNpcs(world: World, size: number): Npc[] {
       waitTimer: 0,
       idleTargetX: null,
       idleFly: false,
+      memory: [],
+      digSpot: null,
     })
   }
   return npcs
@@ -225,6 +228,12 @@ function decide(npc: Npc, world: World, viewWidth: number): void {
     return
   }
   if (npc.state !== 'explore') {
+    return
+  }
+  // Very hungry: go and dig up an acorn this bird remembers burying.
+  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.memory.length > 0) {
+    npc.state = 'retrieve'
+    npc.digSpot = null
     return
   }
   const acorn = nearestFreeAcorn(npc.bird, world, NPC_VIEW_FRACTION * viewWidth)
@@ -379,9 +388,79 @@ function runBury(npc: Npc): void {
   }
   if (bird.held) {
     startBury(bird)
+    // startBury sets the action, which the earlier check had narrowed away.
+    const started = bird.action as PlayerAction | null
+    if (started) {
+      npc.memory.push(started.spotX)
+    }
     return
   }
   enterExploreOrIdle(npc)
+}
+
+/**
+ * Retrieve: visit the nearest remembered burial spot and try to dig the acorn up. The spot is
+ * forgotten on arrival whether or not an acorn is still there (another bird may have taken it), and
+ * the next nearest spot is tried until an acorn is found or the memory is empty.
+ *
+ * @param npc - Retrieving NPC.
+ * @param world - Play space (buried acorns).
+ */
+function runRetrieve(npc: Npc, world: World): void {
+  const { bird } = npc
+  if (bird.action) {
+    return
+  }
+  if (bird.held) {
+    // Dug one up: pause, then eat it.
+    npc.digSpot = null
+    npc.waitTimer = NPC_WAIT_SECONDS
+    npc.state = 'eat'
+    npc.eatAttempted = false
+    return
+  }
+  const cx = bird.x + bird.size / 2
+  if (npc.digSpot === null) {
+    let nearest: number | null = null
+    for (const spot of npc.memory) {
+      if (nearest === null || Math.abs(spot - cx) < Math.abs(nearest - cx)) {
+        nearest = spot
+      }
+    }
+    if (nearest === null) {
+      enterExploreOrIdle(npc)
+      return
+    }
+    npc.digSpot = nearest
+  }
+  const dx = npc.digSpot - cx
+  const far = Math.abs(dx) > LAND_DISTANCE_IN_SIZES * bird.size
+  if (far) {
+    steerHorizontal(npc, npc.digSpot)
+    steerAltitude(npc, TRAVEL_ALTITUDE, world)
+    return
+  }
+  if (bird.state === 'flying') {
+    steerHorizontal(npc, npc.digSpot)
+    npc.keys.s = true
+    return
+  }
+  if (Math.abs(dx) > ARRIVE_IN_SIZES * bird.size) {
+    steerHorizontal(npc, npc.digSpot)
+    return
+  }
+
+  // Arrived: forget this spot, then dig if an acorn is still buried there.
+  const spot = npc.digSpot
+  npc.memory.splice(npc.memory.indexOf(spot), 1)
+  npc.digSpot = null
+  releaseKeys(npc.keys)
+  const found = world.acorns.find(
+    (acorn) => acorn.state === 'buried' && Math.abs(acorn.x - spot) <= 0.25 * bird.size,
+  )
+  if (found) {
+    startDig(bird, found)
+  }
 }
 
 /**
@@ -422,6 +501,9 @@ export function updateNpcs(world: World, viewWidth: number, dt: number): void {
           break
         case 'bury':
           runBury(npc)
+          break
+        case 'retrieve':
+          runRetrieve(npc, world)
           break
         case 'eat':
           npc.eatAttempted = true

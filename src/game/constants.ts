@@ -118,6 +118,9 @@ export const OAK_TONES = ['#1f5a2b', '#2a6e34', '#348040', '#439150']
 /** NPC jays fly and hop at this fraction of the main bird's speed. */
 export const NPC_SPEED_SCALE = 0.75
 
+/** An exploring NPC this hungry (or hungrier) goes to dig up an acorn it remembers burying. */
+export const NPC_RETRIEVE_HUNGER = 0.2
+
 /** NPCs idle instead of exploring while hunger is above this; below it they explore. */
 export const NPC_IDLE_HUNGER = 0.9
 
