@@ -152,6 +152,9 @@ export const OAK_TONES = ['#1f5a2b', '#2a6e34', '#348040', '#439150']
 /** NPC jays fly and hop at this fraction of the main bird's speed. */
 export const NPC_SPEED_SCALE = 0.75
 
+/** Seconds the dashed line from an NPC to a burial site it noticed takes to fade out. */
+export const NOTICE_LINE_FADE_SECONDS = 2
+
 /** An NPC this hungry (or hungrier) is starving: it eats a held acorn even while on its way to bury it. */
 export const NPC_STARVING_HUNGER = 0.2
 

@@ -1,4 +1,5 @@
 import {
+  DIG_RESPONSE_IN_SIZES,
   HUNGER_THRESHOLD,
   NPC_BURIAL_SPAN_IN_SIZES,
   NPC_COUNT,
@@ -13,15 +14,22 @@ import {
 } from './constants'
 import { startBury, startDigAt, startPickup, updateAction } from './acorns'
 import { updateHunger } from './hunger'
+import { groundYAt } from './terrain'
 import { createPlayer, groundUnder, updatePlayer } from './player'
-import type { Acorn, KeyEdges, KeyState, Npc, Player, PlayerAction, World } from './types'
+import type { Acorn, BurialSite, KeyEdges, KeyState, Npc, Player, PlayerAction, World } from './types'
 
 /** Altitude band (player sizes above ground) NPCs wander through while exploring. */
 const MIN_EXPLORE_ALTITUDE = 0.8
 const MAX_EXPLORE_ALTITUDE = 4
 
-/** Altitude (player sizes) NPCs cruise at on the way to a burial spot. */
-const TRAVEL_ALTITUDE = 1.8
+/** Lowest altitude (player sizes) a bird cruises at when it must fly to a ground target. */
+const MIN_CRUISE_ALTITUDE = 1
+
+/** Steepest glide into a ground target (altitude per horizontal distance); the climb/descend speed is half the flying speed. */
+const GLIDE_SLOPE = 0.45
+
+/** Ground targets nearer than this (player sizes) are reached by hopping, not flying. */
+const FLY_MIN_DISTANCE_IN_SIZES = 4
 
 /** Horizontal gap (player sizes) at which an NPC counts as having reached its target. */
 const ARRIVE_IN_SIZES = 0.5
@@ -29,9 +37,6 @@ const ARRIVE_IN_SIZES = 0.5
 /** Chance per second that an idle NPC wanders a short distance, and how often it flies it. */
 const IDLE_WANDER_PROBABILITY = 0.3
 const IDLE_FLY_PROBABILITY = 0.35
-
-/** Horizontal gap (player sizes) at which a gathering NPC starts its descent. */
-const LAND_DISTANCE_IN_SIZES = 2.5
 
 const NO_EDGES: KeyEdges = { pickup: false, drop: false, bury: false, e: false }
 const EAT_EDGES: KeyEdges = { pickup: false, drop: false, bury: false, e: true }
@@ -85,23 +90,26 @@ export function createNpcs(world: World, size: number): Npc[] {
       memory: [],
       digSpot: null,
       inView: new Set(),
-      noticed: new Set(),
+      noticed: new Map(),
+      sites: [],
+      siteTarget: null,
+      glide: null,
     })
   }
   return npcs
 }
 
 /**
- * Whether the bird can currently see a free acorn.
+ * Whether the bird can currently see a point on the ground (a free acorn or a burial spot).
  *
  * A bird sees acorns up to a third of a typical screen width in front of it and about one bird-width
  * behind it (and within the same distance above or below), all measured in player sizes so the range
  * never depends on the window size. "In front" follows the way the bird faces.
  *
  * @param bird - Looking bird (its facing sets "ahead").
- * @param acorn - Acorn to check.
+ * @param acorn - Point to check (an acorn, or the spot of a burial).
  */
-function inView(bird: Player, acorn: Acorn): boolean {
+function inView(bird: Player, acorn: { x: number; y: number }): boolean {
   const forward = (acorn.x - (bird.x + bird.size / 2)) * bird.facing
   const dy = acorn.y - (bird.y + bird.size / 2)
   const ahead = NPC_PERCEIVE_AHEAD_IN_SIZES * bird.size
@@ -111,9 +119,10 @@ function inView(bird: Player, acorn: Acorn): boolean {
 
 /**
  * Updates what the NPC notices. While standing, every free acorn in view is noticed. While flying,
- * each free acorn that newly enters view gets one roll (`NPC_NOTICE_PROBABILITY`). A noticed acorn
- * stays noticed while it remains in view, and leaving view (or being taken) forgets it, so
- * re-entering view rolls again.
+ * each free acorn that newly enters view gets one roll (`NPC_NOTICE_PROBABILITY`), unless it was
+ * already noticed: a noticed acorn is remembered with the spot where it was last seen (even out of
+ * view) and never rolls again. When that spot comes back into view and the acorn is no longer there
+ * (taken, or not free any more), it is forgotten at once; the bird does not have to land.
  *
  * @param npc - NPC whose perception updates.
  * @param world - Acorn container.
@@ -126,15 +135,19 @@ function updatePerception(npc: Npc, world: World): void {
       current.add(acorn)
       // A standing bird always sees what is in view (so on landing every acorn in view counts as
       // seen); a flying bird rolls once when an acorn newly comes into view.
-      if (standing) {
-        npc.noticed.add(acorn)
-      } else if (!npc.inView.has(acorn) && Math.random() < NPC_NOTICE_PROBABILITY) {
-        npc.noticed.add(acorn)
+      if (
+        standing ||
+        npc.noticed.has(acorn) ||
+        (!npc.inView.has(acorn) && Math.random() < NPC_NOTICE_PROBABILITY)
+      ) {
+        npc.noticed.set(acorn, { x: acorn.x, y: acorn.y })
       }
     }
   }
-  for (const acorn of npc.noticed) {
-    if (!current.has(acorn)) {
+  // A remembered acorn stays remembered while its spot is out of view. Once the spot is back in
+  // view without the acorn being seen there, it is cleared immediately.
+  for (const [acorn, spot] of npc.noticed) {
+    if (!current.has(acorn) && inView(npc.bird, spot)) {
       npc.noticed.delete(acorn)
     }
   }
@@ -142,7 +155,7 @@ function updatePerception(npc: Npc, world: World): void {
 }
 
 /**
- * Nearest noticed acorn that is still free and in view, or null.
+ * Nearest noticed acorn that is still free and currently in view, or null.
  *
  * @param npc - Looking NPC.
  */
@@ -151,8 +164,8 @@ function nearestNoticedAcorn(npc: Npc): Acorn | null {
   const cy = npc.bird.y + npc.bird.size / 2
   let best: Acorn | null = null
   let bestDist = Infinity
-  for (const acorn of npc.noticed) {
-    if (acorn.state !== 'ground') {
+  for (const acorn of npc.noticed.keys()) {
+    if (acorn.state !== 'ground' || !npc.inView.has(acorn)) {
       continue
     }
     const dist = Math.hypot(acorn.x - cx, acorn.y - cy)
@@ -162,6 +175,72 @@ function nearestNoticedAcorn(npc: Npc): Acorn | null {
     }
   }
   return best
+}
+
+/**
+ * What an NPC will go for next: the nearest of the free acorns it has noticed and the burial sites
+ * of other birds it remembers (sites count only while in view, like free acorns).
+ *
+ * @param npc - Looking NPC.
+ * @param world - Terrain for the ground height at a site.
+ */
+function pickTarget(npc: Npc, world: World): { acorn: Acorn | null; site: BurialSite | null } {
+  const cx = npc.bird.x + npc.bird.size / 2
+  const cy = npc.bird.y + npc.bird.size / 2
+  const acorn = nearestNoticedAcorn(npc)
+  const acornDist = acorn ? Math.hypot(acorn.x - cx, acorn.y - cy) : Infinity
+  let site: BurialSite | null = null
+  let siteDist = Infinity
+  for (const candidate of npc.sites) {
+    const y = groundYAt(world.terrain, candidate.x)
+    if (!inView(npc.bird, { x: candidate.x, y })) {
+      continue
+    }
+    const dist = Math.hypot(candidate.x - cx, y - cy)
+    if (dist < siteDist) {
+      site = candidate
+      siteDist = dist
+    }
+  }
+  return acornDist <= siteDist ? { acorn, site: null } : { acorn: null, site }
+}
+
+/**
+ * Sets the NPC's gather target from a pick.
+ *
+ * @param npc - Gathering NPC.
+ * @param pick - Result of `pickTarget`.
+ * @returns True when there was something to go for.
+ */
+function applyPick(npc: Npc, pick: { acorn: Acorn | null; site: BurialSite | null }): boolean {
+  npc.target = pick.acorn
+  npc.siteTarget = pick.site
+  return pick.acorn !== null || pick.site !== null
+}
+
+/**
+ * Lets an NPC perceive a burial that just happened. If the spot is in view the NPC notices it (a
+ * standing bird always does, a flying bird 75% of the time) and remembers it as another bird's
+ * burial site; the fading line to it starts now.
+ *
+ * @param npc - Perceiving NPC.
+ * @param world - Terrain and clock.
+ * @param x - World x of the burial.
+ * @param owner - The bird that buried the acorn.
+ */
+function perceiveBurial(npc: Npc, world: World, x: number, owner: Player): void {
+  if (owner === npc.bird || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
+    return
+  }
+  if (npc.bird.state !== 'standing' && Math.random() >= NPC_NOTICE_PROBABILITY) {
+    return
+  }
+  const known = npc.sites.find((site) => Math.abs(site.x - x) <= 0.25 * npc.bird.size)
+  if (known) {
+    known.noticedAt = world.time
+  } else {
+    npc.sites.push({ x, owner, noticedAt: world.time })
+  }
 }
 
 /**
@@ -213,18 +292,46 @@ function releaseKeys(keys: KeyState): void {
 }
 
 /**
+ * Direction toward the nearest remembered free acorn or other-bird burial site, or null when the NPC
+ * remembers none. Used to pick the initial explore direction.
+ *
+ * @param npc - Exploring NPC.
+ */
+function directionToRemembered(npc: Npc): 1 | -1 | null {
+  const cx = npc.bird.x + npc.bird.size / 2
+  let nearestX: number | null = null
+  const consider = (x: number): void => {
+    if (nearestX === null || Math.abs(x - cx) < Math.abs(nearestX - cx)) {
+      nearestX = x
+    }
+  }
+  for (const spot of npc.noticed.values()) {
+    consider(spot.x)
+  }
+  for (const site of npc.sites) {
+    consider(site.x)
+  }
+  if (nearestX === null) {
+    return null
+  }
+  return nearestX >= cx ? 1 : -1
+}
+
+/**
  * Switches to the explore state with a fresh direction and altitude.
  *
  * @param npc - NPC to update.
  */
 function enterExplore(npc: Npc): void {
   npc.state = 'explore'
-  npc.direction = randomDirection()
+  npc.direction = directionToRemembered(npc) ?? randomDirection()
   // While it waits, the bird looks away from its travel direction first and then toward it.
   npc.bird.facing = npc.direction === 1 ? -1 : 1
   npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
   npc.altitudeTimer = randRange(1, 3)
   npc.target = null
+  npc.siteTarget = null
+  npc.glide = null
   npc.waitTimer = NPC_WAIT_SECONDS
 }
 
@@ -237,6 +344,8 @@ function enterExploreOrIdle(npc: Npc): void {
   if (npc.bird.hunger > NPC_IDLE_HUNGER) {
     npc.state = 'idle'
     npc.target = null
+    npc.siteTarget = null
+    npc.glide = null
     npc.idleTargetX = null
   } else {
     enterExplore(npc)
@@ -275,24 +384,61 @@ function decide(npc: Npc, world: World): void {
       const cx = npc.bird.x + size / 2
       const trip = (Math.random() < 0.5 ? -1 : 1) * randRange(1.5, 5) * size
       npc.idleTargetX = Math.max(size, Math.min(world.width - size, cx + trip))
-      npc.idleFly = Math.random() < IDLE_FLY_PROBABILITY
+      npc.idleFly = Math.abs(trip) >= FLY_MIN_DISTANCE_IN_SIZES * size && Math.random() < IDLE_FLY_PROBABILITY
     }
     return
   }
   if (npc.state !== 'explore') {
     return
   }
-  // An acorn the bird has noticed always comes first, even when it is starving.
-  const acorn = nearestNoticedAcorn(npc)
-  if (acorn) {
+  // An acorn (or another bird's burial site) the bird has noticed always comes first, even when it
+  // is starving.
+  if (applyPick(npc, pickTarget(npc, world))) {
     npc.state = 'gather'
-    npc.target = acorn
     return
   }
   // Very hungry and nothing in view: go and dig up an acorn this bird remembers burying.
   if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.memory.length > 0) {
     npc.state = 'retrieve'
     npc.digSpot = null
+  }
+}
+
+/**
+ * Moves toward a ground target x along a straight line: the bird starts a trip at its current altitude
+ * (taking off only to the lowest cruising height when the target is far) and descends steadily so
+ * that it arrives at ground level, never climbing more than necessary. A bird already on the ground
+ * with a near target just hops.
+ *
+ * @param npc - Travelling NPC.
+ * @param targetX - World x of the ground target.
+ * @param world - Play space.
+ */
+function glideTo(npc: Npc, targetX: number, world: World): void {
+  const { bird } = npc
+  const distance = Math.abs(targetX - (bird.x + bird.size / 2)) / bird.size
+  const altitude = altitudeOf(bird, world)
+  if (!npc.glide || Math.abs(npc.glide.targetX - targetX) > 1) {
+    npc.glide = {
+      targetX,
+      startAltitude: Math.max(altitude, distance > FLY_MIN_DISTANCE_IN_SIZES ? MIN_CRUISE_ALTITUDE : 0),
+      startDistance: Math.max(distance, 0.001),
+    }
+  }
+  const { startAltitude, startDistance } = npc.glide
+  // Follow the direct line from the start of the trip when it is shallow enough; otherwise stay level
+  // until the steepest glide cone is reached and then follow that.
+  const desired =
+    startAltitude / startDistance <= GLIDE_SLOPE
+      ? (startAltitude * distance) / startDistance
+      : Math.min(startAltitude, GLIDE_SLOPE * distance)
+  steerHorizontal(npc, targetX)
+  // Once over the target (horizontally), just land.
+  if (desired < 0.1 || distance <= ARRIVE_IN_SIZES) {
+    npc.keys.w = false
+    npc.keys.s = true
+  } else {
+    steerAltitude(npc, desired, world)
   }
 }
 
@@ -312,8 +458,7 @@ function runIdle(npc: Npc, world: World): void {
   const arrived = Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size
   if (npc.idleFly) {
     if (!arrived) {
-      steerHorizontal(npc, npc.idleTargetX)
-      steerAltitude(npc, 1.2, world)
+      glideTo(npc, npc.idleTargetX, world)
     } else if (bird.state === 'flying') {
       npc.keys.s = true
     } else {
@@ -353,7 +498,8 @@ function runExplore(npc: Npc, world: World, dt: number): void {
 }
 
 /**
- * Gather: fly toward the target acorn, land near it, walk to it, pick it up, then eat or bury it.
+ * Gather: fly toward the target acorn (or another bird's burial site), land near it, hop to it, pick
+ * it up (or dig for it), then eat or bury it.
  *
  * Retargets to another visible free acorn if the target was taken; explores if none remain.
  *
@@ -366,8 +512,10 @@ function runGather(npc: Npc, world: World): void {
     return
   }
   if (bird.held) {
-    // The pick-up animation finished: pause a moment, then eat or go bury it.
+    // The pick-up or dig animation finished with an acorn: pause a moment, then eat or go bury it.
+    // A burial site that was dug at stays remembered (there may be more buried nearby).
     npc.target = null
+    npc.siteTarget = null
     npc.waitTimer = NPC_WAIT_SECONDS
     if (bird.hunger < HUNGER_THRESHOLD) {
       npc.state = 'eat'
@@ -377,29 +525,35 @@ function runGather(npc: Npc, world: World): void {
     }
     return
   }
-  if (!npc.target || npc.target.state !== 'ground') {
-    npc.target = nearestNoticedAcorn(npc)
-    if (!npc.target) {
+  // A site is dropped from memory when a dig there comes up empty (see updateNpcs); acorns can be taken.
+  if (npc.siteTarget && !npc.sites.includes(npc.siteTarget)) {
+    npc.siteTarget = null
+  }
+  if (!npc.siteTarget && (!npc.target || npc.target.state !== 'ground')) {
+    if (!applyPick(npc, pickTarget(npc, world))) {
       enterExploreOrIdle(npc)
       return
     }
   }
-  const target = npc.target
-  const dx = target.x - (bird.x + bird.size / 2)
-  steerHorizontal(npc, target.x)
+  const targetX = npc.siteTarget ? npc.siteTarget.x : (npc.target?.x ?? bird.x)
+  const dx = targetX - (bird.x + bird.size / 2)
+
+  if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * bird.size) {
+    // Fly to it (taking off only if farther than a couple of bird widths); nearer targets are hopped to.
+    glideTo(npc, targetX, world)
+    return
+  }
+  steerHorizontal(npc, targetX)
   npc.keys.w = false
   npc.keys.s = false
 
-  if (bird.state === 'flying') {
-    if (Math.abs(dx) < LAND_DISTANCE_IN_SIZES * bird.size) {
-      npc.keys.s = true
-    }
-    return
-  }
-
   if (Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size) {
     releaseKeys(npc.keys)
-    startPickup(bird, target)
+    if (npc.siteTarget) {
+      startDigAt(bird, npc.siteTarget.x)
+    } else if (npc.target) {
+      startPickup(bird, npc.target)
+    }
   }
 }
 
@@ -413,11 +567,11 @@ function runFindBurialSpot(npc: Npc, world: World): void {
   const { bird } = npc
   const dx = npc.targetX - (bird.x + bird.size / 2)
   const arrived = Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size
-  steerHorizontal(npc, npc.targetX)
   if (!arrived) {
-    steerAltitude(npc, TRAVEL_ALTITUDE, world)
+    glideTo(npc, npc.targetX, world)
     return
   }
+  steerHorizontal(npc, npc.targetX)
   npc.keys.w = false
   npc.keys.s = true
   if (bird.state === 'standing') {
@@ -474,10 +628,8 @@ function runRetrieve(npc: Npc, world: World): void {
   }
   // A free acorn that comes into view beats the trip: go and gather it (it will be eaten, since the
   // bird is hungry). The remembered spot stays in memory because it was not visited.
-  const noticed = nearestNoticedAcorn(npc)
-  if (noticed) {
+  if (applyPick(npc, pickTarget(npc, world))) {
     npc.state = 'gather'
-    npc.target = noticed
     npc.digSpot = null
     return
   }
@@ -496,15 +648,10 @@ function runRetrieve(npc: Npc, world: World): void {
     npc.digSpot = nearest
   }
   const dx = npc.digSpot - cx
-  const far = Math.abs(dx) > LAND_DISTANCE_IN_SIZES * bird.size
-  if (far) {
-    steerHorizontal(npc, npc.digSpot)
-    steerAltitude(npc, TRAVEL_ALTITUDE, world)
-    return
-  }
-  if (bird.state === 'flying') {
-    steerHorizontal(npc, npc.digSpot)
-    npc.keys.s = true
+  const far = Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * bird.size
+  if (far || bird.state === 'flying') {
+    // Fly straight to the spot, descending along the way, and land at it.
+    glideTo(npc, npc.digSpot, world)
     return
   }
   if (Math.abs(dx) > ARRIVE_IN_SIZES * bird.size) {
@@ -532,6 +679,13 @@ function runRetrieve(npc: Npc, world: World): void {
  * @param dt - Elapsed seconds.
  */
 export function updateNpcs(world: World, dt: number): void {
+  for (const event of world.burialEvents) {
+    for (const npc of world.npcs) {
+      perceiveBurial(npc, world, event.x, event.owner)
+    }
+  }
+  world.burialEvents = []
+
   for (const npc of world.npcs) {
     const { bird } = npc
     if (bird.held && !bird.action && bird.eatTimer === 0 && npc.state !== 'eat') {
@@ -541,6 +695,7 @@ export function updateNpcs(world: World, dt: number): void {
         npc.state = 'eat'
         npc.eatAttempted = false
         npc.target = null
+        npc.siteTarget = null
         npc.digSpot = null
         npc.idleTargetX = null
       } else if (npc.state === 'explore' || npc.state === 'idle') {
@@ -565,6 +720,11 @@ export function updateNpcs(world: World, dt: number): void {
       }
       // A decision can start a pause (entering explore); then the bird must not move this frame.
       waiting = npc.waitTimer > 0
+    }
+
+    // A trip's straight-line glide starts fresh from the ground each time.
+    if (bird.state === 'standing') {
+      npc.glide = null
     }
 
     releaseKeys(npc.keys)
@@ -603,6 +763,13 @@ export function updateNpcs(world: World, dt: number): void {
 
     updatePlayer(bird, npc.keys, dt, world, NPC_SPEED_SCALE)
     updateAction(bird, world, dt)
+    if (bird.digFailX !== null) {
+      // A dig that comes up empty removes the other-bird burial sites within range of it.
+      const failX = bird.digFailX
+      const range = DIG_RESPONSE_IN_SIZES * bird.size
+      npc.sites = npc.sites.filter((site) => Math.abs(site.x - failX) > range)
+      bird.digFailX = null
+    }
     updateHunger(bird, startEating ? EAT_EDGES : NO_EDGES, world, dt)
     if (!waiting && npc.state === 'eat' && !startEating && npc.eatAttempted && bird.eatTimer === 0) {
       // Finished eating (or could not start): bury a leftover acorn, otherwise carry on.

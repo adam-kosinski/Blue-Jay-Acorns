@@ -135,6 +135,7 @@ export function GameCanvas() {
         updateAction(player, world, dt)
         handleAcornActions(player, edges, world)
         updateHunger(player, edges, world, dt, !pauseHungerRef.current)
+        world.time += dt
         updateNpcs(world, dt)
         updateTreeDrops(world, player.size, dt, dropMultiplierRef.current)
         updateAcorns(world, player.size, dt)

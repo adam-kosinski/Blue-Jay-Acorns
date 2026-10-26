@@ -398,6 +398,8 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight),
     npcs: [],
     acornDropTimer: 0,
+    time: 0,
+    burialEvents: [],
   }
   world.npcs = createNpcs(world, playerSize)
   return world

@@ -29,6 +29,23 @@ export type Player = {
   hopDir: 1 | -1
   /** Pick-up, bury or dig-up animation in progress, if any. */
   action: PlayerAction | null
+  /** World x of a dig that came up empty since the owner last looked (consumed by the NPC code). */
+  digFailX: number | null
+}
+
+/** A burial another bird made that an NPC noticed; it is treated like a free acorn to dig for. */
+export type BurialSite = {
+  x: number
+  /** The bird that buried the acorn. */
+  owner: Player
+  /** World time (seconds) the NPC noticed it; the line to it fades from this moment. */
+  noticedAt: number
+}
+
+/** A burial that just happened, queued for NPCs to perceive. */
+export type BurialEvent = {
+  x: number
+  owner: Player
 }
 
 /** A timed acorn action: the acorn changes hands at the halfway point of the animation. */
@@ -254,8 +271,14 @@ export type Npc = {
   digSpot: number | null
   /** Free acorns currently in the bird's view (used to detect acorns entering view). */
   inView: Set<Acorn>
-  /** Acorns in view that the bird noticed when they came into view. */
-  noticed: Set<Acorn>
+  /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */
+  noticed: Map<Acorn, { x: number; y: number }>
+  /** Other birds' burial sites this NPC noticed and still remembers. */
+  sites: BurialSite[]
+  /** The burial site being gathered by digging, or null. */
+  siteTarget: BurialSite | null
+  /** Straight-line descent into the current ground target: where the trip started. */
+  glide: { targetX: number; startAltitude: number; startDistance: number } | null
 }
 
 /** Generated play space: bounds plus scenery. */
@@ -278,4 +301,8 @@ export type World = {
   npcs: Npc[]
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
   acornDropTimer: number
+  /** Game clock in seconds (drives the fading lines to noticed burial sites). */
+  time: number
+  /** Burials this frame that NPCs have not yet had a chance to perceive. */
+  burialEvents: BurialEvent[]
 }

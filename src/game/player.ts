@@ -31,6 +31,7 @@ export function createPlayer(world: World, size: number): Player {
     hopStartX: 0,
     hopDir: 1,
     action: null,
+    digFailX: null,
   }
 }
 

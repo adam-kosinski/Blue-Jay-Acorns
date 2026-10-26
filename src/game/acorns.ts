@@ -157,6 +157,10 @@ export function updateAction(player: Player, world: World, dt: number): void {
         nearest.state = 'held'
         player.held = nearest
       } else {
+        // Nothing responded: remember where the empty dig was (NPCs forget sites in range of it).
+        if (!nearest) {
+          player.digFailX = action.spotX
+        }
         player.action = null
         return
       }
@@ -169,6 +173,7 @@ export function updateAction(player: Player, world: World, dt: number): void {
         acorn.x = action.spotX
         acorn.y = groundYAt(world.terrain, acorn.x) + acorn.radius * 1.5
         player.held = null
+        world.burialEvents.push({ x: acorn.x, owner: player })
       }
     } else {
       if (acorn.state === 'ground' && !player.held) {

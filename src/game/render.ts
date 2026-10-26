@@ -6,6 +6,7 @@ import {
   FOREST_HAZE_COLOR,
   GROUND_COLOR,
   HUNGER_THRESHOLD,
+  NOTICE_LINE_FADE_SECONDS,
   OAK_TONES,
   PLAYER_COLOR,
   TRUNK_COLOR,
@@ -76,6 +77,7 @@ export function renderScene(
     }
   }
   drawBird(ctx, player)
+  drawNoticeLines(ctx, world)
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
 
   ctx.restore()
@@ -1797,6 +1799,52 @@ function drawMinimap(
   ctx.strokeStyle = '#1f3d52'
   ctx.lineWidth = 2
   ctx.strokeRect(0, 0, mapW, mapH)
+  ctx.restore()
+}
+
+/**
+ * Draws a dashed white line from each NPC's eye to every burial site it recently noticed, with a
+ * little padding at both ends, fading out over `NOTICE_LINE_FADE_SECONDS`. The line is redrawn from
+ * the bird's current position every frame, so it stays connected as the bird moves.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - NPCs, their sites, terrain, and the game clock.
+ */
+function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
+  ctx.save()
+  ctx.setLineDash([10, 8])
+  ctx.lineWidth = 3
+  ctx.lineCap = 'round'
+  for (const npc of world.npcs) {
+    const bird = npc.bird
+    const u = bird.size / 100
+    // The line leaves from the NPC's eye (a standing bird holds its head higher than a flying one).
+    const standing = bird.state === 'standing'
+    const eyeX = bird.x + bird.size / 2 + bird.facing * (standing ? 26 : 31) * u
+    const eyeY = bird.y + bird.size / 2 + (standing ? -29 : -17) * u
+    for (const site of npc.sites) {
+      const fade = 1 - (world.time - site.noticedAt) / NOTICE_LINE_FADE_SECONDS
+      if (fade <= 0) {
+        continue
+      }
+      const toX = site.x
+      const toY = groundYAt(world.terrain, site.x)
+      const dx = toX - eyeX
+      const dy = toY - eyeY
+      const length = Math.hypot(dx, dy)
+      // Padding at both ends so the line neither touches the bird nor reaches the burial spot.
+      const padStart = bird.size * 0.2
+      const padEnd = bird.size * 0.25
+      if (length <= padStart + padEnd) {
+        continue
+      }
+      ctx.strokeStyle = `rgba(255, 255, 255, ${0.9 * fade})`
+      ctx.beginPath()
+      ctx.moveTo(eyeX + (dx / length) * padStart, eyeY + (dy / length) * padStart)
+      ctx.lineTo(toX - (dx / length) * padEnd, toY - (dy / length) * padEnd)
+      ctx.stroke()
+    }
+  }
   ctx.restore()
 }
 
