@@ -1,6 +1,18 @@
 /** Player square is one eighth of the viewport height. */
 export const PLAYER_VIEW_FRACTION = 1 / 8
 
+/**
+ * The game is simulated in a fixed logical view this tall (in logical pixels) and scaled to fit the
+ * window, so no gameplay distance depends on the window's size.
+ */
+export const LOGICAL_VIEW_HEIGHT = 800
+
+/** Aspect ratio of a typical screen, used wherever a "screen width" is needed as a guideline. */
+export const TYPICAL_ASPECT_RATIO = 16 / 9
+
+/** Width of a typical screen in player sizes (eight sizes tall, 16:9). */
+export const TYPICAL_VIEW_WIDTH_IN_SIZES = TYPICAL_ASPECT_RATIO / PLAYER_VIEW_FRACTION
+
 /** Acorn diameter is one quarter of the player height. */
 export const ACORN_PLAYER_FRACTION = 1 / 4
 
@@ -41,16 +53,28 @@ export const BURY_DURATION = 0.9
 export const NPC_WAIT_SECONDS = 1
 
 /**
- * Chance per second that an oak drops a group of acorns. With 5 oaks and 3-10 acorns per group this
- * is about 1 acorn per minute worldwide, matching what the 4 NPC jays eat once the starting acorns
- * are gone (each hungry jay eats roughly one acorn a minute; in headless runs they ate 5-8 of the
- * starting acorns in the first two minutes, then ran out).
+ * Chance per second that each oak drops a group of acorns (hard-coded). The original target matched
+ * real nutrition: all four birds lose 4/60 of a bar per second and an acorn refills 1/3 of a bar,
+ * so (4/60) / (1/3) = 0.2 acorns per second, which with 5 oaks and 6.5 acorns per group was 0.00615.
+ * Groups were then halved (2-5 acorns, average 3.5) and the chance doubled to 0.0123, giving
+ * 5 x 0.0123 x 3.5 = about 0.215 acorns per second in expectation.
  */
-export const ACORN_DROP_CHANCE_PER_SECOND = 0.0005
+export const ACORN_DROP_CHANCE_PER_SECOND = 0.0123
+
+/** Debug setting for the acorn drop rate: none spawns nothing, deficit is 25% less, surplus 25% more than the default. */
+export const ACORN_DROP_MODES = {
+  none: 0,
+  deficit: 0.75,
+  default: 1,
+  surplus: 1.25,
+} as const
+
+/** Which acorn drop rate the debug toggle selects. */
+export type AcornDropMode = keyof typeof ACORN_DROP_MODES
 
 /** Acorns per dropped group. */
-export const ACORN_GROUP_MIN = 3
-export const ACORN_GROUP_MAX = 10
+export const ACORN_GROUP_MIN = 2
+export const ACORN_GROUP_MAX = 5
 
 /** No new acorns drop while the world already holds this many. */
 export const ACORN_WORLD_CAP = 160
@@ -69,6 +93,9 @@ export const BEAK_REACH_X = 54
  * one third of the original 140px hover with a 48px sprite.
  */
 export const HOVER_OFFSET_IN_SIZES = 140 / 48 / 3
+
+/** How close (in player sizes) a buried acorn must be to where the beak lands for a dig to dig it up. */
+export const DIG_RESPONSE_IN_SIZES = 0.5
 
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
 export const REACH_IN_SIZES = 0.9
@@ -101,22 +128,32 @@ export const ACORN_NUTRITION = 1 / 3
 export const EAT_DURATION = 0.7
 
 /** NPC blue jays spawned per run. */
-export const NPC_COUNT = 4
+export const NPC_COUNT = 3
 
-/** NPC viewing distance as a fraction of the viewport width. */
-export const NPC_VIEW_FRACTION = 1 / 3
+/** How far ahead of itself (in player sizes) an NPC can perceive acorns: a third of a typical screen. */
+export const NPC_PERCEIVE_AHEAD_IN_SIZES = TYPICAL_VIEW_WIDTH_IN_SIZES / 3
 
-/** Chance per second that an exploring NPC with a visible acorn starts gathering. */
-export const NPC_GATHER_PROBABILITY = 0.5
+/** How far behind itself (in player sizes) an NPC can perceive acorns. */
+export const NPC_PERCEIVE_BEHIND_IN_SIZES = 1
 
-/** Maximum burial-trip distance in viewport widths (either direction). */
-export const NPC_BURIAL_SPAN_VIEWS = 2
+/**
+ * Chance that a flying NPC notices an acorn at the moment it enters the bird's view. The roll is
+ * made once per acorn each time it comes into view (simulating whether the bird sees it). A
+ * standing bird always notices every acorn in view.
+ */
+export const NPC_NOTICE_PROBABILITY = 0.75
+
+/** Maximum burial-trip distance in player sizes (either direction): two typical screen widths. */
+export const NPC_BURIAL_SPAN_IN_SIZES = 2 * TYPICAL_VIEW_WIDTH_IN_SIZES
 
 /** Leaf tones for foreground oaks, dark to light (distant layers blend these toward haze). */
 export const OAK_TONES = ['#1f5a2b', '#2a6e34', '#348040', '#439150']
 
 /** NPC jays fly and hop at this fraction of the main bird's speed. */
 export const NPC_SPEED_SCALE = 0.75
+
+/** An NPC this hungry (or hungrier) is starving: it eats a held acorn even while on its way to bury it. */
+export const NPC_STARVING_HUNGER = 0.2
 
 /** An exploring NPC this hungry (or hungrier) goes to dig up an acorn it remembers burying. */
 export const NPC_RETRIEVE_HUNGER = 0.2

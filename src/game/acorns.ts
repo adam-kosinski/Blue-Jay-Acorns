@@ -6,6 +6,7 @@ import {
   ACORN_WORLD_CAP,
   BEAK_REACH_X,
   BURY_DURATION,
+  DIG_RESPONSE_IN_SIZES,
   PICKUP_DURATION,
   REACH_IN_SIZES,
   acornRadiusForPlayer,
@@ -45,28 +46,35 @@ function nearestAcorn(player: Player, world: World, state: Acorn['state']): Acor
  * @param acorn - Ground acorn to pick up.
  */
 export function startPickup(player: Player, acorn: Acorn): void {
-  startReach(player, acorn, 'pickup', PICKUP_DURATION)
+  startReach(player, acorn.x, 'pickup', PICKUP_DURATION, acorn)
 }
 
 /**
- * Starts a pecking animation toward an acorn on or in the ground: the bird turns to it and shifts
+ * Starts a pecking animation toward a place on or in the ground: the bird turns to it and shifts
  * sideways a little so the beak tip lands on it.
  *
  * @param player - Bird doing the pecking.
- * @param acorn - Target acorn.
+ * @param x - World x the beak should land on.
  * @param kind - 'pickup' or 'dig'.
  * @param duration - Animation length in seconds.
+ * @param acorn - The acorn being picked up, or null for a dig.
  */
-function startReach(player: Player, acorn: Acorn, kind: 'pickup' | 'dig', duration: number): void {
-  player.facing = acorn.x >= player.x + player.size / 2 ? 1 : -1
+function startReach(
+  player: Player,
+  x: number,
+  kind: 'pickup' | 'dig',
+  duration: number,
+  acorn: Acorn | null,
+): void {
+  player.facing = x >= player.x + player.size / 2 ? 1 : -1
   const tipX = player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
-  const slide = Math.max(-0.5 * player.size, Math.min(0.8 * player.size, acorn.x - tipX))
+  const slide = Math.max(-0.5 * player.size, Math.min(0.8 * player.size, x - tipX))
   player.action = {
     kind,
     timer: 0,
     duration,
     acorn,
-    spotX: acorn.x,
+    spotX: x,
     transferred: false,
     slideTotal: slide,
     slideApplied: 0,
@@ -97,13 +105,16 @@ export function startBury(player: Player): void {
 }
 
 /**
- * Starts the dig-up animation for a buried acorn; it comes into the beak at the halfway point.
+ * Starts a dig animation at a location. A dig is not tied to any particular burial spot: at the
+ * halfway point whichever buried acorn is nearest to where the beak landed (within
+ * `DIG_RESPONSE_IN_SIZES`) responds and comes up into the beak; if none is close enough, nothing
+ * happens.
  *
  * @param player - Bird doing the digging.
- * @param acorn - Buried acorn to dig up.
+ * @param x - World x the beak should land on.
  */
-export function startDig(player: Player, acorn: Acorn): void {
-  startReach(player, acorn, 'dig', BURY_DURATION)
+export function startDigAt(player: Player, x: number): void {
+  startReach(player, x, 'dig', BURY_DURATION, null)
 }
 
 /**
@@ -130,7 +141,29 @@ export function updateAction(player: Player, world: World, dt: number): void {
   if (!action.transferred && action.timer >= action.duration / 2) {
     action.transferred = true
     const acorn = action.acorn
-    if (action.kind === 'bury') {
+    if (action.kind === 'dig') {
+      // The nearest buried acorn to the beak responds, if it is close enough.
+      const range = DIG_RESPONSE_IN_SIZES * player.size
+      let nearest: Acorn | null = null
+      let nearestDist = range
+      for (const candidate of world.acorns) {
+        const dist = Math.abs(candidate.x - action.spotX)
+        if (candidate.state === 'buried' && dist <= nearestDist) {
+          nearest = candidate
+          nearestDist = dist
+        }
+      }
+      if (nearest && !player.held) {
+        nearest.state = 'held'
+        player.held = nearest
+      } else {
+        player.action = null
+        return
+      }
+    } else if (!acorn) {
+      player.action = null
+      return
+    } else if (action.kind === 'bury') {
       if (player.held === acorn) {
         acorn.state = 'buried'
         acorn.x = action.spotX
@@ -138,8 +171,7 @@ export function updateAction(player: Player, world: World, dt: number): void {
         player.held = null
       }
     } else {
-      const wanted = action.kind === 'pickup' ? 'ground' : 'buried'
-      if (acorn.state === wanted && !player.held) {
+      if (acorn.state === 'ground' && !player.held) {
         acorn.state = 'held'
         player.held = acorn
       } else {
@@ -154,10 +186,9 @@ export function updateAction(player: Player, world: World, dt: number): void {
 }
 
 /**
- * Applies S (pick up / drop on the ground) and B (bury / dig up) presses for this frame.
+ * Applies S (pick up), Q (drop) and left Shift (bury / dig up) presses for this frame.
  *
- * Both only act on a fresh press while standing and not already busy, so a held S that carried the
- * bird down to the ground does nothing. Pick-up, bury and dig-up play an animation first.
+ * Both only act on a fresh press while standing and not already busy. Pick-up, bury and dig-up play an animation first.
  *
  * @param player - Mutable player (holds at most one acorn).
  * @param edges - Fresh key presses since the last frame.
@@ -168,29 +199,29 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
     return
   }
 
-  if (edges.s) {
-    if (player.held) {
-      player.held.state = 'ground'
-      player.held.vy = 0
-      player.held.x = player.x + player.size / 2 + player.facing * player.size * 0.55
-      player.held.y = player.y + player.size * 0.4
-      player.held = null
-    } else {
-      const acorn = nearestAcorn(player, world, 'ground')
-      if (acorn) {
-        startPickup(player, acorn)
-      }
+  if (edges.drop && player.held) {
+    player.held.state = 'ground'
+    player.held.vy = 0
+    player.held.x = player.x + player.size / 2 + player.facing * player.size * 0.55
+    player.held.y = player.y + player.size * 0.4
+    player.held = null
+  }
+
+  if (edges.pickup && !player.held) {
+    const acorn = nearestAcorn(player, world, 'ground')
+    if (acorn) {
+      startPickup(player, acorn)
     }
   }
 
-  if (edges.b && !player.action) {
+  if (edges.bury && !player.action) {
     if (player.held) {
       startBury(player)
     } else {
-      const acorn = nearestAcorn(player, world, 'buried')
-      if (acorn) {
-        startDig(player, acorn)
-      }
+      // Dig at the nearest burial spot in reach, or just ahead of the beak when there is none.
+      const nearby = nearestAcorn(player, world, 'buried')
+      const ahead = player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
+      startDigAt(player, nearby ? nearby.x : ahead)
     }
   }
 }
@@ -202,13 +233,19 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
  * @param world - Trees, acorns, and terrain.
  * @param playerSize - Current player size (sets the acorn size).
  * @param dt - Elapsed seconds.
+ * @param rateMultiplier - Scales the drop chance (the debug deficit / default / surplus setting).
  */
-export function updateTreeDrops(world: World, playerSize: number, dt: number): void {
+export function updateTreeDrops(
+  world: World,
+  playerSize: number,
+  dt: number,
+  rateMultiplier = 1,
+): void {
   world.acornDropTimer += dt
   while (world.acornDropTimer >= 1) {
     world.acornDropTimer -= 1
     for (const tree of world.trees) {
-      if (world.acorns.length >= ACORN_WORLD_CAP || Math.random() >= ACORN_DROP_CHANCE_PER_SECOND) {
+      if (world.acorns.length >= ACORN_WORLD_CAP || Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * rateMultiplier) {
         continue
       }
       const baseX = tree.x + tree.trunkWidth / 2

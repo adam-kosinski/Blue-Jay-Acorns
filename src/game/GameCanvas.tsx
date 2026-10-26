@@ -1,22 +1,68 @@
-import { useEffect, useRef, type MouseEvent } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from 'react'
 import { handleAcornActions, updateAcorns, updateAction, updateTreeDrops } from './acorns'
 import { cameraForPlayer } from './camera'
-import { acornRadiusForPlayer, playerSizeForView } from './constants'
+import {
+  ACORN_DROP_MODES,
+  LOGICAL_VIEW_HEIGHT,
+  playerSizeForView,
+  type AcornDropMode,
+} from './constants'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
-import { createPlayer, syncPlayerToWorld, updatePlayer } from './player'
+import { createPlayer, updatePlayer } from './player'
 import { renderScene, warmUpScene } from './render'
-import { groundYAt } from './terrain'
 import type { Player, World } from './types'
 import { createWorld } from './world'
 
+const DROP_MODE_STORAGE_KEY = 'blue-jay-acorns:drop-mode'
+const PAUSE_HUNGER_STORAGE_KEY = 'blue-jay-acorns:pause-hunger'
+
 /**
- * Full-viewport canvas that runs the 2D prototype game loop.
+ * Reads whether the debug "pause my hunger" toggle was left on.
+ */
+function loadPauseHunger(): boolean {
+  try {
+    return window.localStorage.getItem(PAUSE_HUNGER_STORAGE_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Reads the saved acorn drop-rate mode (defaults when nothing valid is stored or storage fails).
+ */
+function loadDropMode(): AcornDropMode {
+  try {
+    const saved = window.localStorage.getItem(DROP_MODE_STORAGE_KEY)
+    if (saved && saved in ACORN_DROP_MODES) {
+      return saved as AcornDropMode
+    }
+  } catch {
+    // Storage can be unavailable; fall back to the default.
+  }
+  return 'default'
+}
+
+/**
+ * Full-viewport canvas that runs the 2D prototype game loop, plus a debug panel in the top-left
+ * corner for the acorn drop rate (kept across restarts and reloads).
  */
 export function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const restartRef = useRef<() => void>(() => {})
+  const [dropMode, setDropMode] = useState<AcornDropMode>(loadDropMode)
+  const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
+  const dropMultiplierRef = useRef<number>(ACORN_DROP_MODES[dropMode])
+  const pauseHungerRef = useRef<boolean>(pauseHunger)
+
+  useEffect(() => {
+    dropMultiplierRef.current = ACORN_DROP_MODES[dropMode]
+  }, [dropMode])
+
+  useEffect(() => {
+    pauseHungerRef.current = pauseHunger
+  }, [pauseHunger])
 
   useEffect(() => {
     const canvasEl = canvasRef.current
@@ -32,50 +78,44 @@ export function GameCanvas() {
     const ctx = ctx2d
 
     const { keys, edges, clearEdges, dispose } = createKeyState()
-    let world: World = createWorld(window.innerWidth, window.innerHeight)
-    let player: Player = createPlayer(world, playerSizeForView(window.innerHeight))
+    // The game runs in a fixed logical view (LOGICAL_VIEW_HEIGHT tall) scaled to the window, so
+    // gameplay distances never depend on the window's size.
+    let scale = window.innerHeight / LOGICAL_VIEW_HEIGHT
+    const logicalWidth = (): number => window.innerWidth / scale
+    let world: World = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+    let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
     let gameOver = false
-    let warmUp: Generator<void> | null = warmUpScene(world, player, window.devicePixelRatio || 1)
+    let warmUp: Generator<void> | null = warmUpScene(
+      world,
+      player,
+      (window.devicePixelRatio || 1) * scale,
+    )
     let lastTime = performance.now()
 
     /**
      * Rebuilds world scenery and resets the player to the starting pose.
      */
     function regenerate(): void {
-      world = createWorld(window.innerWidth, window.innerHeight)
-      player = createPlayer(world, playerSizeForView(window.innerHeight))
-      warmUp = warmUpScene(world, player, window.devicePixelRatio || 1)
+      world = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+      player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
+      warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
       gameOver = false
     }
 
     restartRef.current = regenerate
 
     /**
-     * Matches the backing store to the window and keeps the player in-bounds.
+     * Matches the backing store to the window and rescales the logical view to fit.
      */
     function resize(): void {
       const dpr = window.devicePixelRatio || 1
-      const width = window.innerWidth
-      const height = window.innerHeight
-      canvas.width = Math.floor(width * dpr)
-      canvas.height = Math.floor(height * dpr)
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-
-      const size = playerSizeForView(height)
-      const radius = acornRadiusForPlayer(size)
-      for (const acorn of world.acorns) {
-        acorn.radius = radius
-        if (acorn.state === 'ground') {
-          acorn.y = groundYAt(world.terrain, acorn.x) - radius
-        } else if (acorn.state === 'buried') {
-          acorn.y = groundYAt(world.terrain, acorn.x) + radius * 1.5
-        }
-      }
-      syncPlayerToWorld(player, world, size)
-      for (const npc of world.npcs) {
-        syncPlayerToWorld(npc.bird, world, size)
-      }
+      canvas.width = Math.floor(window.innerWidth * dpr)
+      canvas.height = Math.floor(window.innerHeight * dpr)
+      scale = window.innerHeight / LOGICAL_VIEW_HEIGHT
+      ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0)
+      // Cached bitmaps are rendered for the new scale a few at a time.
+      warmUp = warmUpScene(world, player, dpr * scale)
     }
 
     /**
@@ -85,8 +125,8 @@ export function GameCanvas() {
       const dt = Math.min(0.05, (now - lastTime) / 1000)
       lastTime = now
 
-      const width = window.innerWidth
-      const height = window.innerHeight
+      const width = logicalWidth()
+      const height = LOGICAL_VIEW_HEIGHT
       if (warmUp && warmUp.next().done) {
         warmUp = null
       }
@@ -94,9 +134,9 @@ export function GameCanvas() {
         updatePlayer(player, keys, dt, world)
         updateAction(player, world, dt)
         handleAcornActions(player, edges, world)
-        updateHunger(player, edges, world, dt)
-        updateNpcs(world, width, dt)
-        updateTreeDrops(world, player.size, dt)
+        updateHunger(player, edges, world, dt, !pauseHungerRef.current)
+        updateNpcs(world, dt)
+        updateTreeDrops(world, player.size, dt, dropMultiplierRef.current)
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
@@ -126,9 +166,62 @@ export function GameCanvas() {
     event.currentTarget.blur()
   }
 
+  /**
+   * Selects an acorn drop-rate mode, saves it, and returns keyboard focus to the game.
+   */
+  function onDropModeChange(event: ChangeEvent<HTMLInputElement>): void {
+    const mode = event.currentTarget.value as AcornDropMode
+    setDropMode(mode)
+    try {
+      window.localStorage.setItem(DROP_MODE_STORAGE_KEY, mode)
+    } catch {
+      // Not being able to save is fine; the choice still applies for this session.
+    }
+    event.currentTarget.blur()
+  }
+
+  /**
+   * Toggles pausing the player's hunger, saves it, and returns keyboard focus to the game.
+   */
+  function onPauseHungerChange(event: ChangeEvent<HTMLInputElement>): void {
+    const paused = event.currentTarget.checked
+    setPauseHunger(paused)
+    try {
+      window.localStorage.setItem(PAUSE_HUNGER_STORAGE_KEY, String(paused))
+    } catch {
+      // Not being able to save is fine; the choice still applies for this session.
+    }
+    event.currentTarget.blur()
+  }
+
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
+      <fieldset className="debug-panel">
+        <legend>Debug</legend>
+        {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
+          <label key={mode}>
+            <input
+              type="radio"
+              name="acorn-drop-mode"
+              value={mode}
+              checked={dropMode === mode}
+              onChange={onDropModeChange}
+            />
+            {mode === 'none'
+              ? 'No acorns'
+              : mode === 'deficit'
+                ? 'Deficit (-25%)'
+                : mode === 'surplus'
+                  ? 'Surplus (+25%)'
+                  : 'Default'}
+          </label>
+        ))}
+        <label className="debug-toggle">
+          <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
+          Pause my hunger
+        </label>
+      </fieldset>
       <button type="button" className="restart-button" onClick={onRestart}>
         Restart
       </button>

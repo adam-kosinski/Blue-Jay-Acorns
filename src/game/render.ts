@@ -86,10 +86,8 @@ export function renderScene(
   ctx.fillStyle = '#1b2838'
   ctx.font = '18px Georgia, serif'
   ctx.textAlign = 'left'
-  ctx.fillText(`state: ${player.state}${player.walking ? ' (walking)' : ''}`, 16, 32)
-  ctx.fillText(player.held ? 'holding an acorn' : 'beak empty', 16, 56)
   ctx.fillText(
-    'WASD move · S (ground) pick up / drop · B bury / dig up · E eat when hungry',
+    'WASD move · S tap on ground pick up · Q drop · Shift bury / dig up · E eat when hungry',
     16,
     viewHeight - 14,
   )

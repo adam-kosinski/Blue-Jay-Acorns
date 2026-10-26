@@ -1,7 +1,11 @@
 import type { KeyEdges, KeyState } from './types'
 
+/** One-shot actions: S (a fresh tap) picks up, Q drops, left Shift buries / digs up, E eats. */
+type EdgeKey = keyof KeyEdges
+
 /**
- * Creates mutable WASD key state plus one-shot S/B/E presses, and attaches window listeners.
+ * Creates mutable WASD key state plus one-shot S / Q / left Shift / E presses, and attaches window
+ * listeners. S is both held (descend while flying) and a one-shot tap (pick up while standing).
  *
  * `edges` records fresh key-downs (ignoring auto-repeat); the game loop must
  * call `clearEdges` once per frame after consuming them.
@@ -15,51 +19,67 @@ export function createKeyState(): {
   dispose: () => void
 } {
   const keys: KeyState = { w: false, a: false, s: false, d: false }
-  const edges: KeyEdges = { s: false, b: false, e: false }
+  const edges: KeyEdges = { pickup: false, drop: false, bury: false, e: false }
 
   /**
-   * Maps a KeyboardEvent to a tracked key name, or null if unrelated.
+   * Maps a KeyboardEvent to a held WASD key, or null if unrelated.
    */
-  function fieldFor(event: KeyboardEvent): keyof KeyState | 'b' | 'e' | null {
+  function heldKeyFor(event: KeyboardEvent): keyof KeyState | null {
     const key = event.key.toLowerCase()
-    if (key === 'w' || key === 'a' || key === 's' || key === 'd' || key === 'b' || key === 'e') {
+    if (key === 'w' || key === 'a' || key === 's' || key === 'd') {
       return key
     }
     return null
   }
 
   /**
-   * Marks a key as held, records fresh presses, and blocks default browser scrolling.
+   * Maps a KeyboardEvent to a one-shot action, or null if unrelated.
+   */
+  function edgeFor(event: KeyboardEvent): EdgeKey | null {
+    if (event.code === 'KeyS') {
+      return 'pickup'
+    }
+    if (event.code === 'KeyQ') {
+      return 'drop'
+    }
+    if (event.code === 'ShiftLeft') {
+      return 'bury'
+    }
+    if (event.key.toLowerCase() === 'e') {
+      return 'e'
+    }
+    return null
+  }
+
+  /**
+   * Marks a key as held, records fresh presses (auto-repeat is ignored, so a held S that carried the
+   * bird down to the ground never counts as a pick-up tap), and blocks default browser actions.
    */
   function onKeyDown(event: KeyboardEvent): void {
-    const field = fieldFor(event)
-    if (!field) {
+    const edge = edgeFor(event)
+    const held = heldKeyFor(event)
+    if (!edge && !held) {
       return
     }
     event.preventDefault()
-    if (field === 'b' || field === 'e') {
-      if (!event.repeat) {
-        edges[field] = true
-      }
-      return
+    if (edge && !event.repeat) {
+      edges[edge] = true
     }
-    if (field === 's' && !event.repeat) {
-      edges.s = true
+    if (held) {
+      keys[held] = true
     }
-    keys[field] = true
   }
 
   /**
    * Marks a WASD key as released.
    */
   function onKeyUp(event: KeyboardEvent): void {
-    const field = fieldFor(event)
-    if (!field) {
-      return
-    }
-    event.preventDefault()
-    if (field !== 'b' && field !== 'e') {
-      keys[field] = false
+    const held = heldKeyFor(event)
+    if (held) {
+      event.preventDefault()
+      keys[held] = false
+    } else if (edgeFor(event)) {
+      event.preventDefault()
     }
   }
 
@@ -70,8 +90,9 @@ export function createKeyState(): {
     keys,
     edges,
     clearEdges: () => {
-      edges.s = false
-      edges.b = false
+      edges.pickup = false
+      edges.drop = false
+      edges.bury = false
       edges.e = false
     },
     dispose: () => {

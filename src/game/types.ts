@@ -37,8 +37,9 @@ export type PlayerAction = {
   /** Seconds elapsed. */
   timer: number
   duration: number
-  acorn: Acorn
-  /** World x where a buried acorn is placed. */
+  /** The acorn being picked up or buried; null for a dig, which is tied to a place, not an acorn. */
+  acorn: Acorn | null
+  /** World x where a buried acorn is placed, or where the beak lands for a pick-up or dig. */
   spotX: number
   /** True once the acorn has changed hands. */
   transferred: boolean
@@ -50,8 +51,12 @@ export type PlayerAction = {
 
 /** One-shot key presses (fresh key-downs, not auto-repeat) since the last frame. */
 export type KeyEdges = {
-  s: boolean
-  b: boolean
+  /** S (fresh tap): pick up. */
+  pickup: boolean
+  /** Q: drop the held acorn. */
+  drop: boolean
+  /** Left Shift: bury / dig up. */
+  bury: boolean
   e: boolean
 }
 
@@ -247,6 +252,10 @@ export type Npc = {
   memory: number[]
   /** The remembered spot currently being visited while retrieving, or null. */
   digSpot: number | null
+  /** Free acorns currently in the bird's view (used to detect acorns entering view). */
+  inView: Set<Acorn>
+  /** Acorns in view that the bird noticed when they came into view. */
+  noticed: Set<Acorn>
 }
 
 /** Generated play space: bounds plus scenery. */

@@ -5,6 +5,7 @@ import {
   OAK_TONES,
   OAK_TREE_COUNT,
   SCENERY_SCALE,
+  TYPICAL_ASPECT_RATIO,
   WORLD_TOP_EXTRA_FACTOR,
   WORLD_WIDTH_MULTIPLIER,
   acornRadiusForPlayer,
@@ -368,7 +369,8 @@ function spawnForest(worldWidth: number, viewWidth: number, viewHeight: number):
 export function createWorld(viewWidth: number, viewHeight: number): World {
   const groundHeight = groundHeightForView(viewHeight)
   const height = viewHeight + groundHeight + viewHeight * WORLD_TOP_EXTRA_FACTOR
-  const width = viewWidth * WORLD_WIDTH_MULTIPLIER
+  // The world's width comes from the typical aspect ratio, never from the window's width.
+  const width = viewHeight * TYPICAL_ASPECT_RATIO * WORLD_WIDTH_MULTIPLIER
   const groundY = height - groundHeight
   const playerSize = playerSizeForView(viewHeight)
   const terrain = buildTerrain(width, groundY, viewHeight)
@@ -393,7 +395,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     ),
     logs: spawnLogs(LOG_COUNT, terrain, width, playerSize * SCENERY_SCALE),
     rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE),
-    forest: spawnForest(width, viewWidth, viewHeight),
+    forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight),
     npcs: [],
     acornDropTimer: 0,
   }

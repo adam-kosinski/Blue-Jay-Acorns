@@ -15,8 +15,15 @@ import type { KeyEdges, Player, World } from './types'
  * @param edges - Fresh key presses since the last frame.
  * @param world - Acorn container (eaten acorns are removed).
  * @param dt - Elapsed seconds.
+ * @param drain - False to hold hunger steady (the debug "pause hunger" toggle); eating still works.
  */
-export function updateHunger(player: Player, edges: KeyEdges, world: World, dt: number): void {
+export function updateHunger(
+  player: Player,
+  edges: KeyEdges,
+  world: World,
+  dt: number,
+  drain = true,
+): void {
   if (player.eatTimer > 0) {
     player.eatTimer -= dt
     if (player.eatTimer <= 0) {
@@ -31,5 +38,7 @@ export function updateHunger(player: Player, edges: KeyEdges, world: World, dt: 
   } else if (edges.e && player.held && player.hunger < HUNGER_THRESHOLD) {
     player.eatTimer = EAT_DURATION
   }
-  player.hunger = Math.max(0, player.hunger - dt / HUNGER_DRAIN_SECONDS)
+  if (drain) {
+    player.hunger = Math.max(0, player.hunger - dt / HUNGER_DRAIN_SECONDS)
+  }
 }
