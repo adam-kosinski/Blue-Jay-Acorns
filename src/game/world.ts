@@ -399,7 +399,6 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     npcs: [],
     acornDropTimer: 0,
     time: 0,
-    burialEvents: [],
   }
   world.npcs = createNpcs(world, playerSize)
   return world

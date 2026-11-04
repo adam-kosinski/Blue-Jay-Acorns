@@ -173,7 +173,6 @@ export function updateAction(player: Player, world: World, dt: number): void {
         acorn.x = action.spotX
         acorn.y = groundYAt(world.terrain, acorn.x) + acorn.radius * 1.5
         player.held = null
-        world.burialEvents.push({ x: acorn.x, owner: player })
       }
     } else {
       if (acorn.state === 'ground' && !player.held) {

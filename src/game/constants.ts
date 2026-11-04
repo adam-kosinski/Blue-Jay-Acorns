@@ -29,7 +29,7 @@ export const WORLD_TOP_EXTRA_FACTOR = 0.35
 export const GROUND_VIEW_FRACTION = 0.04
 
 /** Oak trees spawned when a run starts. */
-export const OAK_TREE_COUNT = 5
+export const OAK_TREE_COUNT = 3
 
 /** Acorns scattered on the ground at the start of a run. */
 export const ACORN_COUNT = 16
@@ -56,10 +56,11 @@ export const NPC_WAIT_SECONDS = 1
  * Chance per second that each oak drops a group of acorns (hard-coded). The original target matched
  * real nutrition: all four birds lose 4/60 of a bar per second and an acorn refills 1/3 of a bar,
  * so (4/60) / (1/3) = 0.2 acorns per second, which with 5 oaks and 6.5 acorns per group was 0.00615.
- * Groups were then halved (2-5 acorns, average 3.5) and the chance doubled to 0.0123, giving
- * 5 x 0.0123 x 3.5 = about 0.215 acorns per second in expectation.
+ * Groups were then halved (2-5 acorns, average 3.5) and the chance doubled to 0.0123 (5 oaks).
+ * With 3 oaks the chance is 0.0205 so the total stays 3 x 0.0205 x 3.5 = about 0.215 acorns per
+ * second in expectation.
  */
-export const ACORN_DROP_CHANCE_PER_SECOND = 0.0123
+export const ACORN_DROP_CHANCE_PER_SECOND = 0.0205
 
 /** Debug setting for the acorn drop rate: none spawns nothing, deficit is 25% less, surplus 25% more than the default. */
 export const ACORN_DROP_MODES = {
@@ -159,7 +160,7 @@ export const NOTICE_LINE_FADE_SECONDS = 2
 export const NPC_STARVING_HUNGER = 0.2
 
 /** An exploring NPC this hungry (or hungrier) goes to dig up an acorn it remembers burying. */
-export const NPC_RETRIEVE_HUNGER = 0.2
+export const NPC_RETRIEVE_HUNGER = 1 / 3
 
 /** NPCs idle instead of exploring while hunger is above this; below it they explore. */
 export const NPC_IDLE_HUNGER = 0.9

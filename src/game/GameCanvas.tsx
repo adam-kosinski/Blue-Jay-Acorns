@@ -136,7 +136,7 @@ export function GameCanvas() {
         handleAcornActions(player, edges, world)
         updateHunger(player, edges, world, dt, !pauseHungerRef.current)
         world.time += dt
-        updateNpcs(world, dt)
+        updateNpcs(world, dt, player)
         updateTreeDrops(world, player.size, dt, dropMultiplierRef.current)
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.

@@ -29,7 +29,7 @@ const MIN_CRUISE_ALTITUDE = 1
 const GLIDE_SLOPE = 0.45
 
 /** Ground targets nearer than this (player sizes) are reached by hopping, not flying. */
-const FLY_MIN_DISTANCE_IN_SIZES = 4
+const FLY_MIN_DISTANCE_IN_SIZES = 2
 
 /** Horizontal gap (player sizes) at which an NPC counts as having reached its target. */
 const ARRIVE_IN_SIZES = 0.5
@@ -91,6 +91,8 @@ export function createNpcs(world: World, size: number): Npc[] {
       digSpot: null,
       inView: new Set(),
       noticed: new Map(),
+      seenActions: new WeakSet(),
+      missedActions: new WeakSet(),
       sites: [],
       siteTarget: null,
       glide: null,
@@ -219,22 +221,36 @@ function applyPick(npc: Npc, pick: { acorn: Acorn | null; site: BurialSite | nul
 }
 
 /**
- * Lets an NPC perceive a burial that just happened. If the spot is in view the NPC notices it (a
- * standing bird always does, a flying bird 75% of the time) and remembers it as another bird's
- * burial site; the fading line to it starts now.
+ * Lets an NPC watch another bird's bury or dig-up in progress. From the halfway point of the action
+ * (head on the ground / acorn in the beak; a failed dig never gets there), once the
+ * spot is in view the NPC gets its single chance to notice it (a standing bird always does, a
+ * flying bird 75% of the time; a failed roll is not repeated for the same action, but the bird
+ * notices it anyway as soon as it is standing with the spot in view). A noticed spot
+ * is remembered as another bird's burial site, and the fading line to it starts then. A dig-up
+ * marks a spot too: the buried acorns of one bird are often near each other, so it is worth a try
+ * (the site is dropped when this NPC's own dig there comes up empty).
  *
  * @param npc - Perceiving NPC.
  * @param world - Terrain and clock.
- * @param x - World x of the burial.
- * @param owner - The bird that buried the acorn.
+ * @param action - The other bird's bury or dig action.
+ * @param owner - The bird performing it.
  */
-function perceiveBurial(npc: Npc, world: World, x: number, owner: Player): void {
-  if (owner === npc.bird || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
+function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Player): void {
+  const x = action.spotX
+  if (npc.seenActions.has(action) || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
     return
   }
-  if (npc.bird.state !== 'standing' && Math.random() >= NPC_NOTICE_PROBABILITY) {
-    return
+  if (npc.bird.state !== 'standing') {
+    // A flying bird rolls once per action; if it misses, it still notices once it stands.
+    if (npc.missedActions.has(action)) {
+      return
+    }
+    if (Math.random() >= NPC_NOTICE_PROBABILITY) {
+      npc.missedActions.add(action)
+      return
+    }
   }
+  npc.seenActions.add(action)
   const known = npc.sites.find((site) => Math.abs(site.x - x) <= 0.25 * npc.bird.size)
   if (known) {
     known.noticedAt = world.time
@@ -677,14 +693,20 @@ function runRetrieve(npc: Npc, world: World): void {
  *
  * @param world - Play space.
  * @param dt - Elapsed seconds.
+ * @param player - The human-controlled bird, which NPCs can watch too.
  */
-export function updateNpcs(world: World, dt: number): void {
-  for (const event of world.burialEvents) {
-    for (const npc of world.npcs) {
-      perceiveBurial(npc, world, event.x, event.owner)
+export function updateNpcs(world: World, dt: number, player: Player): void {
+  // A bury or dig-up can be noticed from the moment the head reaches the ground (burying) or the
+  // acorn enters the beak (digging, only if one came up) until the animation ends; one roll per observer.
+  const actors = [player, ...world.npcs.map((npc) => npc.bird)]
+  for (const npc of world.npcs) {
+    for (const actor of actors) {
+      const action = actor.action
+      if (actor !== npc.bird && action && action.kind !== 'pickup' && action.transferred) {
+        perceiveDigging(npc, world, action, actor)
+      }
     }
   }
-  world.burialEvents = []
 
   for (const npc of world.npcs) {
     const { bird } = npc

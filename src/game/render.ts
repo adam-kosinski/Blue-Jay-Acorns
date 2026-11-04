@@ -1762,12 +1762,33 @@ function drawMinimap(
   for (const tree of world.trees) {
     const cx = (tree.x + tree.trunkWidth / 2) * scale
     const treeGround = groundYAt(world.terrain, tree.x + tree.trunkWidth / 2)
+    // Same silhouette as the real oak: tapered trunk and branches under a crown of leaf lobes.
+    ctx.fillStyle = TRUNK_COLOR
+    for (const seg of tree.shape.segments) {
+      const dx = seg.x1 - seg.x0
+      const dy = seg.y1 - seg.y0
+      const len = Math.hypot(dx, dy) || 1
+      const nx = (-dy / len) * 0.5
+      const ny = (dx / len) * 0.5
+      const w0 = Math.max(1, seg.w0 * scale)
+      const w1 = Math.max(1, seg.w1 * scale)
+      ctx.beginPath()
+      ctx.moveTo(cx + seg.x0 * scale + nx * w0, treeGround * scale + seg.y0 * scale + ny * w0)
+      ctx.lineTo(cx + seg.x1 * scale + nx * w1, treeGround * scale + seg.y1 * scale + ny * w1)
+      ctx.lineTo(cx + seg.x1 * scale - nx * w1, treeGround * scale + seg.y1 * scale - ny * w1)
+      ctx.lineTo(cx + seg.x0 * scale - nx * w0, treeGround * scale + seg.y0 * scale - ny * w0)
+      ctx.closePath()
+      ctx.fill()
+    }
     ctx.fillStyle = CROWN_COLOR
     ctx.beginPath()
-    ctx.arc(cx, (treeGround - tree.trunkHeight) * scale, Math.max(3, tree.crownRadius * scale), 0, Math.PI * 2)
+    for (const lobe of tree.shape.lobes) {
+      const r = Math.max(0.8, lobe.r * scale)
+      const lx = cx + lobe.x * scale
+      ctx.moveTo(lx + r, (treeGround + lobe.y) * scale)
+      ctx.arc(lx, (treeGround + lobe.y) * scale, r, 0, Math.PI * 2)
+    }
     ctx.fill()
-    ctx.fillStyle = TRUNK_COLOR
-    ctx.fillRect(cx - 1, (treeGround - tree.trunkHeight) * scale, 2, tree.trunkHeight * scale)
   }
 
   ctx.fillStyle = ACORN_COLOR

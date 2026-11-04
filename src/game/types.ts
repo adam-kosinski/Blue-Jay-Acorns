@@ -42,12 +42,6 @@ export type BurialSite = {
   noticedAt: number
 }
 
-/** A burial that just happened, queued for NPCs to perceive. */
-export type BurialEvent = {
-  x: number
-  owner: Player
-}
-
 /** A timed acorn action: the acorn changes hands at the halfway point of the animation. */
 export type PlayerAction = {
   kind: 'pickup' | 'bury' | 'dig'
@@ -272,6 +266,10 @@ export type Npc = {
   /** Free acorns currently in the bird's view (used to detect acorns entering view). */
   inView: Set<Acorn>
   /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */
+  /** Bury / dig actions this NPC has already had its one chance to notice (each is rolled once). */
+  seenActions: WeakSet<PlayerAction>
+  /** Actions a flying NPC already failed its notice roll for; it notices them on landing. */
+  missedActions: WeakSet<PlayerAction>
   noticed: Map<Acorn, { x: number; y: number }>
   /** Other birds' burial sites this NPC noticed and still remembers. */
   sites: BurialSite[]
@@ -303,6 +301,4 @@ export type World = {
   acornDropTimer: number
   /** Game clock in seconds (drives the fading lines to noticed burial sites). */
   time: number
-  /** Burials this frame that NPCs have not yet had a chance to perceive. */
-  burialEvents: BurialEvent[]
 }
