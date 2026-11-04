@@ -23,7 +23,7 @@ export const WORLD_WIDTH_MULTIPLIER = 5
  * Extra world height above the altitude where the camera no longer
  * shows the ground, as a fraction of the viewport height.
  */
-export const WORLD_TOP_EXTRA_FACTOR = 0.35
+export const WORLD_TOP_EXTRA_FACTOR = 0.65
 
 /** Ground strip height as a fraction of the viewport height. */
 export const GROUND_VIEW_FRACTION = 0.04

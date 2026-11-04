@@ -1,5 +1,4 @@
 import {
-  ACORN_COLOR,
   HOP_DURATION,
   CROWN_COLOR,
   EAT_DURATION,
@@ -10,9 +9,11 @@ import {
   OAK_TONES,
   PLAYER_COLOR,
   TRUNK_COLOR,
+  TYPICAL_ASPECT_RATIO,
 } from './constants'
 import { drawLeafyDisk, drawOakVector, getOakSprite, seededRandom, drawOak } from './oak'
-import { creekWeight, groundYAt, liftAt } from './terrain'
+import { BACKDROP_FOG, mixColor } from './world'
+import { TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
 import type {
   Acorn,
   Bush,
@@ -23,10 +24,15 @@ import type {
   Npc,
   OakTree,
   Player,
+  Fern,
   Rock,
   Terrain,
   World,
 } from './types'
+
+/** Backdrop gradient: leaf tones blended toward the haze by the farthest layer's atmospheric perspective. */
+const BACKDROP_TOP = mixColor(OAK_TONES[1] ?? '#2a6e34', FOREST_HAZE_COLOR, BACKDROP_FOG)
+const BACKDROP_BOTTOM = mixColor(OAK_TONES[3] ?? '#439150', FOREST_HAZE_COLOR, BACKDROP_FOG)
 
 /**
  * Draws the hazy forest backdrop, scrolling world, entities, player, and a screen-space HUD.
@@ -51,9 +57,11 @@ export function renderScene(
   player: Player,
   gameOver = false,
 ): void {
+  // The backdrop is the colour of the tree leaves as the farthest layer's haze would show them,
+  // darker leaves at the top fading to lighter ones lower down, so layers melt into it.
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
-  haze.addColorStop(0, '#9dbf9c')
-  haze.addColorStop(1, FOREST_HAZE_COLOR)
+  haze.addColorStop(0, BACKDROP_TOP)
+  haze.addColorStop(1, BACKDROP_BOTTOM)
   ctx.fillStyle = haze
   ctx.fillRect(0, 0, viewWidth, viewHeight)
 
@@ -66,10 +74,10 @@ export function renderScene(
   drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth)
   drawBuriedProps(ctx, world, camera.x, viewWidth)
   drawGround(ctx, world, camera.x, viewWidth)
-  drawLeafLitter(ctx, world.leaves, camera.x, viewWidth)
+  drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   drawCreek(ctx, world, camera, viewWidth, viewHeight)
+  drawWaterBushes(ctx, world, camera.x, viewWidth)
   drawMounds(ctx, world.acorns, world.terrain, camera.x, viewWidth)
-  drawProps(ctx, world, camera.x, viewWidth)
   for (const npc of world.npcs) {
     const bx = npc.bird.x + npc.bird.size / 2
     if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
@@ -78,9 +86,12 @@ export function renderScene(
     }
   }
   drawBird(ctx, player)
-  drawCreekSurface(ctx, world, camera.x, viewWidth)
-  drawNoticeLines(ctx, world)
+  // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
+  // never look like they sit on a bush.
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
+  drawFrontProps(ctx, world, camera.x, viewWidth)
+  drawCreekSurface(ctx, world, player)
+  drawNoticeLines(ctx, world)
 
   ctx.restore()
 
@@ -224,40 +235,96 @@ function drawForest(
   viewHeight: number,
 ): void {
   const maxCamY = Math.max(0, world.height - viewHeight)
-  for (const layer of layers) {
+  const baseOf = (l: ForestLayer): number =>
+    world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
+
+  // Everything below the foreground's ground line (or the creek's water) is covered by it, and
+  // everything below a nearer layer's lowest ground line is covered by that layer. The screen is cut
+  // into slabs; working from the nearest layer back, find for each layer and slab the screen y below
+  // which nothing of it can show, so it never draws those rows (the layers are full-width and would
+  // otherwise overdraw heavily).
+  const { creek } = world.terrain
+  const slabs = Math.ceil(viewWidth / FOREST_SLAB)
+  const cover = new Float32Array(slabs)
+  for (let s = 0; s < slabs; s += 1) {
+    let lowest = 0
+    for (let x = camera.x + s * FOREST_SLAB; x <= camera.x + (s + 1) * FOREST_SLAB + world.terrain.step; x += world.terrain.step) {
+      const surface = Math.abs(x - creek.x) < creek.halfWidth ? creek.waterY : groundYAt(world.terrain, x)
+      lowest = Math.max(lowest, surface - camera.y)
+    }
+    cover[s] = Math.min(viewHeight, lowest)
+  }
+  const limits: Float32Array[] = []
+  for (let k = layers.length - 1; k >= 0; k -= 1) {
+    const l = layers[k]
+    if (!l) {
+      continue
+    }
+    limits[k] = Float32Array.from(cover)
+    const lBase = baseOf(l)
+    if (l.localRadius === null && lBase < viewHeight + 400) {
+      const { columnGround } = forestStripFor(l, world)
+      for (let s = 0; s < slabs; s += 1) {
+        const x0 = camera.x * l.parallax + s * FOREST_SLAB
+        let lowest = -1e9
+        for (let c = Math.floor(x0 / GROUND_COLUMN); c <= Math.floor((x0 + FOREST_SLAB) / GROUND_COLUMN); c += 1) {
+          lowest = Math.max(lowest, columnGround[Math.max(0, Math.min(columnGround.length - 1, c))] ?? -1e9)
+        }
+        cover[s] = Math.min(cover[s] ?? viewHeight, lBase + lowest)
+      }
+    }
+  }
+
+  for (const [index, layer] of layers.entries()) {
     const p = layer.parallax
-    const base = world.groundY - maxCamY * (1 - p) - camera.y * p - layer.lift * viewHeight
+    const base = baseOf(layer)
     if (base >= viewHeight + 400) {
       continue
     }
-    const strip = forestStripFor(layer, world)
-    const srcX = Math.min(camera.x * p * strip.resolution, Math.max(0, strip.canvas.width - 1))
-    const srcW = Math.min(viewWidth * strip.resolution, strip.canvas.width - srcX)
-    const stripHeight = strip.canvas.height / strip.resolution
-    // Only blit the rows that land on screen.
-    const topRow = Math.max(0, strip.originY - base)
-    const bottomRow = Math.min(stripHeight, viewHeight - base + strip.originY)
-    if (bottomRow > topRow) {
-      ctx.drawImage(
-        strip.canvas,
-        srcX,
-        topRow * strip.resolution,
-        srcW,
-        (bottomRow - topRow) * strip.resolution,
-        0,
-        base - strip.originY + topRow,
-        srcW / strip.resolution,
-        bottomRow - topRow,
-      )
+    const layerLimits = limits[index]
+    if (!layerLimits) {
+      continue
     }
+    let limit = 0
+    for (const value of layerLimits) {
+      limit = Math.max(limit, value)
+    }
+    const strip = forestStripFor(layer, world)
+    // The extra creek-only layers are transparent away from their creek: skip them when it is off screen.
+    const creekScreenX = layer.creek.x - camera.x * p
+    const hidden =
+      layer.localRadius !== null &&
+      (creekScreenX + layer.localRadius < 0 || creekScreenX - layer.localRadius > viewWidth)
+    const stripHeight = strip.canvas.height / strip.resolution
+    const topRow = Math.max(0, strip.originY - base)
     const below = base - strip.originY + stripHeight
-    if (below < viewHeight && layer.localRadius === null) {
-      ctx.fillStyle = layer.groundColor
-      ctx.fillRect(0, below - 1, viewWidth, viewHeight - below + 1)
+    for (let s = 0; s < slabs; s += 1) {
+      const slabLimit = layerLimits[s] ?? viewHeight
+      // Only blit the rows of this slab that can show (the +1 px overlap hides seams between slabs).
+      const bottomRow = Math.min(stripHeight, slabLimit - base + strip.originY)
+      const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * strip.resolution)
+      const srcW = Math.min((FOREST_SLAB + 1) * strip.resolution, strip.canvas.width - srcX)
+      if (bottomRow > topRow && !hidden && srcW > 0) {
+        ctx.drawImage(
+          strip.canvas,
+          srcX,
+          topRow * strip.resolution,
+          srcW,
+          (bottomRow - topRow) * strip.resolution,
+          s * FOREST_SLAB,
+          base - strip.originY + topRow,
+          srcW / strip.resolution,
+          bottomRow - topRow,
+        )
+      }
+      if (below < slabLimit && layer.localRadius === null) {
+        ctx.fillStyle = layer.groundColor
+        ctx.fillRect(s * FOREST_SLAB, below - 1, FOREST_SLAB + 1, slabLimit - below + 1)
+      }
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
-    const next = layers[layers.indexOf(layer) + 1]
+    const next = layers[index + 1]
     const top = base + strip.waterLine
     let bottom: number
     let bottomX: number
@@ -278,7 +345,7 @@ function drawForest(
     }
     bottom = Math.max(bottom, top + 1)
     const topX = layer.creek.x - camera.x * p
-    if (top < viewHeight && bottom > 0) {
+    if (top < limit && bottom > 0) {
       const water = ctx.createLinearGradient(0, top, 0, bottom)
       water.addColorStop(0, layer.waterColor)
       water.addColorStop(1, bottomColor)
@@ -288,35 +355,53 @@ function drawForest(
       const topHalf = layer.creek.halfWidth
       ctx.beginPath()
       ctx.moveTo(topX - topHalf, top)
-      if (layers.indexOf(layer) === 0) {
+      if (index === 0) {
         // The farthest creek ends in a rounded head rather than a flat edge.
         ctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
       } else {
         ctx.lineTo(topX + topHalf, top)
       }
-      ctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom)
-      ctx.lineTo(bottomX - bottomHalf, bottom)
+      // Two pixels past the end, so neighbouring ribbons overlap and no hairline shows between them.
+      ctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom + 2)
+      ctx.lineTo(bottomX - bottomHalf, bottom + 2)
       ctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
       ctx.closePath()
       ctx.fill()
 
-      // Rocks on the ground between this layer and the next, thickest along the creek's banks.
-      // They are placed from the ribbon's side so they never land in the water.
+      // Rocks on the ground between this layer and the next: thickest along the creek's banks
+      // (placed from the ribbon's side so never in the water), plus free ones anywhere on the ground.
       const ownUnit = (world.viewHeight / 8) * 2 * layer.scale
       const nextUnit = (world.viewHeight / 8) * 2 * (next ? next.scale : 1)
+      const nextParallax = next ? next.parallax : 1
       for (const edge of layer.edgeRocks) {
         const t = edge.s
         const u = 1 - t
-        const x0 = topX + edge.side * topHalf
-        const x3 = bottomX + edge.side * bottomHalf
-        // Cubic Bezier through the same control points as the ribbon's side.
-        const px = u * u * u * x0 + 3 * u * u * t * x0 + 3 * u * t * t * x3 + t * t * t * x3
-        const py = u * u * u * top + 3 * u * u * t * mid + 3 * u * t * t * mid + t * t * t * bottom
         const unit = ownUnit + (nextUnit - ownUnit) * t
-        edge.rock.rx = edge.size * unit
-        edge.rock.ry = edge.rock.rx * 0.7
-        edge.rock.x = px + edge.side * (edge.rock.rx + edge.out * unit)
-        drawRock(ctx, edge.rock, py)
+        const rx = edge.size * unit
+        const py = u * u * u * top + 3 * u * u * t * mid + 3 * u * t * t * mid + t * t * t * bottom
+        let px: number
+        if (edge.x === null) {
+          const x0 = topX + edge.side * topHalf
+          const x3 = bottomX + edge.side * bottomHalf
+          // Cubic Bezier through the same control points as the ribbon's side.
+          const bank = u * u * u * x0 + 3 * u * u * t * x0 + 3 * u * t * t * x3 + t * t * t * x3
+          px = bank + edge.side * (rx + edge.out * unit)
+        } else {
+          px = edge.x - camera.x * (p + (nextParallax - p) * t)
+          // A free rock stays out of the water: skip it if the ribbon is under it.
+          const xl = u * u * u * (topX - topHalf) + 3 * u * u * t * (topX - topHalf) + 3 * u * t * t * (bottomX - bottomHalf) + t * t * t * (bottomX - bottomHalf)
+          const xr = u * u * u * (topX + topHalf) + 3 * u * u * t * (topX + topHalf) + 3 * u * t * t * (bottomX + bottomHalf) + t * t * t * (bottomX + bottomHalf)
+          if (px > xl - rx && px < xr + rx) {
+            continue
+          }
+        }
+        if (px < -rx - 40 || px > viewWidth + rx + 40) {
+          continue
+        }
+        edge.rock.rx = rx
+        edge.rock.ry = rx * 0.7
+        edge.rock.x = px
+        drawRockSimple(ctx, edge.rock, py)
       }
     }
   }
@@ -329,9 +414,20 @@ type ForestStrip = {
   resolution: number
   /** Y of the layer's base line inside the bitmap. */
   originY: number
-  /** Y of the layer's creek waterline relative to its base line (negative is up). */
+  /** Y of the layer's creek waterline relative to its base line (negative is up): where its water ribbon starts. */
   waterLine: number
+  /** Lowest ground line of each `GROUND_COLUMN`-wide column relative to the base line: all below it is opaque. */
+  columnGround: Float32Array
 }
+
+/** Narrowest variation (in a layer's own pixels) kept in a layer's shared base elevation. */
+const LAYER_SMOOTH_WIDTH = 700
+
+/** Width (in a layer's own x) of the columns whose lowest ground line is recorded for culling. */
+const GROUND_COLUMN = 64
+
+/** Width of the screen slabs the forest layers are blitted in, each with its own cull line. */
+const FOREST_SLAB = 64
 
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
@@ -350,17 +446,29 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     return cached
   }
   const relief = 0.3 + 0.7 * layer.parallax
-  // Every layer shares the foreground's coarse hills (mapped sideways so its creek lines up with the
-  // foreground creek) and adds its own fine noise on top.
+  // The layer's elevation is the foreground's coarse elevation and hill scaled horizontally by the
+  // layer's parallax factor about the screen center (so features line up with the foreground's the
+  // way perspective demands), plus the layer's own fine noise on top.
   const { creek } = layer
   const fgCreek = world.terrain.creek
-  const squeeze = fgCreek.halfWidth / creek.halfWidth
-  const baseOffset = (layerX: number): number =>
-    -(liftAt(world.terrain.coarse, fgCreek.x + (layerX - creek.x) * squeeze) + liftAt(layer.fine, layerX)) * relief
+  const p = layer.parallax
+  const refHalf = (world.viewHeight * TYPICAL_ASPECT_RATIO) / 2
+  const hill = world.terrain.hill
+  // Squeezing the foreground's elevation horizontally by `p` would make far layers' hills far
+  // bumpier than the foreground's. So it is low-pass filtered first, with a Gaussian that grows as
+  // 1/p, so that no variation narrower than about LAYER_SMOOTH_WIDTH (in the layer's own pixels)
+  // survives: the base elevation then changes about as gently as the foreground's does.
+  const shared = Float32Array.from(world.terrain.coarse, (lift, i) => lift + hillBump(i * TERRAIN_STEP, hill.x, hill.halfWidth, hill.height))
+  const smoothed = lowPass(shared, LAYER_SMOOTH_WIDTH / (p * 2 * Math.PI) / TERRAIN_STEP)
+  const baseOffset = (layerX: number): number => {
+    const fgX = (layerX - (1 - p) * refHalf) / p
+    return -(liftAt(smoothed, fgX) + liftAt(layer.fine, layerX)) * relief
+  }
   // Near its creek every layer copies the foreground terrain around the creek (squeezed sideways
-  // to the layer's creek width and scaled in height by the layer's relief), so the banks, the
-  // waterline and the dip all correlate from layer to layer instead of each layer's own noise
-  // putting its creek at an unrelated height. Farther from the creek it fades back to its own noise.
+  // to the layer's creek width and scaled in height by the layer's relief), so each layer carves its
+  // own channel with banks, a waterline and a dip that correlate from layer to layer. The channel is
+  // only carved (it is not colored): the water is the ribbon `drawForest` paints over it.
+  const squeeze = fgCreek.halfWidth / creek.halfWidth
   const nearRange = creek.halfWidth * (1 + fgCreek.bank / fgCreek.halfWidth)
   const offset = (layerX: number): number => {
     const own = baseOffset(layerX)
@@ -389,7 +497,9 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   const resolution = layer.parallax < 0.4 ? 0.5 : 0.75
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(layer.span * resolution)
-  const bottomPad = 6 + Math.ceil(bedBottom)
+  // Extra depth below the horizon so the layer's whole ground can carry leaf litter.
+  const litterDepth = Math.round(world.viewHeight * 0.4)
+  const bottomPad = 6 + Math.ceil(bedBottom) + litterDepth
   canvas.height = Math.ceil((originY + bottomPad) * resolution)
   const ctx = canvas.getContext('2d')
   if (ctx) {
@@ -409,44 +519,12 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       const half = log.length / 2
       const endL = offset(log.x - half)
       const endR = offset(log.x + half)
-      const ground = (endL + offset(log.x) + endR) / 3
+      const ground = Math.max(endL, offset(log.x - half / 2), offset(log.x), offset(log.x + half / 2), endR)
       ctx.save()
       ctx.translate(log.x, originY + ground - log.radius * 0.8)
       ctx.rotate(Math.atan2(endR - endL, log.length))
-      const logTop = -log.radius
-      const logLeft = -half
-      ctx.fillStyle = layer.trunkColor
-      ctx.beginPath()
-      ctx.roundRect(logLeft, logTop, log.length, log.radius * 2, log.radius * 0.5)
-      ctx.fill()
-      // Minimal detail like the background trunks: lengthwise bark lines, a lit top edge, and a
-      // paler cut end with a growth ring.
-      ctx.save()
-      ctx.clip()
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)'
-      ctx.lineWidth = Math.max(1, log.radius * 0.12)
-      for (const f of [0.35, 0.8, 1.35]) {
-        ctx.beginPath()
-        ctx.moveTo(logLeft + log.length * 0.04, logTop + log.radius * f)
-        ctx.lineTo(logLeft + log.length * 0.96, logTop + log.radius * f)
-        ctx.stroke()
-      }
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
-      ctx.fillRect(logLeft, logTop, log.length, log.radius * 0.4)
+      drawFallenLog(ctx, log, layer.trunkColor, layer.fog)
       ctx.restore()
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.28)'
-      ctx.beginPath()
-      ctx.ellipse(logLeft + log.length - log.radius * 0.3, logTop + log.radius, log.radius * 0.3, log.radius * 0.92, 0, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)'
-      ctx.lineWidth = Math.max(1, log.radius * 0.08)
-      ctx.beginPath()
-      ctx.ellipse(logLeft + log.length - log.radius * 0.3, logTop + log.radius, log.radius * 0.15, log.radius * 0.5, 0, 0, Math.PI * 2)
-      ctx.stroke()
-      ctx.restore()
-    }
-    for (const rock of layer.rocks) {
-      drawRock(ctx, rock, originY + offset(rock.x))
     }
     ctx.fillStyle = layer.groundColor
     ctx.beginPath()
@@ -457,47 +535,77 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     ctx.lineTo(layer.span + 8, originY + bottomPad)
     ctx.closePath()
     ctx.fill()
-    // Fallen-leaf litter on the ground, like the foreground's but sparser and with plain ellipses:
-    // a band of small leaves just below the horizon line, scaled with the layer.
+    // Fallen-leaf litter over the whole ground, like the foreground's but with plain ellipses: leaves
+    // scattered from the horizon down to the strip's bottom, scaled with the layer, batched by colour.
     const leafUnit = (world.viewHeight / 8) * 2 * layer.scale
-    for (let x = 0; x < layer.span; x += 7) {
-      if (Math.abs(x - creek.x) < creek.halfWidth) {
-        continue
-      }
-      const count = 1 + Math.floor(Math.random() * 2)
+    const groundDepth = bedBottom + litterDepth
+    const perColumn = (1.5 * (groundDepth + 0.1 * leafUnit)) / (0.45 * leafUnit)
+    // Spread the columns out when the layer is small so one layer never holds more than ~9000 leaves.
+    const columnStep = Math.max(7, (layer.span * perColumn) / 9000)
+    const batches: number[][] = layer.leafColors.map(() => [])
+    for (let x = 0; x < layer.span; x += columnStep) {
+      const count = Math.floor(perColumn) + (Math.random() < perColumn - Math.floor(perColumn) ? 1 : 0)
       for (let i = 0; i < count; i += 1) {
-        const lx = x + (Math.random() * 2 - 1) * 7
-        const rx = (0.035 + Math.random() * 0.045) * leafUnit
-        ctx.fillStyle = layer.leafColors[Math.floor(Math.random() * layer.leafColors.length)] ?? layer.groundColor
-        ctx.beginPath()
-        ctx.ellipse(
-          lx,
-          originY + offset(lx) + (0.02 + Math.random() * 0.45) * leafUnit,
-          rx,
-          rx * (0.35 + Math.random() * 0.2),
-          (Math.random() - 0.5) * Math.PI,
-          0,
-          Math.PI * 2,
-        )
-        ctx.fill()
+        const lx = x + (Math.random() * 2 - 1) * columnStep
+        if (Math.abs(lx - creek.x) < creek.halfWidth) {
+          continue
+        }
+        const top = offset(lx) + 0.02 * leafUnit
+        const bottomEdge = bottomPad - 2
+        const y = top + Math.random() * Math.max(0, bottomEdge - top)
+        const nearness = Math.min(1, Math.max(0, (y - top) / Math.max(1, bottomEdge - top)))
+        const rx = (0.035 + Math.random() * 0.045) * leafUnit * (1 + 0.5 * nearness)
+        batches[Math.floor(Math.random() * batches.length)]?.push(lx, originY + y, rx, rx * (0.35 + Math.random() * 0.2), (Math.random() - 0.5) * Math.PI)
       }
     }
-    ctx.fillStyle = layer.waterColor
-    ctx.beginPath()
-    ctx.moveTo(creek.x - creek.halfWidth, originY + waterLine)
-    ctx.lineTo(creek.x + creek.halfWidth, originY + waterLine)
-    for (let x = creek.x + creek.halfWidth; x >= creek.x - creek.halfWidth; x -= 8) {
-      ctx.lineTo(x, originY + Math.max(waterLine, offset(x)))
+    batches.forEach((batch, colorIndex) => {
+      ctx.fillStyle = layer.leafColors[colorIndex] ?? layer.groundColor
+      ctx.beginPath()
+      for (let i = 0; i < batch.length; i += 5) {
+        const lx = batch[i] ?? 0
+        const ly = batch[i + 1] ?? 0
+        const rx = batch[i + 2] ?? 1
+        const angle = batch[i + 4] ?? 0
+        ctx.moveTo(lx + rx * Math.cos(angle), ly + rx * Math.sin(angle))
+        ctx.ellipse(lx, ly, rx, batch[i + 3] ?? 1, angle, 0, Math.PI * 2)
+      }
+      ctx.fill()
+    })
+    // Rocks, ferns and bushes stand anywhere down the layer's ground (not just on its horizon), drawn
+    // back to front after the ground and litter; bushes last of equals so they can overhang the creek.
+    const dropOf = (x: number): number => {
+      const v = Math.sin(x * 12.9898) * 43758.5453
+      return (v - Math.floor(v)) ** 1.5 * litterDepth * 0.8
     }
-    ctx.closePath()
-    ctx.fill()
-    // Bushes last, so branches can overhang the creek.
+    const props: { y: number; draw: (y: number) => void }[] = []
+    for (const rock of layer.rocks) {
+      props.push({ y: originY + offset(rock.x) + dropOf(rock.x), draw: (y) => paintRock(ctx, rock, rock.x, y + rock.ry * 0.4) })
+    }
+    for (const fern of layer.ferns) {
+      props.push({
+        y: originY + offset(fern.x) + dropOf(fern.x + 1),
+        draw: (y) => {
+          ctx.save()
+          ctx.translate(fern.x, y + 2)
+          paintFern(ctx, fern, layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor, layer.tones[0] ?? layer.trunkColor)
+          ctx.restore()
+        },
+      })
+    }
     for (const bush of layer.bushes) {
-      const bushY = originY + offset(bush.x)
-      const rand = seededRandom(Math.floor(bush.x * 13))
-      for (const lobe of bush.lobes) {
-        drawLeafyDisk(ctx, bush.x + lobe.dx, bushY + lobe.dy, lobe.radius, layer.tones, 1, rand, 0.3, 1)
-      }
+      props.push({
+        y: originY + offset(bush.x) + dropOf(bush.x + 2) * 0.6,
+        draw: (y) => {
+          const rand = seededRandom(Math.floor(bush.x * 13))
+          for (const lobe of bush.lobes) {
+            drawLeafyDisk(ctx, bush.x + lobe.dx, y + lobe.dy, lobe.radius, layer.tones, 1, rand, 0.3, 1)
+          }
+        },
+      })
+    }
+    props.sort((p, q) => p.y - q.y)
+    for (const prop of props) {
+      prop.draw(prop.y)
     }
   }
   if (ctx && layer.localRadius !== null) {
@@ -512,7 +620,14 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     ctx.fillRect(0, 0, layer.span + 8, originY + bottomPad + 10)
     ctx.globalCompositeOperation = 'source-over'
   }
-  const strip = { canvas, resolution, originY, waterLine }
+  const columnGround = new Float32Array(Math.ceil(layer.span / GROUND_COLUMN) + 2).fill(-1e9)
+  for (let x = 0; x <= layer.span + GROUND_COLUMN; x += 8) {
+    const col = Math.floor(x / GROUND_COLUMN)
+    columnGround[col] = Math.max(columnGround[col] ?? -1e9, offset(x))
+  }
+  // Rasterize the recorded drawing once (see `buildLeafTile`), so blitting the strip stays cheap.
+  ctx?.getImageData(0, 0, 1, 1)
+  const strip = { canvas, resolution, originY, waterLine, columnGround }
   forestStrips.set(layer, strip)
   return strip
 }
@@ -563,42 +678,153 @@ function drawGround(
   ctx.stroke()
 }
 
+/** Width of a cached leaf-litter tile, in world pixels. */
+const LEAF_TILE_WIDTH = 1024
+
+/** Most litter tiles kept per world (the rest are rebuilt when they come into view again). */
+const LEAF_TILE_LIMIT = 9
+
+type LeafTile = { canvas: HTMLCanvasElement; res: number }
+
+/** Cached leaf-litter tiles per world, keyed by tile index; a Map keeps least-recently-used order. */
+const leafTiles = new WeakMap<World, { top: number; tiles: Map<number, LeafTile> }>()
+
 /**
- * Draws fallen leaves that overlap the current view (the list is sorted by x).
+ * The world's leaf-tile cache, created on first use.
+ *
+ * @param world - Play space.
+ */
+function leafTileEntry(world: World): { top: number; tiles: Map<number, LeafTile> } {
+  let entry = leafTiles.get(world)
+  if (!entry) {
+    // The tiles start a little above the highest ground line (leaves can overlap the surface).
+    let highest = world.groundY
+    for (const h of world.terrain.heights) {
+      highest = Math.min(highest, h)
+    }
+    entry = { top: highest - 60, tiles: new Map() }
+    leafTiles.set(world, entry)
+  }
+  return entry
+}
+
+/**
+ * Draws the leaf litter covering the whole ground. The thousands of leaves are painted once into
+ * tile bitmaps (one path and fill per colour), so each frame only blits the visible rows of the
+ * visible tiles instead of drawing leaves.
  *
  * @param ctx - 2D canvas context in world space.
- * @param leaves - Generated leaf litter.
- * @param cameraX - View left edge.
+ * @param world - Play space (leaves, terrain, size).
+ * @param camera - Current camera.
  * @param viewWidth - Viewport width.
+ * @param viewHeight - Viewport height.
  */
 function drawLeafLitter(
   ctx: CanvasRenderingContext2D,
-  leaves: LeafLitter[],
-  cameraX: number,
+  world: World,
+  camera: Camera,
   viewWidth: number,
+  viewHeight: number,
 ): void {
-  const left = cameraX - 20
-  const right = cameraX + viewWidth + 20
-  let lo = 0
-  let hi = leaves.length
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1
-    if ((leaves[mid]?.x ?? 0) < left) {
-      lo = mid + 1
+  const { top, tiles } = leafTileEntry(world)
+  const res = Math.max(0.1, Math.min(ctx.getTransform().a, 1))
+  const height = world.height - top + 12
+  const rowFrom = Math.max(camera.y, top)
+  const rowTo = Math.min(camera.y + viewHeight, top + height)
+  if (rowTo <= rowFrom) {
+    return
+  }
+  const first = Math.max(0, Math.floor(camera.x / LEAF_TILE_WIDTH))
+  const last = Math.floor((camera.x + viewWidth) / LEAF_TILE_WIDTH)
+  for (let index = first; index <= last; index += 1) {
+    let tile = tiles.get(index)
+    if (tile && Math.abs(tile.res - res) / res > 0.25) {
+      tile = undefined
+    }
+    if (tile) {
+      tiles.delete(index)
     } else {
-      hi = mid
+      tile = buildLeafTile(world.leaves, index, top, height, res)
+      if (tiles.size >= LEAF_TILE_LIMIT) {
+        const oldest = tiles.keys().next().value
+        if (oldest !== undefined) {
+          tiles.delete(oldest)
+        }
+      }
+    }
+    tiles.set(index, tile)
+    ctx.drawImage(
+      tile.canvas,
+      0,
+      (rowFrom - top) * tile.res,
+      tile.canvas.width,
+      (rowTo - rowFrom) * tile.res,
+      index * LEAF_TILE_WIDTH,
+      rowFrom,
+      LEAF_TILE_WIDTH,
+      rowTo - rowFrom,
+    )
+  }
+}
+
+/**
+ * Paints one tile of leaf litter into a bitmap, batched by colour.
+ *
+ * @param leaves - All leaves, sorted by x.
+ * @param index - Tile index (tile `i` covers x from `i * LEAF_TILE_WIDTH`).
+ * @param top - World y of the tile's top edge.
+ * @param height - Tile height in world pixels.
+ * @param res - Bitmap pixels per world pixel.
+ */
+function buildLeafTile(leaves: LeafLitter[], index: number, top: number, height: number, res: number): LeafTile {
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.ceil(LEAF_TILE_WIDTH * res)
+  canvas.height = Math.ceil(height * res)
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.scale(res, res)
+    ctx.translate(-index * LEAF_TILE_WIDTH, -top)
+    // Leaves of the neighbouring tiles that overlap this one's edges are painted too.
+    const left = index * LEAF_TILE_WIDTH - 40
+    const right = (index + 1) * LEAF_TILE_WIDTH + 40
+    let lo = 0
+    let hi = leaves.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if ((leaves[mid]?.x ?? 0) < left) {
+        lo = mid + 1
+      } else {
+        hi = mid
+      }
+    }
+    const byColor = new Map<string, LeafLitter[]>()
+    for (let i = lo; i < leaves.length; i += 1) {
+      const leaf = leaves[i]
+      if (!leaf || leaf.x > right) {
+        break
+      }
+      const group = byColor.get(leaf.color)
+      if (group) {
+        group.push(leaf)
+      } else {
+        byColor.set(leaf.color, [leaf])
+      }
+    }
+    // Fixed colour order so overlapping leaves always stack the same way.
+    for (const color of [...byColor.keys()].sort()) {
+      ctx.fillStyle = color
+      ctx.beginPath()
+      for (const leaf of byColor.get(color) ?? []) {
+        ctx.moveTo(leaf.x + leaf.rx * Math.cos(leaf.angle), leaf.y + leaf.rx * Math.sin(leaf.angle))
+        ctx.ellipse(leaf.x, leaf.y, leaf.rx, leaf.ry, leaf.angle, 0, Math.PI * 2)
+      }
+      ctx.fill()
     }
   }
-  for (let i = lo; i < leaves.length; i += 1) {
-    const leaf = leaves[i]
-    if (!leaf || leaf.x > right) {
-      break
-    }
-    ctx.fillStyle = leaf.color
-    ctx.beginPath()
-    ctx.ellipse(leaf.x, leaf.y, leaf.rx, leaf.ry, leaf.angle, 0, Math.PI * 2)
-    ctx.fill()
-  }
+  // Force the recorded drawing to be rasterized now; otherwise some browsers replay the thousands of
+  // recorded leaf shapes every time the tile is drawn.
+  ctx?.getImageData(0, 0, 1, 1)
+  return { canvas, res }
 }
 
 /**
@@ -657,7 +883,7 @@ function drawTrees(
 }
 
 /**
- * Draws logs and rocks that overlap the view, partly buried: logs rest on the average ground height
+ that overlap the view, partly buried: logs rest on the average ground height
  * under them, rocks sit slightly sunk.
  *
  * Called before the ground so the ground (and leaf litter) covers their lower part.
@@ -675,18 +901,43 @@ function drawBuriedProps(
 ): void {
   const left = cameraX - 600
   const right = cameraX + viewWidth + 600
+  // Ferns and bushes stand in the ground, behind the land: the ground polygon is painted over their
+  // bases, so a bird on the surface never looks like it is standing on top of a bush.
+  for (const fern of world.ferns) {
+    if (fern.x > left && fern.x < right) {
+      drawFern(ctx, fern, groundYAt(world.terrain, fern.x) + 6)
+    }
+  }
+  for (const bush of world.bushes) {
+    if (bushOnScreen(bush, cameraX, viewWidth) && !overhangsWater(world, bush)) {
+      drawBush(ctx, bush, groundYAt(world.terrain, bush.x) + 14)
+    }
+  }
   for (const rock of world.rocks) {
     if (rock.x > left && rock.x < right && !isCreekRock(world, rock)) {
-      drawRock(ctx, rock, groundYAt(world.terrain, rock.x))
+      // A big rock sits on the lowest ground under it so no side hangs in the air.
+      const reach = rock.rx * 0.7
+      drawRock(
+        ctx,
+        rock,
+        Math.max(
+          groundYAt(world.terrain, rock.x - reach),
+          groundYAt(world.terrain, rock.x),
+          groundYAt(world.terrain, rock.x + reach),
+        ),
+      )
     }
   }
   for (const log of world.logs) {
     if (log.x > left && log.x < right) {
-      const under =
-        (groundYAt(world.terrain, log.x - log.length / 2) +
-          groundYAt(world.terrain, log.x) +
-          groundYAt(world.terrain, log.x + log.length / 2)) /
-        3
+      // The lowest ground under the log, so no part of its underside hangs in the air.
+      const under = Math.max(
+        groundYAt(world.terrain, log.x - log.length / 2),
+        groundYAt(world.terrain, log.x - log.length / 4),
+        groundYAt(world.terrain, log.x),
+        groundYAt(world.terrain, log.x + log.length / 4),
+        groundYAt(world.terrain, log.x + log.length / 2),
+      )
       drawLog(ctx, log, under)
     }
   }
@@ -784,51 +1035,122 @@ function drawCreek(
 }
 
 /**
- * Draws a thin translucent band of water over the foreground creek's surface after the birds, so a
- * floating bird's sunken body looks submerged.
+ * Draws the rocks and bushes standing in front of the foreground's surface line, on top of the
+ * foreground layer (and its birds), like the rocks that sit between the background layers.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - Play space.
  * @param cameraX - View left edge.
  * @param viewWidth - Viewport width.
  */
-function drawCreekSurface(
+function drawFrontProps(
   ctx: CanvasRenderingContext2D,
   world: World,
   cameraX: number,
   viewWidth: number,
 ): void {
-  const { creek } = world.terrain
-  const left = Math.max(creek.x - creek.halfWidth, cameraX)
-  const right = Math.min(creek.x + creek.halfWidth, cameraX + viewWidth)
-  if (right <= left) {
-    return
+  const left = cameraX - 300
+  const right = cameraX + viewWidth + 300
+  // Back to front: the lower a prop stands, the nearer it is.
+  const items: { y: number; draw: () => void }[] = []
+  for (const front of world.frontRocks) {
+    if (front.rock.x > left && front.rock.x < right) {
+      items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y) })
+    }
   }
-  // Same color as the water, so it only shows over the sunken part of a floating bird.
-  ctx.fillStyle = 'rgba(106, 163, 196, 0.6)'
-  ctx.fillRect(left, creek.waterY, right - left, world.viewHeight * 0.02)
+  for (const front of world.frontBushes) {
+    if (bushOnScreen(front.bush, cameraX, viewWidth)) {
+      items.push({ y: front.y, draw: () => drawBush(ctx, front.bush, front.y) })
+    }
+  }
+  for (const front of world.frontFerns) {
+    if (front.fern.x > left && front.fern.x < right) {
+      items.push({ y: front.y, draw: () => drawFern(ctx, front.fern, front.y) })
+    }
+  }
+  items.sort((p, q) => p.y - q.y)
+  for (const item of items) {
+    item.draw()
+  }
 }
 
 /**
- * Draws bushes that overlap the view (no collision).
- * (Logs and rocks are drawn earlier, behind the ground.)
+ * Draws a thin translucent band of water across each floating bird after it is drawn, so its
+ * sunken body looks submerged.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param player - The main bird.
+ */
+function drawCreekSurface(ctx: CanvasRenderingContext2D, world: World, player: Player): void {
+  const { creek } = world.terrain
+  // Same color as the water, drawn only across each floating bird, so it covers just the sunken
+  // part of its body and never crosses bushes or anything else.
+  ctx.fillStyle = 'rgba(106, 163, 196, 0.6)'
+  for (const bird of [player, ...world.npcs.map((npc) => npc.bird)]) {
+    if (bird.floating) {
+      ctx.fillRect(bird.x - 4, creek.waterY, bird.size + 8, world.viewHeight * 0.02)
+    }
+  }
+}
+
+const bushExtents = new WeakMap<Bush, number>()
+
+/**
+ * Whether any part of a bush can be on screen: tests its whole width (the reach of its lobes), not
+ * just its center, so a wide bush never pops in at the screen edge.
+ *
+ * @param bush - Bush to test.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function bushOnScreen(bush: Bush, cameraX: number, viewWidth: number): boolean {
+  const extent = bushExtent(bush)
+  return bush.x + extent > cameraX && bush.x - extent < cameraX + viewWidth
+}
+
+/**
+ * How far a bush's lobes reach sideways from its center (cached).
+ *
+ * @param bush - Bush to measure.
+ */
+function bushExtent(bush: Bush): number {
+  let extent = bushExtents.get(bush)
+  if (extent === undefined) {
+    extent = 0
+    for (const lobe of bush.lobes) {
+      extent = Math.max(extent, Math.abs(lobe.dx) + lobe.radius)
+    }
+    extent += 8
+    bushExtents.set(bush, extent)
+  }
+  return extent
+}
+
+/**
+ * Whether a bush reaches over the creek's water. Those are drawn after the water (in front of it,
+ * not cut off by it) so their branches overhang it with a bushy underside, not a flat waterline.
+ *
+ * @param world - Play space.
+ * @param bush - Bush to test.
+ */
+function overhangsWater(world: World, bush: Bush): boolean {
+  const { creek } = world.terrain
+  return Math.abs(bush.x - creek.x) < creek.halfWidth + bushExtent(bush)
+}
+
+/**
+ * Draws the bushes that overhang the creek, over the water.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - Play space.
  * @param cameraX - View left edge.
  * @param viewWidth - Viewport width.
  */
-function drawProps(
-  ctx: CanvasRenderingContext2D,
-  world: World,
-  cameraX: number,
-  viewWidth: number,
-): void {
-  const left = cameraX - 400
-  const right = cameraX + viewWidth + 400
+function drawWaterBushes(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
   for (const bush of world.bushes) {
-    if (bush.x > left && bush.x < right) {
-      drawBush(ctx, bush, groundYAt(world.terrain, bush.x))
+    if (overhangsWater(world, bush) && bushOnScreen(bush, cameraX, viewWidth)) {
+      drawBush(ctx, bush, groundYAt(world.terrain, bush.x) + 4)
     }
   }
 }
@@ -841,20 +1163,178 @@ function drawProps(
  * @param groundY - Ground Y at the bush.
  */
 function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number): void {
-  const rand = seededRandom(Math.floor(bush.x * 13))
-  for (const lobe of bush.lobes) {
-    drawLeafyDisk(
-      ctx,
-      bush.x + lobe.dx,
-      groundY + lobe.dy,
-      lobe.radius,
-      shadeRamp(lobe.color),
-      2,
-      rand,
-      0.9,
-      1,
-    )
+  const res = ctx.getTransform().a
+  let sprite = bushSprites.get(bush)
+  if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
+    sprite = buildBushSprite(bush, res)
+    bushSprites.set(bush, sprite)
   }
+  ctx.drawImage(sprite.canvas, bush.x + sprite.offsetX, groundY + sprite.offsetY, sprite.width, sprite.height)
+}
+
+/** A bush drawn once into a bitmap, since its many leaves are expensive to draw every frame. */
+type BushSprite = {
+  canvas: HTMLCanvasElement
+  res: number
+  offsetX: number
+  offsetY: number
+  width: number
+  height: number
+}
+
+const bushSprites = new WeakMap<Bush, BushSprite>()
+
+/**
+ * Renders a bush's lobes into a bitmap positioned relative to its base point.
+ *
+ * @param bush - Bush to render.
+ * @param res - Bitmap pixels per world pixel (capped so a bush stays a few megapixels at most).
+ */
+function buildBushSprite(bush: Bush, res: number): BushSprite {
+  let minX = 0
+  let maxX = 0
+  let minY = 0
+  let maxY = 0
+  for (const lobe of bush.lobes) {
+    minX = Math.min(minX, lobe.dx - lobe.radius)
+    maxX = Math.max(maxX, lobe.dx + lobe.radius)
+    minY = Math.min(minY, lobe.dy - lobe.radius)
+    maxY = Math.max(maxY, lobe.dy + lobe.radius)
+  }
+  const pad = 6
+  const width = maxX - minX + pad * 2
+  const height = maxY - minY + pad * 2
+  const scale = Math.min(res, Math.sqrt(3_000_000 / Math.max(1, width * height)))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.ceil(width * scale))
+  canvas.height = Math.max(1, Math.ceil(height * scale))
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.scale(scale, scale)
+    ctx.translate(-(minX - pad), -(minY - pad))
+    const rand = seededRandom(Math.floor(bush.x * 13))
+    for (const lobe of bush.lobes) {
+      drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, shadeRamp(lobe.color), 2, rand, 0.9, 1)
+    }
+  }
+  return { canvas, res, offsetX: minX - pad, offsetY: minY - pad, width, height }
+}
+
+/** Leaf colors for the foreground ferns: dark glossy greens. */
+const FERN_TONES = ['#2f7a3a', '#3a8c40', '#27693a']
+
+/**
+ * Paints a fern with its base at the origin, after the Christmas fern: a crown of long, narrow
+ * fronds that arch outward, each a short bare stalk, then a lance-shaped blade made of many short
+ * pointed leaflets (pinnae) in alternating pairs angled toward the tip, longest near the lower
+ * third and shrinking to the tip, along a darker midrib.
+ *
+ * @param ctx - 2D canvas context.
+ * @param fern - Fern to paint.
+ * @param leaf - Leaflet color.
+ * @param stem - Stalk and midrib color.
+ */
+function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem: string): void {
+  ctx.lineCap = 'round'
+  // Draw the outer (lower, leaning) fronds first so the central ones overlap them.
+  const fronds = [...fern.fronds].sort((p, q) => Math.abs(q.angle) - Math.abs(p.angle))
+  for (const frond of fronds) {
+    // Every frond is painted from its own point on the ground (the crown is hidden below it).
+    ctx.save()
+    ctx.translate(frond.base * fern.size, fern.size * 0.1)
+    const length = fern.size * frond.length
+    const dirX = Math.sin(frond.angle)
+    const dirY = -Math.cos(frond.angle)
+    const side = frond.angle >= 0 ? 1 : -1
+    const cx = dirX * length * 0.55
+    const cy = dirY * length * 0.55
+    const droop = length * 0.17 * frond.bend
+    const ex = dirX * length + side * droop * 0.5
+    const ey = dirY * length * 0.92 + droop * 0.45
+    const at = (t: number): [number, number] => {
+      const u = 1 - t
+      return [2 * u * t * cx + t * t * ex, 2 * u * t * cy + t * t * ey]
+    }
+    const direction = (t: number): number => {
+      const u = 1 - t
+      return Math.atan2(2 * u * cy + 2 * t * (ey - cy), 2 * u * cx + 2 * t * (ex - cx))
+    }
+    // Stalk, then the midrib of the blade.
+    ctx.strokeStyle = stem
+    ctx.lineWidth = Math.max(1, fern.size * 0.028)
+    ctx.beginPath()
+    ctx.moveTo(0, 0)
+    ctx.quadraticCurveTo(cx, cy, ex, ey)
+    ctx.stroke()
+    // Leaflets: pointed, narrow, angled about 60 degrees toward the tip, alternating sides.
+    const pairs = 15
+    ctx.fillStyle = leaf
+    ctx.beginPath()
+    for (let i = 0; i < pairs; i += 1) {
+      const t = 0.16 + (0.82 * i) / (pairs - 1)
+      const along = (t - 0.16) / 0.82
+      // Longest near the lower third, tapering to a short tip.
+      const profile = along < 0.25 ? 0.65 + 1.4 * along : 1 - 0.78 * ((along - 0.25) / 0.75) ** 1.1
+      const leaflet = length * 0.25 * profile
+      const [px, py] = at(t)
+      const heading = direction(t)
+      for (const sgn of [-1, 1]) {
+        // Alternate: the two sides sit at slightly different spots along the midrib.
+        const [qx, qy] = at(Math.min(0.99, t + (sgn > 0 ? 0.012 : 0)))
+        const angle = heading + sgn * 1.0
+        const mx = qx + Math.cos(angle) * leaflet * 0.5
+        const my = qy + Math.sin(angle) * leaflet * 0.5
+        ctx.moveTo(mx + Math.cos(angle) * leaflet * 0.5, my + Math.sin(angle) * leaflet * 0.5)
+        ctx.ellipse(mx, my, leaflet * 0.5, leaflet * 0.13, angle, 0, Math.PI * 2)
+      }
+      void px
+      void py
+    }
+    ctx.fill()
+    // Pointed tip of the blade.
+    const [tx, ty] = at(1)
+    const tip = direction(1)
+    ctx.beginPath()
+    ctx.ellipse(tx - Math.cos(tip) * length * 0.04, ty - Math.sin(tip) * length * 0.04, length * 0.06, length * 0.025, tip, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
+/** A foreground fern drawn once into a bitmap. */
+type FernSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+
+const fernSprites = new WeakMap<Fern, FernSprite>()
+
+/**
+ * Draws a foreground fern (from a cached bitmap) with its base at (fern.x, groundY).
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param fern - Fern to draw.
+ * @param groundY - Ground Y at the fern.
+ */
+function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number): void {
+  const res = ctx.getTransform().a
+  let sprite = fernSprites.get(fern)
+  if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
+    const reachX = fern.size * 1.25
+    const width = reachX * 2 + 8
+    const below = fern.size * 0.55
+    const height = fern.size * 1.2 + below + 10
+    const scale = Math.min(res, Math.sqrt(2_000_000 / (width * height)))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.ceil(width * scale))
+    canvas.height = Math.max(1, Math.ceil(height * scale))
+    const sctx = canvas.getContext('2d')
+    if (sctx) {
+      sctx.scale(scale, scale)
+      sctx.translate(width / 2, height - below - 4)
+      paintFern(sctx, fern, FERN_TONES[fern.tone] ?? '#3f8f3b', '#2a5a2a')
+    }
+    sprite = { canvas, res, offsetX: -width / 2, offsetY: -(height - below - 4), width, height }
+    fernSprites.set(fern, sprite)
+  }
+  ctx.drawImage(sprite.canvas, fern.x + sprite.offsetX, groundY + sprite.offsetY, sprite.width, sprite.height)
 }
 
 /**
@@ -878,47 +1358,383 @@ function shadeRamp(hex: string): string[] {
  * @param groundY - Ground Y at the log center.
  */
 function drawLog(ctx: CanvasRenderingContext2D, log: Log, groundY: number): void {
-  const { length: len, radius: r } = log
   ctx.save()
-  // Sunk about 40% into the ground: the ground polygon is drawn over the lower part.
-  ctx.translate(log.x, groundY - r * 0.2)
+  // Sunk a little into the ground: the ground polygon is drawn over the lower part.
+  ctx.translate(log.x, groundY - log.radius * 0.8)
   ctx.rotate(log.tilt)
-  ctx.fillStyle = TRUNK_COLOR
-  ctx.fillRect(-len / 2, -r, len, r * 2)
-  ctx.strokeStyle = 'rgba(30, 22, 16, 0.55)'
-  ctx.lineWidth = 2
-  for (const f of [-0.5, 0, 0.5]) {
-    ctx.beginPath()
-    ctx.moveTo(-len / 2 + len * 0.05, r * f)
-    ctx.lineTo(len / 2 - len * 0.05, r * f)
-    ctx.stroke()
-  }
-  ctx.fillStyle = '#41342a'
-  ctx.beginPath()
-  ctx.ellipse(-len / 2, 0, r * 0.35, r, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.fillStyle = '#cdb892'
-  ctx.beginPath()
-  ctx.ellipse(len / 2, 0, r * 0.35, r, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.strokeStyle = '#8a7658'
-  ctx.lineWidth = 1.5
-  for (const k of [0.7, 0.4, 0.15]) {
-    ctx.beginPath()
-    ctx.ellipse(len / 2, 0, r * 0.35 * k, r * k, 0, 0, Math.PI * 2)
-    ctx.stroke()
-  }
+  drawFallenLog(ctx, log, TRUNK_COLOR)
   ctx.restore()
 }
 
 /**
- * Draws a rock as a jittered half-ellipse polygon with a highlight.
+ * Draws a fallen tree trunk centered on the origin along x: flared and buttressed at the root end,
+ * tapering to a narrow rounded tip at the other (no squared-off ends), with lengthwise bark lines,
+ * a lit top edge and, on some, moss along the top. Details are translucent overlays so it works in
+ * hazy background layers too.
+ *
+ * @param ctx - 2D canvas context (origin at the log's center, x along the log).
+ * @param log - Log to draw (length, radius, which end is the root end, moss).
+ * @param color - Bark color.
+ */
+function drawFallenLog(ctx: CanvasRenderingContext2D, log: Log, color: string, fog = 0): void {
+  const { length: len, radius: r } = log
+  const x0 = -len / 2
+  // Half thickness at t along the log: a root flare near the butt, then a long taper.
+  const half = (t: number): number => r * (1.05 + 0.55 * Math.max(0, 1 - t / 0.16) ** 2 - 0.68 * t)
+  // The log lies on its underside: the bottom edge is a straight line (y = r) all along, so
+  // tapering never leaves a gap between the narrow end and the ground; the top edge follows the taper.
+  const bottom = r
+  const topAt = (t: number): number => bottom - 2 * half(t)
+  const midAt = (t: number): number => bottom - half(t)
+  const steps = 16
+  ctx.save()
+  ctx.scale(log.flip, 1)
+  ctx.fillStyle = color
+  ctx.beginPath()
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps
+    ctx.lineTo(x0 + t * len, topAt(t))
+  }
+  // Rounded tip.
+  ctx.quadraticCurveTo(x0 + len + r * 0.3, midAt(1), x0 + len, bottom)
+  ctx.lineTo(x0, bottom)
+  // Rounded (not flat) root end.
+  ctx.quadraticCurveTo(x0 - r * 0.45, midAt(0), x0, topAt(0))
+  ctx.closePath()
+  ctx.fill()
+  ctx.save()
+  ctx.clip()
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)'
+  ctx.lineWidth = Math.max(1, r * 0.1)
+  for (const f of [-0.55, -0.05, 0.5]) {
+    ctx.beginPath()
+    for (let i = 1; i <= 14; i += 1) {
+      const t = i / 15
+      ctx.lineTo(x0 + t * len, midAt(t) + f * half(t))
+    }
+    ctx.stroke()
+  }
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.13)'
+  ctx.beginPath()
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps
+    ctx.lineTo(x0 + t * len, topAt(t))
+  }
+  for (let i = steps; i >= 0; i -= 1) {
+    const t = i / steps
+    ctx.lineTo(x0 + t * len, topAt(t) + half(t) * 0.38)
+  }
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+  if (log.moss) {
+    // A soft cushion of moss along the upper side, thicker toward the root end, overhanging the outline.
+    const spots: [number, number, number][] = []
+    for (let i = 0; i < 70; i += 1) {
+      const t = 0.03 + 0.8 * ((i * 0.6180339) % 1) ** 1.2
+      const size = r * (0.09 + 0.1 * ((i * 0.7548776) % 1)) * (1.15 - t * 0.5)
+      const lift = ((i * 0.5698403) % 1) * 0.45
+      spots.push([x0 + t * len, topAt(t) + half(t) * lift * 1.1 + size * 0.2, size])
+    }
+    spots.sort((a, b) => a[1] - b[1])
+    paintMoss(ctx, spots, fog)
+  }
+  ctx.restore()
+}
+
+/** Moss greens from shadow to highlight. */
+const MOSS_TONES = ['#2e4a1f', '#4a7a2a', '#6f9f38', '#9bc75a']
+
+/**
+ * A color blended toward the haze (a no-op in the foreground).
+ *
+ * @param color - Base color.
+ * @param fog - Share of haze, 0 for none.
+ */
+function hazy(color: string, fog: number): string {
+  return fog > 0 ? mixColor(color, FOREST_HAZE_COLOR, fog) : color
+}
+
+/**
+ * Paints moss from many small overlapping circles, in four batched passes (shadow, body, light on
+ * every other one, highlight on a few, the lighter ones nudged up and left where the light comes
+ * from), so it reads as one soft, lumpy cushion rather than separate balls.
+ *
+ * @param ctx - 2D canvas context.
+ * @param spots - Circles as [x, y, radius].
+ * @param fog - Haze blended into the colors.
+ */
+function paintMoss(ctx: CanvasRenderingContext2D, spots: [number, number, number][], fog: number): void {
+  const noise = (seed: number, k: number): number => {
+    const v = Math.sin(seed * 12.9898 + k * 78.233) * 43758.5453
+    return v - Math.floor(v)
+  }
+  // An irregular, slightly flattened blob: a few points at uneven radii joined by smooth curves.
+  const blob = (x: number, y: number, r: number, seed: number): void => {
+    const n = 7
+    const pts: [number, number][] = []
+    for (let k = 0; k < n; k += 1) {
+      const angle = ((k + (noise(seed, k + 10) - 0.5) * 0.7) / n) * Math.PI * 2
+      const radius = r * (0.6 + 0.6 * noise(seed, k))
+      pts.push([x + Math.cos(angle) * radius * 1.3, y + Math.sin(angle) * radius * 0.85])
+    }
+    const first = pts[0] ?? [x, y]
+    const last = pts[n - 1] ?? first
+    ctx.moveTo((first[0] + last[0]) / 2, (first[1] + last[1]) / 2)
+    for (let k = 0; k < n; k += 1) {
+      const p = pts[k] ?? first
+      const q = pts[(k + 1) % n] ?? first
+      ctx.quadraticCurveTo(p[0], p[1], (p[0] + q[0]) / 2, (p[1] + q[1]) / 2)
+    }
+  }
+  const pass = (tone: number, pick: (i: number) => boolean, dx: number, dy: number, scale: number): void => {
+    ctx.fillStyle = hazy(MOSS_TONES[tone] ?? '#4a7a2a', fog)
+    ctx.beginPath()
+    spots.forEach(([x, y, r], i) => {
+      if (pick(i)) {
+        blob(x + dx * r, y + dy * r, r * scale, i + tone * 0.37)
+      }
+    })
+    ctx.fill()
+  }
+  pass(0, () => true, 0, 0.3, 1.1)
+  pass(1, () => true, 0, 0, 1)
+  pass(2, (i) => i % 2 === 0, -0.22, -0.28, 0.7)
+  pass(3, (i) => i % 5 === 0, -0.38, -0.42, 0.38)
+  // A fuzz of fine tips standing up from the moss.
+  ctx.strokeStyle = hazy(MOSS_TONES[3] ?? '#9bc75a', fog)
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  spots.forEach(([x, y, r], i) => {
+    if (i % 3 === 0) {
+      const sx = x + (noise(i, 3) - 0.5) * r
+      ctx.lineWidth = Math.max(1, r * 0.12)
+      ctx.moveTo(sx, y - r * 0.2)
+      ctx.lineTo(sx + (noise(i, 5) - 0.5) * r * 1.2, y - r * (0.7 + 0.5 * noise(i, 7)))
+    }
+  })
+  ctx.stroke()
+}
+
+/**
+ * Paints a boulder with its base at (cx, baseY): a blocky, irregular outline (a squared ellipse with
+ * smooth bumps), light from the upper left (gradient and two flat planes), cracks, pale lichen
+ * blotches and dark speckles, and for mossy rocks a thick blanket of moss clumps over the top and
+ * upper left that overhangs the outline a little. A few fallen leaves lie over the base.
+ *
+ * @param ctx - 2D canvas context.
+ * @param rock - Rock to paint (its own x is ignored).
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ */
+function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY: number): void {
+  const { rx, ry, fog } = rock
+  const rng = seededRandom(Math.floor(rock.jitter.reduce((a, b) => a + b, 0) * 10000))
+  const phase = [rng() * 6.28, rng() * 6.28, rng() * 6.28] as const
+  const points = 64
+  const outline: [number, number][] = []
+  // The top is a squared ellipse (blocky boulder); the underside is a shallow, rounded curve, so
+  // the rock looks nestled into the ground and litter rather than sitting on a flat base.
+  const edge = (theta: number, bump: number): [number, number] => {
+    const c = Math.cos(theta)
+    const s = Math.sin(theta)
+    if (s > 0) {
+      return [cx + rx * bump * Math.sign(c) * Math.abs(c) ** 0.9, baseY + ry * 0.4 * bump * s]
+    }
+    return [
+      cx + rx * bump * Math.sign(c) * Math.abs(c) ** 0.77,
+      baseY + ry * bump * Math.sign(s) * Math.abs(s) ** 0.77,
+    ]
+  }
+  for (let i = 0; i < points; i += 1) {
+    const theta = Math.PI + (2 * Math.PI * i) / points
+    const bump = 1 + 0.07 * Math.sin(3 * theta + phase[0]) + 0.05 * Math.sin(5 * theta + phase[1]) + 0.035 * Math.sin(9 * theta + phase[2])
+    outline.push(edge(theta, bump))
+  }
+  const trace = (): void => {
+    ctx.beginPath()
+    outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+    ctx.closePath()
+  }
+  ctx.fillStyle = rock.color
+  trace()
+  ctx.fill()
+
+  ctx.save()
+  trace()
+  ctx.clip()
+  // Light from the upper left: bright top-left fading to a dark lower right.
+  const shade = ctx.createLinearGradient(cx - rx, baseY - ry * 1.1, cx + rx * 0.9, baseY + ry * 0.5)
+  shade.addColorStop(0, 'rgba(255, 255, 255, 0.3)')
+  shade.addColorStop(0.5, 'rgba(255, 255, 255, 0)')
+  shade.addColorStop(1, 'rgba(0, 0, 0, 0.4)')
+  ctx.fillStyle = shade
+  ctx.fillRect(cx - rx * 1.3, baseY - ry * 1.3, rx * 2.6, ry * 2.2)
+  // Two flat planes: one in shadow on the right, one catching light on the upper left.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'
+  ctx.beginPath()
+  ctx.moveTo(cx + rx * 0.2, baseY - ry * 1.2)
+  ctx.lineTo(cx + rx * 0.6, baseY - ry * 0.3)
+  ctx.lineTo(cx + rx * 0.4, baseY + ry * 0.6)
+  ctx.lineTo(cx + rx * 1.3, baseY + ry * 0.6)
+  ctx.lineTo(cx + rx * 1.3, baseY - ry * 1.2)
+  ctx.closePath()
+  ctx.fill()
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.1)'
+  ctx.beginPath()
+  ctx.moveTo(cx - rx * 1.3, baseY - ry * 1.2)
+  ctx.lineTo(cx - rx * 0.1, baseY - ry * 1.2)
+  ctx.lineTo(cx - rx * 0.5, baseY - ry * 0.4)
+  ctx.lineTo(cx - rx * 1.3, baseY - ry * 0.1)
+  ctx.closePath()
+  ctx.fill()
+  // Cracks climbing from the base.
+  ctx.strokeStyle = 'rgba(15, 15, 15, 0.4)'
+  ctx.lineWidth = Math.max(1, rx * 0.012)
+  ctx.lineCap = 'round'
+  for (let c = 0; c < 3; c += 1) {
+    let x = cx + (rng() - 0.5) * rx * 1.3
+    let y = baseY + ry * 0.3
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    for (let step = 0; step < 5; step += 1) {
+      x += (rng() - 0.5) * rx * 0.18
+      y -= ry * (0.12 + rng() * 0.14)
+      ctx.lineTo(x, y)
+    }
+    ctx.stroke()
+  }
+  // Pale lichen blotches.
+  for (let k = 0; k < 7; k += 1) {
+    ctx.fillStyle = k % 2 === 0 ? 'rgba(205, 200, 160, 0.3)' : 'rgba(120, 135, 95, 0.28)'
+    ctx.beginPath()
+    ctx.ellipse(
+      cx + (rng() - 0.5) * rx * 1.5,
+      baseY - ry * (0.1 + rng() * 0.8),
+      rx * (0.04 + rng() * 0.09),
+      rx * (0.03 + rng() * 0.06),
+      rng() * 3,
+      0,
+      Math.PI * 2,
+    )
+    ctx.fill()
+  }
+  // Dark speckles.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.2)'
+  ctx.beginPath()
+  const speckles = Math.min(45, Math.round(rx / 2))
+  for (let k = 0; k < speckles; k += 1) {
+    const sx = cx + (rng() - 0.5) * rx * 1.8
+    const sy = baseY - ry * rng() * 1.1
+    const sr = 0.6 + rng() * Math.min(2, rx * 0.01)
+    ctx.moveTo(sx + sr, sy)
+    ctx.arc(sx, sy, sr, 0, Math.PI * 2)
+  }
+  ctx.fill()
+  ctx.restore()
+
+  if (rock.moss) {
+    // A continuous blanket over the top and upper left (thick on top, thinning toward the sides and
+    // reaching further down the left), then small lumps along and inside its lower edge and over
+    // its outline, so it reads as soft cushioned moss rather than separate dots.
+    const mossPhase = rng() * 6.28
+    const thickness = (theta: number): number => {
+      const top = 1 - Math.abs(theta - 1.5 * Math.PI) / (0.55 * Math.PI)
+      return Math.max(0.08, (0.3 + 0.18 * Math.sin(2.7 * theta + mossPhase)) * Math.max(0.25, top) + 0.1 * Math.max(0, Math.cos(theta - 1.2 * Math.PI)))
+    }
+    const from = Math.PI * 1.04
+    const to = Math.PI * 1.97
+    const steps = 36
+    const toward = (theta: number, d: number): [number, number] => {
+      const [ex, ey] = edge(theta, 1)
+      return [ex + (cx - ex) * d, ey + (baseY + ry * 0.1 - ey) * d]
+    }
+    ctx.fillStyle = hazy(MOSS_TONES[1] ?? '#4a7a2a', fog)
+    ctx.beginPath()
+    for (let i = 0; i <= steps; i += 1) {
+      const theta = from + ((to - from) * i) / steps
+      const [x, y] = edge(theta, 1)
+      if (i === 0) {
+        ctx.moveTo(x, y)
+      } else {
+        ctx.lineTo(x, y)
+      }
+    }
+    for (let i = steps; i >= 0; i -= 1) {
+      const theta = from + ((to - from) * i) / steps
+      const [x, y] = toward(theta, thickness(theta))
+      ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.fill()
+    const count = Math.round(rx * 1.1 + 60)
+    const spots: [number, number, number][] = []
+    for (let k = 0; k < count; k += 1) {
+      const theta = from + (to - from) * rng() ** 1.1
+      const [x, y] = toward(theta, thickness(theta) * (0.25 + 1.0 * rng()))
+      spots.push([x, y, rx * (0.025 + rng() * 0.04)])
+    }
+    spots.sort((p, q) => p[1] - q[1])
+    paintMoss(ctx, spots, fog)
+  }
+
+  if (rock.rx >= 7) {
+    // A few fallen leaves over the base, as if the rock were settled into the litter.
+    rock.litter.forEach((color, k) => {
+      const spread = ((rock.jitter[k] ?? 1) - 0.96) / 0.12
+      ctx.fillStyle = color
+      ctx.beginPath()
+      ctx.ellipse(cx + spread * rx * 0.9, baseY + ry * (0.14 + 0.1 * Math.abs(spread)), rx * 0.2, rx * 0.08, spread * 0.8, 0, Math.PI * 2)
+      ctx.fill()
+    })
+  }
+}
+
+type RockSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+
+const rockSprites = new WeakMap<Rock, RockSprite>()
+
+/**
+ * Draws a rock from a cached bitmap of its detailed painting, with its base at `groundY` plus a
+ * little sink (the ground polygon drawn afterwards hides the lowest part).
  *
  * @param ctx - 2D canvas context in world space.
  * @param rock - Rock to draw.
  * @param groundY - Ground Y at the rock.
  */
 function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): void {
+  const res = ctx.getTransform().a
+  let sprite = rockSprites.get(rock)
+  if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
+    const pad = rock.rx * 0.2 + 8
+    const width = rock.rx * 2.5 + pad * 2
+    const above = rock.ry * 1.5 + pad
+    const height = above + rock.ry * 0.55 + pad
+    const scale = Math.min(res, Math.sqrt(4_000_000 / (width * height)))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.ceil(width * scale))
+    canvas.height = Math.max(1, Math.ceil(height * scale))
+    const sctx = canvas.getContext('2d')
+    if (sctx) {
+      sctx.scale(scale, scale)
+      sctx.translate(width / 2, above)
+      paintRock(sctx, rock, 0, 0)
+    }
+    sprite = { canvas, res, offsetX: -width / 2, offsetY: -above, width, height }
+    rockSprites.set(rock, sprite)
+  }
+  ctx.drawImage(sprite.canvas, rock.x + sprite.offsetX, groundY + rock.ry * 0.4 + sprite.offsetY, sprite.width, sprite.height)
+}
+
+/**
+ * Draws a rock as a jittered half-ellipse polygon with a highlight (cheap version, redrawn every
+ * frame for the small hazy rocks between background layers).
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param rock - Rock to draw.
+ * @param groundY - Ground Y at the rock.
+ */
+function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): void {
   const n = rock.jitter.length
   const baseY = groundY + rock.ry * 0.4
   ctx.fillStyle = rock.color
@@ -937,6 +1753,22 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): v
   })
   ctx.closePath()
   ctx.fill()
+  if (rock.moss) {
+    // Moss in soft patches on the upper side of the rock, clipped to its outline.
+    ctx.save()
+    ctx.clip()
+    ctx.fillStyle = 'rgba(92, 140, 56, 0.78)'
+    ctx.beginPath()
+    for (const [a, f, s] of [[0.2, 0.86, 0.3], [0.38, 0.9, 0.36], [0.55, 0.88, 0.28], [0.74, 0.84, 0.24]] as const) {
+      const angle = Math.PI + Math.PI * a
+      const mx = rock.x + Math.cos(angle) * rock.rx * f
+      const my = baseY + Math.sin(angle) * rock.ry * f
+      ctx.moveTo(mx + rock.rx * s, my)
+      ctx.ellipse(mx, my, rock.rx * s, rock.ry * s * 0.8, angle * 0.3, 0, Math.PI * 2)
+    }
+    ctx.fill()
+    ctx.restore()
+  }
   ctx.fillStyle = rock.highlight
   ctx.globalAlpha = 0.6
   ctx.beginPath()
@@ -944,6 +1776,9 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): v
   ctx.fill()
   ctx.globalAlpha = 1
   // A few fallen leaves over the base, as if the rock were settled into the litter.
+  if (rock.rx < 7) {
+    return
+  }
   rock.litter.forEach((color, k) => {
     const spread = ((rock.jitter[k] ?? 1) - 0.96) / 0.12
     ctx.fillStyle = color
@@ -2027,8 +2862,66 @@ function drawMinimap(
   const mx = (viewWidth - mapW) / 2
   const my = 12
 
+  // The terrain, trees and props never change, so they are drawn once into a bitmap.
+  const res = Math.max(0.1, ctx.getTransform().a)
+  let cache = minimapCache.get(world)
+  if (!cache || Math.abs(cache.mapW - mapW) > 0.5 || Math.abs(cache.res - res) > 0.05) {
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.ceil(mapW * res))
+    canvas.height = Math.max(1, Math.ceil(mapH * res))
+    const sctx = canvas.getContext('2d')
+    if (sctx) {
+      sctx.scale(res, res)
+      drawMinimapStatic(sctx, world, mapW, mapH, scale)
+    }
+    cache = { canvas, mapW, res }
+    minimapCache.set(world, cache)
+  }
+
   ctx.save()
   ctx.translate(mx, my)
+  ctx.drawImage(cache.canvas, 0, 0, mapW, mapH)
+
+  ctx.fillStyle = '#e08a1e'
+  for (const npc of world.npcs) {
+    ctx.beginPath()
+    ctx.arc((npc.bird.x + npc.bird.size / 2) * scale, (npc.bird.y + npc.bird.size / 2) * scale, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+  }
+
+  ctx.strokeStyle = '#1b2838'
+  ctx.lineWidth = 1
+  ctx.strokeRect(camera.x * scale, camera.y * scale, viewWidth * scale, viewHeight * scale)
+
+  ctx.fillStyle = '#1565c0'
+  ctx.strokeStyle = '#fff'
+  ctx.lineWidth = 1.5
+  ctx.beginPath()
+  ctx.arc((player.x + player.size / 2) * scale, (player.y + player.size / 2) * scale, 4, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.stroke()
+  ctx.restore()
+}
+
+/** Pre-rendered static part of the minimap (terrain, creek, props, trees, frame), per world. */
+const minimapCache = new WeakMap<World, { canvas: HTMLCanvasElement; mapW: number; res: number }>()
+
+/**
+ * Draws the minimap's unchanging layers: terrain, creek, low-detail props, trees and the frame.
+ *
+ * @param ctx - Context of the cached bitmap (origin at its top-left).
+ * @param world - Play space.
+ * @param mapW - Minimap width.
+ * @param mapH - Minimap height.
+ * @param scale - Minimap pixels per world pixel.
+ */
+function drawMinimapStatic(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  mapW: number,
+  mapH: number,
+  scale: number,
+): void {
   ctx.fillStyle = 'rgba(157, 191, 156, 0.9)'
   ctx.fillRect(0, 0, mapW, mapH)
   ctx.fillStyle = '#6b4a2b'
@@ -2109,36 +3002,9 @@ function drawMinimap(
     ctx.fill()
   }
 
-  ctx.fillStyle = ACORN_COLOR
-  for (const acorn of world.acorns) {
-    if (acorn.state === 'ground') {
-      ctx.fillRect(acorn.x * scale - 1, groundYAt(world.terrain, acorn.x) * scale - 3, 2.5, 3)
-    }
-  }
-
-  ctx.fillStyle = '#e08a1e'
-  for (const npc of world.npcs) {
-    ctx.beginPath()
-    ctx.arc((npc.bird.x + npc.bird.size / 2) * scale, (npc.bird.y + npc.bird.size / 2) * scale, 2.5, 0, Math.PI * 2)
-    ctx.fill()
-  }
-
-  ctx.strokeStyle = '#1b2838'
-  ctx.lineWidth = 1
-  ctx.strokeRect(camera.x * scale, camera.y * scale, viewWidth * scale, viewHeight * scale)
-
-  ctx.fillStyle = '#1565c0'
-  ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 1.5
-  ctx.beginPath()
-  ctx.arc((player.x + player.size / 2) * scale, (player.y + player.size / 2) * scale, 4, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.stroke()
-
   ctx.strokeStyle = '#1f3d52'
   ctx.lineWidth = 2
   ctx.strokeRect(0, 0, mapW, mapH)
-  ctx.restore()
 }
 
 /**
@@ -2345,6 +3211,13 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
   }
   for (const tree of world.trees) {
     getOakSprite(tree.shape, OAK_TONES, TRUNK_COLOR, dpr)
+    yield
+  }
+  // Leaf-litter tiles for the whole ground, one per step (at the usual resolution of 1 px per world px).
+  const { top, tiles } = leafTileEntry(world)
+  const tileHeight = world.height - top + 12
+  for (let index = 0; index * LEAF_TILE_WIDTH < world.width; index += 1) {
+    tiles.set(index, buildLeafTile(world.leaves, index, top, tileHeight, 1))
     yield
   }
 

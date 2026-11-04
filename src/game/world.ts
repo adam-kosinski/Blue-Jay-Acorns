@@ -22,6 +22,10 @@ import type {
   Bush,
   BushLobe,
   Creek,
+  FrontBush,
+  Fern,
+  FrontFern,
+  FrontRock,
   GapRock,
   ForestLayer,
   LeafLitter,
@@ -41,11 +45,19 @@ const ROCK_COLORS: [string, string][] = [
 ]
 
 /** Bushes, logs, boulders and small-rock clusters per run. */
-const BUSH_COUNT = 14
+const BUSH_COUNT = 7
 const LOG_COUNT = 5
 const BOULDER_COUNT = 6
 const ROCK_CLUSTER_COUNT = 11
 
+
+/** Props in front of the foreground's surface line. */
+const FRONT_ROCK_COUNT = 40
+const FRONT_BUSH_COUNT = 3
+const FRONT_FERN_CLUMPS = 6
+
+/** Fern clumps in the foreground. */
+const FERN_CLUMPS = 5
 
 /** Rocks (on average) in each stretch of ground between two background layers. */
 const GAP_ROCK_COUNT = 26
@@ -54,7 +66,7 @@ const GAP_ROCK_COUNT = 26
 const BANK_ROCK_COUNT = 30
 
 /** Extra bushes placed along the foreground creek's banks (so banks are very likely to have bushes). */
-const BANK_BUSH_COUNT = 12
+const BANK_BUSH_COUNT = 5
 
 /** Parallax settings per background layer, farthest first (fog is the share blended toward the haze: atmospheric perspective) (spacing is the average gap between trunks in view heights; small so trunks and crowns fill sightlines). */
 const FOREST_LAYERS: {
@@ -68,15 +80,18 @@ const FOREST_LAYERS: {
 }[] = [
   // Three extra, much farther layers that exist only near the creek: the creek lets the player
   // see much deeper into the forest than anywhere else.
-  { parallax: 0.045, fog: 0.48, lift: 0.55, scale: 0.4, spacing: 0.08, local: true },
-  { parallax: 0.065, fog: 0.46, lift: 0.5, scale: 0.46, spacing: 0.09, local: true },
-  { parallax: 0.09, fog: 0.435, lift: 0.45, scale: 0.52, spacing: 0.1, local: true },
-  { parallax: 0.12, fog: 0.4, lift: 0.4, scale: 0.58, spacing: 0.11 },
-  { parallax: 0.22, fog: 0.31, lift: 0.33, scale: 0.67, spacing: 0.15 },
-  { parallax: 0.35, fog: 0.225, lift: 0.26, scale: 0.77, spacing: 0.2 },
-  { parallax: 0.5, fog: 0.14, lift: 0.2, scale: 0.88, spacing: 0.27 },
-  { parallax: 0.68, fog: 0.06, lift: 0.14, scale: 1, spacing: 0.36 },
+  { parallax: 0.045, fog: 0.48, lift: 0.55, scale: 0.2, spacing: 0.08, local: true },
+  { parallax: 0.065, fog: 0.46, lift: 0.5, scale: 0.25, spacing: 0.09, local: true },
+  { parallax: 0.09, fog: 0.435, lift: 0.45, scale: 0.3, spacing: 0.1, local: true },
+  { parallax: 0.12, fog: 0.4, lift: 0.4, scale: 0.36, spacing: 0.11 },
+  { parallax: 0.22, fog: 0.31, lift: 0.33, scale: 0.42, spacing: 0.15 },
+  { parallax: 0.35, fog: 0.225, lift: 0.26, scale: 0.5, spacing: 0.2 },
+  { parallax: 0.5, fog: 0.14, lift: 0.2, scale: 0.58, spacing: 0.27 },
+  { parallax: 0.68, fog: 0.06, lift: 0.14, scale: 0.66, spacing: 0.36 },
 ]
+
+/** Atmospheric perspective of the farthest background layer: the backdrop behind every layer matches it. */
+export const BACKDROP_FOG = FOREST_LAYERS[0]?.fog ?? 0.5
 
 /** Water color before haze is mixed in. */
 const WATER_COLOR = '#4f86ad'
@@ -133,8 +148,9 @@ function pick<T>(items: T[], fallback: T): T {
  * @param worldWidth - Full world width.
  * @param viewHeight - Window height used as the tree's total height.
  * @param keepOut - Creek span trunks stay out of.
+ * @param terrain - Ground heights (the old-growth tree's roots follow them).
  */
-function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span): OakTree[] {
+function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span, terrain: Terrain): OakTree[] {
   const crownRadius = viewHeight * 0.32 * SCENERY_SCALE
   const trunkHeight = (viewHeight - viewHeight * 0.32) * SCENERY_SCALE
   const trunkWidth = Math.max(18, viewHeight * 0.055) * 1.3 * SCENERY_SCALE
@@ -143,16 +159,28 @@ function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span): O
   const usable = Math.max(trunkWidth, worldWidth - 2 * margin)
   const slot = usable / OAK_TREE_COUNT
 
+  // One of the oaks is an old-growth tree: twice the trunk width, branches 1.5x as thick, and
+  // buttress roots that spread at least a bird's size past the trunk on each side.
+  const oldGrowthIndex = Math.floor(Math.random() * OAK_TREE_COUNT)
   for (let i = 0; i < OAK_TREE_COUNT; i += 1) {
+    const old = i === oldGrowthIndex
+    const width = old ? trunkWidth * 2 : trunkWidth
     const slotStart = margin + i * slot
-    let x = slotStart + randRange(slot * 0.12, slot * 0.88) - trunkWidth / 2
-    for (let attempt = 0; attempt < 20 && blocked(keepOut, x + trunkWidth / 2, trunkWidth); attempt += 1) {
-      x = slotStart + randRange(slot * 0.12, slot * 0.88) - trunkWidth / 2
+    let x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
+    for (let attempt = 0; attempt < 20 && blocked(keepOut, x + width / 2, width); attempt += 1) {
+      x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
     }
+    const baseX = x + width / 2
+    const baseGround = groundYAt(terrain, baseX)
     trees.push({
-      shape: generateOak(viewHeight * SCENERY_SCALE, trunkWidth),
+      shape: generateOak(
+        viewHeight * SCENERY_SCALE,
+        trunkWidth,
+        old ? playerSizeForView(viewHeight) * 1.1 : 0,
+        (dx) => groundYAt(terrain, baseX + dx) - baseGround,
+      ),
       x,
-      trunkWidth,
+      trunkWidth: width,
       trunkHeight,
       crownRadius,
     })
@@ -220,7 +248,7 @@ function spawnAcorns(
  * @param to - Color blended in.
  * @param amount - 0 returns `from`, 1 returns `to`.
  */
-function mixColor(from: string, to: string, amount: number): string {
+export function mixColor(from: string, to: string, amount: number): string {
   const channel = (hex: string, i: number): number => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16)
   const parts = [0, 1, 2].map((i) =>
     Math.round(channel(from, i) * (1 - amount) + channel(to, i) * amount),
@@ -229,27 +257,41 @@ function mixColor(from: string, to: string, amount: number): string {
 }
 
 /**
- * Scatters fallen leaves on and slightly below the ground surface.
+ * Scatters fallen leaves over the whole ground, from the surface down to the bottom of the world
+ * (leaves are a little bigger the lower, i.e. nearer the viewer, they lie).
  *
  * @param terrain - Ground heights.
  * @param worldWidth - Full world width.
  * @param playerSize - Player size (scales leaf size).
+ * @param bottom - Y of the bottom of the world.
  */
-function spawnLeafLitter(terrain: Terrain, worldWidth: number, playerSize: number): LeafLitter[] {
+function spawnLeafLitter(
+  terrain: Terrain,
+  worldWidth: number,
+  playerSize: number,
+  bottom: number,
+): LeafLitter[] {
   const water = { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth }
   const leaves: LeafLitter[] = []
   const spacing = 5
   for (let x = 0; x < worldWidth; x += spacing) {
-    const count = 1 + Math.floor(Math.random() * 2)
+    const surfaceAtX = groundYAt(terrain, x)
+    const depth = Math.max(0, bottom - surfaceAtX)
+    // About 0.6 leaves per 5 px column for every half bird-width of depth (sparse enough not to draw the eye).
+    const expected = (0.6 * (depth + 0.03 * playerSize)) / (0.5 * playerSize)
+    const count = Math.floor(expected) + (Math.random() < expected - Math.floor(expected) ? 1 : 0)
     for (let i = 0; i < count; i += 1) {
       const lx = x + randRange(-spacing, spacing)
       if (blocked(water, lx)) {
         continue
       }
-      const rx = randRange(0.035, 0.08) * playerSize
+      const ground = groundYAt(terrain, lx)
+      const y = ground - 0.03 * playerSize + Math.random() * (bottom - ground + 0.03 * playerSize)
+      const nearness = bottom > ground ? Math.min(1, (y - ground) / (bottom - ground)) : 0
+      const rx = randRange(0.035, 0.075) * playerSize * (1 + 0.2 * nearness)
       leaves.push({
         x: lx,
-        y: groundYAt(terrain, lx) + randRange(-0.03, 0.5) * playerSize,
+        y,
         rx,
         ry: rx * randRange(0.35, 0.55),
         angle: randRange(-Math.PI / 2, Math.PI / 2),
@@ -316,7 +358,8 @@ function spawnBushes(
   const bushes: Bush[] = []
   for (let i = 0; i < count + (bank?.count ?? 0); i += 1) {
     const lobeCount = 3 + Math.floor(Math.random() * 3)
-    const scale = randRange(0.7, 1.3)
+    // Bushes are big and vary a lot in size.
+    const scale = randRange(1.0, 2.2)
     const lobes: BushLobe[] = []
     for (let k = 0; k < lobeCount; k += 1) {
       const radius = randRange(0.22, 0.4) * playerSize * scale
@@ -346,6 +389,130 @@ function spawnBushes(
 }
 
 /**
+ * Builds clumps of ferns (1-3 plants each), kept out of the creek.
+ *
+ * @param clumps - Number of clumps.
+ * @param worldWidth - Width of the area they spawn in.
+ * @param playerSize - Scenery size unit (scales the ferns).
+ * @param keepOut - Creek span ferns stay out of.
+ * @param skip - Optional filter rejecting positions (layers that only exist near the creek).
+ */
+function spawnFerns(
+  clumps: number,
+  worldWidth: number,
+  playerSize: number,
+  keepOut: Span,
+  skip: (x: number) => boolean = () => false,
+): Fern[] {
+  const ferns: Fern[] = []
+  for (let c = 0; c < clumps; c += 1) {
+    const center = randRange(60, worldWidth - 60)
+    const members = 1 + Math.floor(Math.random() * 3)
+    for (let m = 0; m < members; m += 1) {
+      const size = randRange(0.5, 0.95) * playerSize
+      const x = center + randRange(-0.7, 0.7) * playerSize * (m === 0 ? 0 : 1)
+      if (blocked(keepOut, x, size) || skip(x)) {
+        continue
+      }
+      // Like a Christmas fern: a crown of long, narrow fronds arching outward, the outer ones
+      // leaning low and longest, a few young short ones standing in the middle.
+      const frondCount = 6 + Math.floor(Math.random() * 4)
+      ferns.push({
+        x,
+        size,
+        tone: Math.floor(Math.random() * 3),
+        fronds: Array.from({ length: frondCount }, (_, i) => {
+          const angle = (i / (frondCount - 1) - 0.5) * 1.9 + randRange(-0.1, 0.1)
+          return {
+            angle,
+            length: Math.min(1.1, 0.62 + 0.38 * (Math.abs(angle) / 0.95) + randRange(0, 0.12)),
+            bend: randRange(0.3, 0.9),
+            // The fronds join under the ground, so each comes out at its own spot, wider for the outer ones.
+            base: angle * 0.2 + randRange(-0.05, 0.05),
+          }
+        }),
+      })
+    }
+  }
+  return ferns
+}
+
+/**
+ * Rocks and a few bushes standing in front of the foreground's surface line (nearer the viewer than
+ * the foreground itself), kept clear of the creek where it widens toward the viewer.
+ *
+ * @param worldWidth - Full world width.
+ * @param playerSize - Scenery size unit.
+ * @param creek - Foreground creek.
+ */
+function spawnFrontProps(
+  worldWidth: number,
+  playerSize: number,
+  creek: Creek,
+  terrain: Terrain,
+  bottom: number,
+  trees: OakTree[],
+): { rocks: FrontRock[]; bushes: FrontBush[]; ferns: FrontFern[] } {
+  const keepOut = { x: creek.x, halfWidth: creek.frontHalfWidth + Math.abs(creek.frontOffset) + playerSize * 1.5 }
+  // Anywhere down the dirt below the surface; the lower (nearer) one stands, the bigger it is. A
+  // prop is placed low enough that most of it is below the surface line, so it rarely covers the
+  // birds or acorns on the surface: if it would stick up too far, other depths are tried, and only
+  // occasionally is it accepted anyway.
+  const place = (x: number, height: number): { y: number; scale: number } | null => {
+    // Never under an oak (its acorns fall there and must stay visible).
+    if (trees.some((tree) => Math.abs(x - (tree.x + tree.trunkWidth / 2)) < tree.crownRadius * 0.65)) {
+      return null
+    }
+    const ground = groundYAt(terrain, x)
+    const room = Math.max(0, bottom - ground - 24)
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const depth = Math.random() ** 0.8
+      const y = ground + 8 + depth * room
+      const scale = 1 + 0.6 * depth
+      if (y - ground >= 0.9 * height * scale || Math.random() < 0.02) {
+        return { y, scale }
+      }
+    }
+    return null
+  }
+  const rocks: FrontRock[] = []
+  for (let i = 0; i < FRONT_ROCK_COUNT; i += 1) {
+    const x = randRange(40, worldWidth - 40)
+    const base = randRange(0.08, 0.26) * playerSize * 1.25
+    const spot = place(x, base * 0.8)
+    if (!spot) {
+      continue
+    }
+    const rx = base * spot.scale
+    if (!blocked(keepOut, x, rx)) {
+      rocks.push({ rock: makeRock(x, rx, rx * randRange(0.55, 0.85), 0, Math.random() < 0.2), y: spot.y })
+    }
+  }
+  const bushes: FrontBush[] = []
+  for (const bush of spawnBushes(FRONT_BUSH_COUNT * 3, worldWidth, playerSize * 1.1, [], keepOut)) {
+    const height = Math.max(...bush.lobes.map((lobe) => -lobe.dy + lobe.radius))
+    const spot = place(bush.x, height)
+    if (!spot || bushes.length >= FRONT_BUSH_COUNT) {
+      continue
+    }
+    // Bushes are already big; nearness adds only a little.
+    const nearer = 1 + (spot.scale - 1) * 0.4
+    bushes.push({
+      bush: { x: bush.x, lobes: bush.lobes.map((lobe) => ({ ...lobe, dx: lobe.dx * nearer, dy: lobe.dy * nearer, radius: lobe.radius * nearer })) },
+      y: spot.y,
+    })
+  }
+  const ferns: FrontFern[] = []
+  for (const fern of spawnFerns(FRONT_FERN_CLUMPS * 2, worldWidth, playerSize, keepOut)) {
+    const spot = place(fern.x, fern.size)
+    if (spot && ferns.length < FRONT_FERN_CLUMPS * 2) {
+      ferns.push({ fern: { ...fern, size: fern.size * spot.scale }, y: spot.y })
+    }
+  }
+  return { rocks, bushes, ferns }
+}
+
+/**
  * Builds fallen logs tilted to follow the terrain slope.
  *
  * @param count - Number of logs.
@@ -372,7 +539,14 @@ function spawnLogs(
       groundYAt(terrain, x + length / 2) - groundYAt(terrain, x - length / 2),
       length,
     )
-    logs.push({ x, length, radius: randRange(0.16, 0.26) * playerSize, tilt })
+    logs.push({
+      x,
+      length,
+      radius: randRange(0.16, 0.26) * playerSize,
+      tilt,
+      flip: Math.random() < 0.5 ? 1 : -1,
+      moss: Math.random() < 0.4,
+    })
   }
   return logs
 }
@@ -384,8 +558,9 @@ function spawnLogs(
  * @param rx - Half width.
  * @param ry - Height.
  * @param fog - How far the colors are blended toward the haze (background layers).
+ * @param moss - Whether moss grows on top.
  */
-function makeRock(x: number, rx: number, ry: number, fog = 0): Rock {
+function makeRock(x: number, rx: number, ry: number, fog = 0, moss = false): Rock {
   const [base, baseHighlight] = pick(ROCK_COLORS, ['#7a7872', '#a5a29a'])
   const litter = Array.from({ length: 4 }, () => {
     const leaf = pick(LEAF_COLORS, '#8a5a2b')
@@ -394,7 +569,7 @@ function makeRock(x: number, rx: number, ry: number, fog = 0): Rock {
   const color = fog > 0 ? mixColor(base, FOREST_HAZE_COLOR, fog) : base
   const highlight = fog > 0 ? mixColor(baseHighlight, FOREST_HAZE_COLOR, fog) : baseHighlight
   const jitter = Array.from({ length: 9 }, () => randRange(0.84, 1.08))
-  return { x, rx, ry, jitter, color, highlight, litter }
+  return { x, rx, ry, jitter, color, highlight, litter, moss, fog }
 }
 
 /**
@@ -403,19 +578,36 @@ function makeRock(x: number, rx: number, ry: number, fog = 0): Rock {
  * count, so the lining is irregular.
  *
  * @param fog - Haze blended into the rocks' colors.
+ * @param span - Width of the layer (free rocks spread over it).
+ * @param viewHeight - Window height.
  */
-function spawnGapRocks(fog: number): GapRock[] {
+function spawnGapRocks(fog: number, span: number, viewHeight: number): GapRock[] {
   const count = Math.round(GAP_ROCK_COUNT * randRange(0.6, 1.3))
-  return Array.from({ length: count }, () => {
+  const rocks: GapRock[] = Array.from({ length: count }, () => {
     const near = Math.random() < 0.65
     return {
       rock: makeRock(0, 1, 0.7, fog),
       s: Math.random(),
       side: Math.random() < 0.5 ? -1 : 1,
       size: randRange(0.05, 0.38),
+      x: null,
       out: near ? Math.random() ** 2 * 0.6 : randRange(0.4, 5),
     }
   })
+  // Free rocks lie anywhere on the ground between the layers, not just along the creek.
+  const freeCount = Math.round((span / (viewHeight * 0.8)) * randRange(0.7, 1.3))
+  for (let n = 0; n < freeCount; n += 1) {
+    rocks.push({
+      rock: makeRock(0, 1, 0.7, fog),
+      s: Math.random(),
+      side: 1,
+      size: randRange(0.05, 0.35),
+      x: Math.random() * span,
+      out: 0,
+    })
+  }
+  // Drawn in this order, so nearer rocks (larger s) must come after farther ones, never before.
+  return rocks.sort((p, q) => p.s - q.s)
 }
 
 /**
@@ -445,8 +637,20 @@ function spawnRocks(
   }
   for (let i = 0; i < boulders; i += 1) {
     const rx = randRange(0.4, 0.7) * playerSize
-    rocks.push(makeRock(landX(), rx, rx * randRange(0.6, 0.9)))
+    rocks.push(makeRock(landX(), rx, rx * randRange(0.6, 0.9), 0, Math.random() < 0.45))
   }
+  // A group of exceptionally large boulders in one section of the map, well clear of the creek.
+  let groupX = randRange(0.12, 0.88) * worldWidth
+  for (let attempt = 0; attempt < 60 && blocked(water, groupX, playerSize * 6); attempt += 1) {
+    groupX = randRange(0.12, 0.88) * worldWidth
+  }
+  const big: Rock[] = []
+  for (let i = 0; i < 6; i += 1) {
+    const rx = randRange(0.95, 1.9) * playerSize
+    big.push(makeRock(groupX + (i - 2.5) * randRange(0.55, 0.95) * playerSize * 1.2, rx, rx * randRange(0.65, 0.85), 0, Math.random() < 0.8))
+  }
+  // Biggest first, so smaller ones in front overlap them.
+  rocks.push(...big.sort((a, b) => b.rx - a.rx))
   // A lining of rocks along both banks, hugging the water's edge (most within a few inches of it).
   for (let i = 0; i < BANK_ROCK_COUNT; i += 1) {
     const side = Math.random() < 0.5 ? -1 : 1
@@ -486,9 +690,11 @@ function spawnForest(
   // of it and shifted by a gaussian offset (4 standard deviations = the front creek's width),
   // never by more than half that width. Positions are tracked as screen x with the camera centered
   // on the foreground creek, then converted into each layer's own x.
-  const refCamera = creek.x - viewWidth / 2
+  // (the typical screen width is used for this alignment, whatever the window)
+  const refWidth = viewHeight * TYPICAL_ASPECT_RATIO
+  const refCamera = creek.x - refWidth / 2
   const creeks: Span[] = []
-  let screenX = viewWidth / 2
+  let screenX = refWidth / 2
   let half = creek.halfWidth
   for (let i = FOREST_LAYERS.length - 1; i >= 0; i -= 1) {
     // Offsets are scaled by the foreground creek's width, not the (shrinking) layer's, so far
@@ -529,7 +735,14 @@ function spawnForest(
       if (blocked(keepOut, logX, length / 2) || outsideWindow(logX)) {
         continue
       }
-      logs.push({ x: logX, length, radius: randRange(0.16, 0.26) * playerSize, tilt: 0 })
+      logs.push({
+        x: logX,
+        length,
+        radius: randRange(0.16, 0.26) * playerSize,
+        tilt: 0,
+        flip: Math.random() < 0.5 ? 1 : -1,
+        moss: Math.random() < 0.4,
+      })
     }
     // Rocks on the layer's surface, plus a lining along the creek's edges.
     const rocks: Rock[] = []
@@ -537,7 +750,7 @@ function spawnForest(
       const rx = randRange(0.12, 0.4) * playerSize
       const rockX = randRange(0, span)
       if (!blocked(layerKeepOut, rockX, rx) && !outsideWindow(rockX)) {
-        rocks.push(makeRock(rockX, rx, rx * randRange(0.6, 0.9), layer.fog))
+        rocks.push(makeRock(rockX, rx, rx * randRange(0.6, 0.9), layer.fog, Math.random() < 0.3))
       }
     }
     for (let i = 0; i < 14; i += 1) {
@@ -555,18 +768,20 @@ function spawnForest(
       tones: OAK_TONES.map((tone) => mixColor(tone, FOREST_HAZE_COLOR, layer.fog)),
       waterColor: mixColor(WATER_COLOR, FOREST_HAZE_COLOR, layer.fog),
       scale: layer.scale,
-      edgeRocks: spawnGapRocks(layer.fog),
+      fog: layer.fog,
+      edgeRocks: spawnGapRocks(layer.fog, span, viewHeight),
+      ferns: spawnFerns(Math.max(1, Math.round(span / (viewHeight * 3.5))), span, playerSize, layerKeepOut, outsideWindow),
       leafColors: LEAF_COLORS.map((color) => mixColor(color, FOREST_HAZE_COLOR, layer.fog)),
       creek: layerCreek,
       trees,
       localRadius,
       bushes: spawnBushes(
-        Math.ceil(span / (viewHeight * 0.8)),
+        Math.ceil(span / (viewHeight * 1.7)),
         span,
         playerSize,
         trees.map((tree) => tree.x),
         { x: layerCreek.x, halfWidth: layerCreek.halfWidth },
-        { x: layerCreek.x, halfWidth: layerCreek.halfWidth, width: layerCreek.halfWidth * (5 / 3), count: 6 },
+        { x: layerCreek.x, halfWidth: layerCreek.halfWidth, width: layerCreek.halfWidth * (5 / 3), count: 3 },
       ).filter((bush) => !outsideWindow(bush.x)),
       logs,
       rocks,
@@ -591,7 +806,9 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
   const terrain = buildTerrain(width, groundY, viewHeight)
 
   const creekKeep = creekKeepOut(terrain.creek)
-  const trees = spawnOakTrees(width, viewHeight, creekKeep)
+  const trees = spawnOakTrees(width, viewHeight, creekKeep, terrain)
+
+  const front = spawnFrontProps(width, playerSize * SCENERY_SCALE, terrain.creek, terrain, height, trees)
 
   const world: World = {
     viewHeight,
@@ -602,7 +819,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     terrain,
     trees,
     acorns: spawnAcorns(width, terrain, acornRadiusForPlayer(playerSize), trees, creekKeep),
-    leaves: spawnLeafLitter(terrain, width, playerSize * SCENERY_SCALE),
+    leaves: spawnLeafLitter(terrain, width, playerSize * SCENERY_SCALE, height),
     bushes: spawnBushes(
       BUSH_COUNT,
       width,
@@ -612,7 +829,15 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
       { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth, width: terrain.creek.bank, count: BANK_BUSH_COUNT },
     ),
     logs: spawnLogs(LOG_COUNT, terrain, width, playerSize * SCENERY_SCALE, creekKeep),
-    rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE, terrain.creek),
+    // Back to front: rocks standing higher up the slope (smaller ground y) are farther away and are
+    // painted first, so a rock behind never covers one in front of it.
+    rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE, terrain.creek).sort(
+      (p, q) => groundYAt(terrain, p.x) - groundYAt(terrain, q.x) || q.rx - p.rx,
+    ),
+    ferns: spawnFerns(FERN_CLUMPS, width, playerSize * SCENERY_SCALE, { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth }),
+    frontRocks: front.rocks,
+    frontBushes: front.bushes,
+    frontFerns: front.ferns,
     forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight, terrain.creek),
     npcs: [],
     acornDropTimer: 0,

@@ -1,5 +1,5 @@
 import { PLAYER_VIEW_FRACTION } from './constants'
-import type { Creek, Terrain } from './types'
+import type { Creek, Hill, Terrain } from './types'
 
 /** Horizontal spacing of precomputed ground heights, in pixels. */
 export const TERRAIN_STEP = 8
@@ -21,6 +21,30 @@ const CREEK_WATER_LEVEL_IN_SIZES = 0.6
 
 /** Sideways drift per layer toward the creek's overall direction, in creek half widths. */
 export const CREEK_DRIFT = 0.35
+
+/** Fraction of the hill's half width over which its top stays flat before descending. */
+const HILL_PLATEAU = 0.4
+
+/** The hill is half the world wide and this tall (in view heights). */
+const HILL_WIDTH_FRACTION = 0.5
+const HILL_HEIGHT_VIEW_FRACTION = 0.56
+
+/**
+ * Height added by a hill at x: a flat top (`HILL_PLATEAU` of the half width) that then falls away
+ * as a smooth cosine to 0 at `halfWidth`, so it blends gradually into the surrounding land.
+ *
+ * @param x - Position (in whatever x space the hill is defined in).
+ * @param center - Hill center.
+ * @param halfWidth - Hill half width.
+ * @param height - Peak height.
+ */
+export function hillBump(x: number, center: number, halfWidth: number, height: number): number {
+  const d = Math.min(1, Math.abs(x - center) / halfWidth)
+  if (d <= HILL_PLATEAU) {
+    return height
+  }
+  return height * (0.5 + 0.5 * Math.cos((Math.PI * (d - HILL_PLATEAU)) / (1 - HILL_PLATEAU)))
+}
 
 /** The creek in the layer in front of the foreground is this fraction as wide as the foreground's creek. */
 const CREEK_FRONT_SHRINK = 0.78
@@ -137,9 +161,25 @@ export function buildTerrain(worldWidth: number, baseY: number, viewHeight: numb
   const smallLen = viewHeight * SMALL_WAVELENGTH_VIEW_FRACTION
   const size = viewHeight * PLAYER_VIEW_FRACTION
   const halfWidth = CREEK_HALF_WIDTH_IN_SIZES * size
-  let creekX = worldWidth / 2
-  while (Math.abs(creekX - worldWidth / 2) < worldWidth * 0.1) {
-    creekX = worldWidth * (0.12 + 0.76 * Math.random())
+  // The hill and the creek are placed together: the creek keeps off the whole hill and a gap beyond it, off the world's edges and off the player's start.
+  const hillHalf = (worldWidth * HILL_WIDTH_FRACTION) / 2
+  const creekReach = halfWidth + CREEK_BANK_IN_SIZES * size * 0.5
+  let hillX = worldWidth - hillHalf
+  let creekX = worldWidth * 0.2
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    // The hill sits near one side of the map, so it has not come back down to level by the edge.
+    const fromEdge = hillHalf * (0.1 + 0.35 * Math.random())
+    const candidateHill = Math.random() < 0.5 ? fromEdge : worldWidth - fromEdge
+    const candidateCreek = worldWidth * (0.1 + 0.8 * Math.random())
+    if (
+      // The creek stays clear of the whole hill (its foot too) with a gap beyond it, never right beside it.
+      Math.abs(candidateCreek - candidateHill) > hillHalf + creekReach + worldWidth * 0.12 &&
+      Math.abs(candidateCreek - worldWidth / 2) > worldWidth * 0.1
+    ) {
+      hillX = candidateHill
+      creekX = candidateCreek
+      break
+    }
   }
   // One random direction shared by every layer: the creek tends to wander that way as it recedes.
   const drift = Math.random() < 0.5 ? -1 : 1
@@ -158,6 +198,7 @@ export function buildTerrain(worldWidth: number, baseY: number, viewHeight: numb
     ),
     frontHalfWidth: halfWidth / CREEK_FRONT_SHRINK,
   }
+  const hill: Hill = { x: hillX, halfWidth: hillHalf, height: HILL_HEIGHT_VIEW_FRACTION * viewHeight }
   const count = Math.ceil(worldWidth / TERRAIN_STEP) + 2
   const heights = new Float32Array(count)
   const coarse = new Float32Array(count)
@@ -166,6 +207,7 @@ export function buildTerrain(worldWidth: number, baseY: number, viewHeight: numb
     coarse[i] = largeAmp * (0.5 + 0.5 * Math.max(-1, Math.min(1, large(x / largeLen))))
     const lift =
       coarse[i] +
+      hillBump(x, hill.x, hill.halfWidth, hill.height) +
       smallAmp * (0.5 + 0.5 * Math.max(-1, Math.min(1, small(x / smallLen))))
     const land = baseY - lift
     const distance = Math.abs(x - creek.x)
@@ -173,7 +215,7 @@ export function buildTerrain(worldWidth: number, baseY: number, viewHeight: numb
     const bed = creek.waterY + creekBedDepth(distance, creek.halfWidth, creek.depth)
     heights[i] = land + (bed - land) * weight
   }
-  return { step: TERRAIN_STEP, heights, creek, coarse }
+  return { step: TERRAIN_STEP, heights, creek, coarse, hill }
 }
 
 /**
@@ -190,6 +232,31 @@ export function liftAt(samples: Float32Array, x: number): number {
   const a = samples[i] ?? 0
   const b = samples[i + 1] ?? a
   return a + (b - a) * (f - i)
+}
+
+/**
+ * Gaussian low-pass filter of a lift array (ends are extended by repeating their last values).
+ *
+ * @param samples - Lift values at `TERRAIN_STEP` spacing.
+ * @param sigmaSamples - Standard deviation of the Gaussian, in samples.
+ */
+export function lowPass(samples: Float32Array, sigmaSamples: number): Float32Array {
+  if (sigmaSamples < 0.5) {
+    return samples
+  }
+  const radius = Math.ceil(sigmaSamples * 3)
+  const kernel = Array.from({ length: radius * 2 + 1 }, (_, i) => Math.exp(-((i - radius) ** 2) / (2 * sigmaSamples ** 2)))
+  const total = kernel.reduce((a, b) => a + b, 0)
+  const last = samples.length - 1
+  const out = new Float32Array(samples.length)
+  for (let i = 0; i < samples.length; i += 1) {
+    let sum = 0
+    for (let k = -radius; k <= radius; k += 1) {
+      sum += (samples[Math.max(0, Math.min(last, i + k))] ?? 0) * (kernel[k + radius] ?? 0)
+    }
+    out[i] = sum / total
+  }
+  return out
 }
 
 /**

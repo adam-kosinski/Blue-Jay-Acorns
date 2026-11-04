@@ -172,6 +172,13 @@ export type Creek = {
   frontHalfWidth: number
 }
 
+/** A smooth hill: the land rises by `height` at `x` and blends back to normal over `halfWidth`. */
+export type Hill = {
+  x: number
+  halfWidth: number
+  height: number
+}
+
 /** Ground heights sampled at a fixed horizontal step, plus the creek carved into them. */
 export type Terrain = {
   creek: Creek
@@ -181,6 +188,8 @@ export type Terrain = {
   heights: Float32Array
   /** Just the coarse (large-scale) part of the land's height above the base line, per sample. */
   coarse: Float32Array
+  /** A broad hill added on top of the coarse terrain, away from the creek. */
+  hill: Hill
 }
 
 /** One lobe of a bush cluster, relative to the bush base. */
@@ -205,6 +214,10 @@ export type Log = {
   radius: number
   /** Rotation in radians following the ground slope. */
   tilt: number
+  /** 1 if the buttressed (root) end is on the left, -1 if on the right. */
+  flip: number
+  /** Whether moss grows along the top. */
+  moss: boolean
 }
 
 /** Boulder or small rock: a jittered half-ellipse polygon. */
@@ -218,6 +231,20 @@ export type Rock = {
   highlight: string
   /** Colors of the little fallen leaves drawn over the rock's base, as if it were buried in litter. */
   litter: string[]
+  /** Whether moss grows on top of the rock. */
+  moss: boolean
+  /** Haze blended into its colors (background layers); 0 in the foreground. */
+  fog: number
+}
+
+/** A clump member: a fern, a fan of arching fronds. */
+export type Fern = {
+  x: number
+  size: number
+  /** Index into a few green tones. */
+  tone: number
+  /** Each frond rises from its own point (`base`, in fern sizes from the center): the crown is below the ground. */
+  fronds: { angle: number; length: number; bend: number; base: number }[]
 }
 
 /** One tree silhouette in a parallax background layer. */
@@ -240,8 +267,27 @@ export type GapRock = {
   side: number
   /** Rock half width in units of the local scenery size. */
   size: number
+  /** Layer x of a free rock (anywhere on the ground between layers); null for one placed along the bank. */
+  x: number | null
   /** How far beyond the bank's edge the rock sits, in units of the local scenery size. */
   out: number
+}
+
+/**
+ * Rocks, bushes and ferns standing in the ground below the foreground's surface line (nearer the
+ * viewer), anywhere down the dirt; each is drawn on top of the foreground at absolute height `y`.
+ */
+export type FrontRock = {
+  rock: Rock
+  y: number
+}
+export type FrontBush = {
+  bush: Bush
+  y: number
+}
+export type FrontFern = {
+  fern: Fern
+  y: number
 }
 
 /** Distant forest layer drawn with camera parallax. */
@@ -262,6 +308,7 @@ export type ForestLayer = {
   bushes: Bush[]
   logs: Log[]
   rocks: Rock[]
+  ferns: Fern[]
   /** For the extra layers that only exist around the creek: how far from it they fade out; else null. */
   localRadius: number | null
   /** The layer's own fine terrain noise (lift above its base line, per `TERRAIN_STEP`). */
@@ -270,6 +317,8 @@ export type ForestLayer = {
   creek: { x: number; halfWidth: number }
   /** Rocks on the ground between this layer and the next nearer one, thickest along the creek banks. */
   edgeRocks: GapRock[]
+  /** Share blended toward the haze (atmospheric perspective). */
+  fog: number
   /** Size of this layer's scenery relative to the foreground. */
   scale: number
   /** Fallen-leaf colors, blended toward the haze like the rest of the layer. */
@@ -354,6 +403,10 @@ export type World = {
   bushes: Bush[]
   logs: Log[]
   rocks: Rock[]
+  ferns: Fern[]
+  frontRocks: FrontRock[]
+  frontBushes: FrontBush[]
+  frontFerns: FrontFern[]
   forest: ForestLayer[]
   npcs: Npc[]
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */

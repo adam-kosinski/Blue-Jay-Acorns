@@ -107,11 +107,25 @@ function growBranch(
  *
  * @param baseHeight - Reference tree height in pixels (before the 1.5-2x stretch).
  * @param baseTrunkWidth - Reference trunk thickness at the base.
+ * @param rootReach - For an old-growth tree: how far (at least) buttress roots spread out past the
+ *   trunk's edge on each side; the trunk is then twice as wide and the branches 1.5 times as wide.
+ * @param groundAt - For old growth: ground height relative to the tree base at a horizontal offset
+ *   from it (negative is up), so the roots can follow the ground and sink into it.
  */
-export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeShape {
+export function generateOak(
+  baseHeight: number,
+  baseTrunkWidth: number,
+  rootReach = 0,
+  groundAt: (dx: number) => number = () => 0,
+): TreeShape {
+  const oldGrowth = rootReach > 0
   const stretch = randRange(1.5, 2)
   const height = baseHeight * stretch
-  const trunkWidth = baseTrunkWidth * Math.sqrt(stretch)
+  // Trees differ a lot in girth, and their branches in thickness. An old-growth tree is exactly
+  // twice the nominal trunk width and its branches 1.5x (scaled back from the doubled trunk's).
+  const thickness = oldGrowth ? 2 : randRange(0.7, 1.45)
+  const trunkWidth = baseTrunkWidth * Math.sqrt(stretch) * thickness
+  const branchScale = oldGrowth ? 0.75 : randRange(0.7, 1.35)
   const segments: TreeSegment[] = []
   const lobes: TreeLobe[] = []
   const leafRadius = height * randRange(0.085, 0.11)
@@ -119,7 +133,8 @@ export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeSha
   const lean = randRange(-0.06, 0.06) * height
   const trunkTopY = -height * randRange(0.5, 0.62)
   const trunkTopX = lean
-  const points: [number, number][] = [[0, 10]]
+  // The trunk starts far below the base, so on a slope it never ends above the ground.
+  const points: [number, number][] = [[0, trunkWidth * 1.5]]
   for (let i = 1; i <= 3; i += 1) {
     const t = i / 3
     points.push([trunkTopX * t + randRange(-0.015, 0.015) * height, trunkTopY * t])
@@ -130,6 +145,24 @@ export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeSha
     const b = points[i + 1]
     if (a && b) {
       segments.push({ x0: a[0], y0: a[1], x1: b[0], y1: b[1], w0: widthAt(i / 3), w1: widthAt((i + 1) / 3) })
+    }
+  }
+
+  if (oldGrowth) {
+    // Buttress roots: wide where they leave the trunk, then following the ground outward (half
+    // buried, ending sunk in it) at least `rootReach` past the trunk's edge on both sides.
+    const edge = trunkWidth / 2
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 3; k += 1) {
+        const reach = edge + rootReach * (1.15 - k * 0.3) * randRange(0.95, 1.1)
+        const midX = side * (edge + (reach - edge) * 0.5)
+        const startX = side * edge * randRange(0.15, 0.55)
+        const startY = -trunkWidth * (1.1 - k * 0.25) * randRange(0.9, 1.1)
+        const midY = groundAt(midX) - 2
+        const endY = groundAt(side * reach) + 14
+        segments.push({ x0: startX, y0: startY, x1: midX, y1: midY, w0: trunkWidth * (0.38 - k * 0.07), w1: trunkWidth * 0.12 })
+        segments.push({ x0: midX, y0: midY, x1: side * reach, y1: endY, w0: trunkWidth * 0.12, w1: trunkWidth * 0.04 })
+      }
     }
   }
 
@@ -147,7 +180,7 @@ export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeSha
       py,
       side * randRange(0.5, 1.35),
       height * randRange(0.14, 0.3) * (1.15 - 0.5 * t),
-      widthAt(t) * randRange(0.4, 0.6),
+      widthAt(t) * randRange(0.3, 0.75) * branchScale,
       0,
       leafRadius,
     )
@@ -164,7 +197,7 @@ export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeSha
         trunkTopY * t,
         (Math.random() < 0.5 ? -1 : 1) * randRange(0.9, 1.4),
         height * randRange(0.1, 0.18),
-        widthAt(t) * randRange(0.35, 0.5),
+        widthAt(t) * randRange(0.35, 0.5) * branchScale,
         0,
         leafRadius * 0.8,
       )
@@ -174,7 +207,7 @@ export function generateOak(baseHeight: number, baseTrunkWidth: number): TreeSha
   addCluster(lobes, trunkTopX, trunkTopY - leafRadius * 0.6, leafRadius * 1.3)
   addCluster(lobes, trunkTopX + randRange(-0.3, 0.3) * leafRadius, trunkTopY + leafRadius * 0.3, leafRadius * 1.1)
 
-  let halfWidth = trunkWidth
+  let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.3 : trunkWidth
   let top = trunkTopY
   for (const lobe of lobes) {
     halfWidth = Math.max(halfWidth, Math.abs(lobe.x) + lobe.r)
@@ -527,15 +560,17 @@ function buildSprite(
   resolution: number,
 ): TreeSprite {
   let minY = 0
+  let maxY = 14
   for (const lobe of shape.lobes) {
     minY = Math.min(minY, lobe.y - lobe.r)
   }
   for (const seg of shape.segments) {
     minY = Math.min(minY, seg.y0 - seg.w0, seg.y1 - seg.w1)
+    maxY = Math.max(maxY, seg.y0 + seg.w0, seg.y1 + seg.w1)
   }
   const minX = -shape.halfWidth - 2
   const width = shape.halfWidth * 2 + 4
-  const height = -minY + 14
+  const height = -minY + maxY
   // Cap bitmap size so big trees on hi-dpi screens stay within a few megapixels.
   const scale = Math.min(resolution, Math.sqrt(MAX_SPRITE_PIXELS / (width * height)))
   const canvas = document.createElement('canvas')
