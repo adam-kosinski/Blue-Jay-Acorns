@@ -14,7 +14,7 @@ import {
 } from './constants'
 import { startBury, startDigAt, startPickup, updateAction } from './acorns'
 import { updateHunger } from './hunger'
-import { groundYAt } from './terrain'
+import { groundYAt, nearCreek } from './terrain'
 import { createPlayer, groundUnder, updatePlayer } from './player'
 import type { Acorn, BurialSite, KeyEdges, KeyState, Npc, Player, PlayerAction, World } from './types'
 
@@ -69,6 +69,9 @@ export function createNpcs(world: World, size: number): Npc[] {
   for (let i = 0; i < NPC_COUNT; i += 1) {
     const bird = createPlayer(world, size)
     bird.x = randRange(0, world.width - size)
+    while (nearCreek(world.terrain.creek, bird.x + size / 2, size)) {
+      bird.x = randRange(0, world.width - size)
+    }
     bird.y = groundUnder(bird, world) - size
     bird.facing = randomDirection()
     bird.hunger = randRange(0.4, 1)
@@ -378,10 +381,18 @@ function enterFindBurialSpot(npc: Npc, world: World): void {
   const span = NPC_BURIAL_SPAN_IN_SIZES * npc.bird.size
   const cx = npc.bird.x + npc.bird.size / 2
   npc.state = 'findBurialSpot'
-  npc.targetX = Math.max(
-    npc.bird.size,
-    Math.min(world.width - npc.bird.size, cx + randRange(-span, span)),
-  )
+  const pick = (): number =>
+    Math.max(npc.bird.size, Math.min(world.width - npc.bird.size, cx + randRange(-span, span)))
+  // Never in the creek (or right at its edge, where the bird or its beak would be over the water).
+  let target = pick()
+  for (let attempt = 0; attempt < 30 && nearCreek(world.terrain.creek, target, npc.bird.size * 1.5); attempt += 1) {
+    target = pick()
+  }
+  if (nearCreek(world.terrain.creek, target, npc.bird.size * 1.5)) {
+    // Every try fell in the creek (a bird beside a narrow strip of land): bury where it is instead.
+    target = world.terrain.creek.x + (cx < world.terrain.creek.x ? -1 : 1) * (world.terrain.creek.halfWidth + npc.bird.size * 2)
+  }
+  npc.targetX = target
 }
 
 /**
@@ -602,8 +613,9 @@ function runFindBurialSpot(npc: Npc, world: World): void {
  * returns to exploring or idling.
  *
  * @param npc - Burying NPC.
+ * @param world - Play space (for choosing a new spot if the burial cannot start).
  */
-function runBury(npc: Npc): void {
+function runBury(npc: Npc, world: World): void {
   const { bird } = npc
   if (bird.action) {
     return
@@ -614,6 +626,9 @@ function runBury(npc: Npc): void {
     const started = bird.action as PlayerAction | null
     if (started) {
       npc.memory.push(started.spotX)
+    } else {
+      // The burial could not start (for example the bird ended up over the creek): pick a new spot.
+      enterFindBurialSpot(npc, world)
     }
     return
   }
@@ -751,7 +766,14 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
 
     releaseKeys(npc.keys)
     let startEating = false
-    if (!waiting) {
+    if (bird.floating && !bird.action && npc.state !== 'eat') {
+      // A bird floating on the creek can do nothing but hop out toward the nearest bank.
+      if (bird.x + bird.size / 2 >= world.terrain.creek.x) {
+        npc.keys.d = true
+      } else {
+        npc.keys.a = true
+      }
+    } else if (!waiting) {
       switch (npc.state) {
         case 'idle':
           runIdle(npc, world)
@@ -766,7 +788,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
           runFindBurialSpot(npc, world)
           break
         case 'bury':
-          runBury(npc)
+          runBury(npc, world)
           break
         case 'retrieve':
           runRetrieve(npc, world)

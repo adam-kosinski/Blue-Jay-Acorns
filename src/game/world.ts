@@ -15,12 +15,14 @@ import {
 } from './constants'
 import { createNpcs } from './npc'
 import { generateOak } from './oak'
-import { buildTerrain, groundYAt } from './terrain'
+import { buildFineNoise, buildTerrain, CREEK_DRIFT, groundYAt } from './terrain'
 import type {
   Acorn,
   BackdropTree,
   Bush,
   BushLobe,
+  Creek,
+  GapRock,
   ForestLayer,
   LeafLitter,
   Log,
@@ -44,14 +46,66 @@ const LOG_COUNT = 5
 const BOULDER_COUNT = 6
 const ROCK_CLUSTER_COUNT = 11
 
-/** Parallax settings per background layer, farthest first (spacing is the average gap between trunks in view heights; small so trunks and crowns fill sightlines). */
-const FOREST_LAYERS = [
-  { parallax: 0.12, fog: 0.8, lift: 0.4, scale: 0.9, spacing: 0.11 },
-  { parallax: 0.22, fog: 0.62, lift: 0.33, scale: 0.93, spacing: 0.15 },
-  { parallax: 0.35, fog: 0.45, lift: 0.26, scale: 0.95, spacing: 0.2 },
-  { parallax: 0.5, fog: 0.28, lift: 0.2, scale: 0.97, spacing: 0.27 },
-  { parallax: 0.68, fog: 0.12, lift: 0.14, scale: 1, spacing: 0.36 },
+
+/** Rocks (on average) in each stretch of ground between two background layers. */
+const GAP_ROCK_COUNT = 26
+
+/** Rocks lining the foreground creek's banks. */
+const BANK_ROCK_COUNT = 30
+
+/** Extra bushes placed along the foreground creek's banks (so banks are very likely to have bushes). */
+const BANK_BUSH_COUNT = 12
+
+/** Parallax settings per background layer, farthest first (fog is the share blended toward the haze: atmospheric perspective) (spacing is the average gap between trunks in view heights; small so trunks and crowns fill sightlines). */
+const FOREST_LAYERS: {
+  parallax: number
+  fog: number
+  lift: number
+  scale: number
+  spacing: number
+  /** Only exists around the creek, fading into the haze away from it. */
+  local?: boolean
+}[] = [
+  // Three extra, much farther layers that exist only near the creek: the creek lets the player
+  // see much deeper into the forest than anywhere else.
+  { parallax: 0.045, fog: 0.48, lift: 0.55, scale: 0.4, spacing: 0.08, local: true },
+  { parallax: 0.065, fog: 0.46, lift: 0.5, scale: 0.46, spacing: 0.09, local: true },
+  { parallax: 0.09, fog: 0.435, lift: 0.45, scale: 0.52, spacing: 0.1, local: true },
+  { parallax: 0.12, fog: 0.4, lift: 0.4, scale: 0.58, spacing: 0.11 },
+  { parallax: 0.22, fog: 0.31, lift: 0.33, scale: 0.67, spacing: 0.15 },
+  { parallax: 0.35, fog: 0.225, lift: 0.26, scale: 0.77, spacing: 0.2 },
+  { parallax: 0.5, fog: 0.14, lift: 0.2, scale: 0.88, spacing: 0.27 },
+  { parallax: 0.68, fog: 0.06, lift: 0.14, scale: 1, spacing: 0.36 },
 ]
+
+/** Water color before haze is mixed in. */
+const WATER_COLOR = '#4f86ad'
+
+/** Each background layer's creek is this fraction as wide as the layer in front of it. */
+const CREEK_LAYER_SHRINK = 0.78
+
+/** A keep-out span (the creek's water plus its banks) where no trees, bushes or logs spawn. */
+type Span = { x: number; halfWidth: number }
+
+/**
+ * Whether an object centered at x with the given half extent overlaps the span.
+ *
+ * @param span - Keep-out span.
+ * @param x - Center x.
+ * @param half - Half extent of the object.
+ */
+function blocked(span: Span, x: number, half = 0): boolean {
+  return Math.abs(x - span.x) < span.halfWidth + half
+}
+
+/**
+ * The foreground creek's keep-out span for scenery: the water and the upper part of its banks.
+ *
+ * @param creek - Foreground creek.
+ */
+function creekKeepOut(creek: Creek): Span {
+  return { x: creek.x, halfWidth: creek.halfWidth + creek.bank * 0.5 }
+}
 
 /**
  * Random number in `[min, max)`.
@@ -78,8 +132,9 @@ function pick<T>(items: T[], fallback: T): T {
  *
  * @param worldWidth - Full world width.
  * @param viewHeight - Window height used as the tree's total height.
+ * @param keepOut - Creek span trunks stay out of.
  */
-function spawnOakTrees(worldWidth: number, viewHeight: number): OakTree[] {
+function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span): OakTree[] {
   const crownRadius = viewHeight * 0.32 * SCENERY_SCALE
   const trunkHeight = (viewHeight - viewHeight * 0.32) * SCENERY_SCALE
   const trunkWidth = Math.max(18, viewHeight * 0.055) * 1.3 * SCENERY_SCALE
@@ -90,10 +145,13 @@ function spawnOakTrees(worldWidth: number, viewHeight: number): OakTree[] {
 
   for (let i = 0; i < OAK_TREE_COUNT; i += 1) {
     const slotStart = margin + i * slot
-    const jitter = randRange(slot * 0.12, slot * 0.88)
+    let x = slotStart + randRange(slot * 0.12, slot * 0.88) - trunkWidth / 2
+    for (let attempt = 0; attempt < 20 && blocked(keepOut, x + trunkWidth / 2, trunkWidth); attempt += 1) {
+      x = slotStart + randRange(slot * 0.12, slot * 0.88) - trunkWidth / 2
+    }
     trees.push({
       shape: generateOak(viewHeight * SCENERY_SCALE, trunkWidth),
-      x: slotStart + jitter - trunkWidth / 2,
+      x,
       trunkWidth,
       trunkHeight,
       crownRadius,
@@ -119,12 +177,14 @@ function randNormal(): number {
  * @param terrain - Ground heights.
  * @param radius - Circle radius (diameter is 1/4 player height).
  * @param trees - Oaks the acorns fall around.
+ * @param keepOut - Creek span acorns are not placed in.
  */
 function spawnAcorns(
   worldWidth: number,
   terrain: Terrain,
   radius: number,
   trees: OakTree[],
+  keepOut: Span,
 ): Acorn[] {
   const acorns: Acorn[] = []
   for (let i = 0; i < ACORN_COUNT; i += 1) {
@@ -133,8 +193,15 @@ function spawnAcorns(
       break
     }
     const spread = tree.crownRadius * 0.45
-    const offset = Math.max(-tree.crownRadius, Math.min(tree.crownRadius, randNormal() * spread))
-    const x = Math.max(radius, Math.min(worldWidth - radius, tree.x + tree.trunkWidth / 2 + offset))
+    let x = tree.x + tree.trunkWidth / 2
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const offset = Math.max(-tree.crownRadius, Math.min(tree.crownRadius, randNormal() * spread))
+      const candidate = Math.max(radius, Math.min(worldWidth - radius, tree.x + tree.trunkWidth / 2 + offset))
+      if (!blocked(keepOut, candidate)) {
+        x = candidate
+        break
+      }
+    }
     acorns.push({
       x,
       y: groundYAt(terrain, x) - radius,
@@ -169,12 +236,16 @@ function mixColor(from: string, to: string, amount: number): string {
  * @param playerSize - Player size (scales leaf size).
  */
 function spawnLeafLitter(terrain: Terrain, worldWidth: number, playerSize: number): LeafLitter[] {
+  const water = { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth }
   const leaves: LeafLitter[] = []
   const spacing = 5
   for (let x = 0; x < worldWidth; x += spacing) {
     const count = 1 + Math.floor(Math.random() * 2)
     for (let i = 0; i < count; i += 1) {
       const lx = x + randRange(-spacing, spacing)
+      if (blocked(water, lx)) {
+        continue
+      }
       const rx = randRange(0.035, 0.08) * playerSize
       leaves.push({
         x: lx,
@@ -198,16 +269,28 @@ const BUSH_NEAR_TREE_KEEP_PROBABILITY = 0.12
  * @param worldWidth - Full width of the area bushes spawn in.
  * @param playerSize - Player size (sets what counts as near).
  * @param treeXs - Oak base x positions.
+ * @param keepOut - Creek span bushes stay out of.
+ * @param extent - Half width of the bush (its lobes' reach), which must clear the keep-out span.
  */
-function pickBushX(worldWidth: number, playerSize: number, treeXs: number[]): number {
+function pickBushX(
+  worldWidth: number,
+  playerSize: number,
+  treeXs: number[],
+  keepOut: Span,
+  extent: number,
+): number {
   const nearRange = playerSize * 3
   let x = randRange(30, worldWidth - 30)
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     const near = treeXs.some((treeX) => Math.abs(treeX - x) < nearRange)
-    if (!near || Math.random() < BUSH_NEAR_TREE_KEEP_PROBABILITY) {
+    if (!blocked(keepOut, x, extent) && (!near || Math.random() < BUSH_NEAR_TREE_KEEP_PROBABILITY)) {
       break
     }
     x = randRange(30, worldWidth - 30)
+  }
+  if (blocked(keepOut, x, extent)) {
+    // Every try landed on the water: put the bush on the nearer bank instead.
+    x = keepOut.x + (x < keepOut.x ? -1 : 1) * (keepOut.halfWidth + extent)
   }
   return x
 }
@@ -219,15 +302,19 @@ function pickBushX(worldWidth: number, playerSize: number, treeXs: number[]): nu
  * @param worldWidth - Full world width.
  * @param playerSize - Player size (scales bushes).
  * @param treeXs - Oak base x positions; bushes rarely spawn close to these.
+ * @param keepOut - Creek span bushes stay out of.
+ * @param bank - Optional creek banks to crowd with `count` extra bushes.
  */
 function spawnBushes(
   count: number,
   worldWidth: number,
   playerSize: number,
   treeXs: number[],
+  keepOut: Span,
+  bank?: { x: number; halfWidth: number; width: number; count: number },
 ): Bush[] {
   const bushes: Bush[] = []
-  for (let i = 0; i < count; i += 1) {
+  for (let i = 0; i < count + (bank?.count ?? 0); i += 1) {
     const lobeCount = 3 + Math.floor(Math.random() * 3)
     const scale = randRange(0.7, 1.3)
     const lobes: BushLobe[] = []
@@ -240,7 +327,20 @@ function spawnBushes(
         color: pick(BUSH_COLORS, '#2f6b34'),
       })
     }
-    bushes.push({ x: pickBushX(worldWidth, playerSize, treeXs), lobes })
+    // How far the bush's lobes reach sideways: its whole width must stay out of the water.
+    const extent = Math.max(...lobes.map((lobe) => Math.abs(lobe.dx) + lobe.radius))
+    // The first bushes are random; the extra ones crowd the creek's banks on both sides.
+    const x =
+      bank && i >= count
+        ? bank.x +
+          (Math.random() < 0.5 ? -1 : 1) *
+            (bank.halfWidth +
+              // Now and then a bush stands close enough to the water that its branches overhang it.
+              (Math.random() < 0.3
+                ? extent * randRange(0.2, 0.65)
+                : extent + Math.random() * bank.width * 0.85))
+        : pickBushX(worldWidth, playerSize, treeXs, keepOut, extent)
+    bushes.push({ x, lobes })
   }
   return bushes
 }
@@ -252,12 +352,22 @@ function spawnBushes(
  * @param terrain - Ground heights.
  * @param worldWidth - Full world width.
  * @param playerSize - Player size (scales logs).
+ * @param keepOut - Creek span logs stay out of.
  */
-function spawnLogs(count: number, terrain: Terrain, worldWidth: number, playerSize: number): Log[] {
+function spawnLogs(
+  count: number,
+  terrain: Terrain,
+  worldWidth: number,
+  playerSize: number,
+  keepOut: Span,
+): Log[] {
   const logs: Log[] = []
   for (let i = 0; i < count; i += 1) {
     const length = randRange(1.3, 2.4) * playerSize
-    const x = randRange(length, worldWidth - length)
+    let x = randRange(length, worldWidth - length)
+    for (let attempt = 0; attempt < 20 && blocked(keepOut, x, length / 2); attempt += 1) {
+      x = randRange(length, worldWidth - length)
+    }
     const tilt = Math.atan2(
       groundYAt(terrain, x + length / 2) - groundYAt(terrain, x - length / 2),
       length,
@@ -273,11 +383,39 @@ function spawnLogs(count: number, terrain: Terrain, worldWidth: number, playerSi
  * @param x - Center X.
  * @param rx - Half width.
  * @param ry - Height.
+ * @param fog - How far the colors are blended toward the haze (background layers).
  */
-function makeRock(x: number, rx: number, ry: number): Rock {
-  const [color, highlight] = pick(ROCK_COLORS, ['#7a7872', '#a5a29a'])
+function makeRock(x: number, rx: number, ry: number, fog = 0): Rock {
+  const [base, baseHighlight] = pick(ROCK_COLORS, ['#7a7872', '#a5a29a'])
+  const litter = Array.from({ length: 4 }, () => {
+    const leaf = pick(LEAF_COLORS, '#8a5a2b')
+    return fog > 0 ? mixColor(leaf, FOREST_HAZE_COLOR, fog) : leaf
+  })
+  const color = fog > 0 ? mixColor(base, FOREST_HAZE_COLOR, fog) : base
+  const highlight = fog > 0 ? mixColor(baseHighlight, FOREST_HAZE_COLOR, fog) : baseHighlight
   const jitter = Array.from({ length: 9 }, () => randRange(0.84, 1.08))
-  return { x, rx, ry, jitter, color, highlight }
+  return { x, rx, ry, jitter, color, highlight, litter }
+}
+
+/**
+ * Rocks for the ground between a background layer and the next nearer one. They hug the creek's
+ * banks (most sit right at the edge) but some lie farther out, with random sizes and a random
+ * count, so the lining is irregular.
+ *
+ * @param fog - Haze blended into the rocks' colors.
+ */
+function spawnGapRocks(fog: number): GapRock[] {
+  const count = Math.round(GAP_ROCK_COUNT * randRange(0.6, 1.3))
+  return Array.from({ length: count }, () => {
+    const near = Math.random() < 0.65
+    return {
+      rock: makeRock(0, 1, 0.7, fog),
+      s: Math.random(),
+      side: Math.random() < 0.5 ? -1 : 1,
+      size: randRange(0.05, 0.38),
+      out: near ? Math.random() ** 2 * 0.6 : randRange(0.4, 5),
+    }
+  })
 }
 
 /**
@@ -287,20 +425,38 @@ function makeRock(x: number, rx: number, ry: number): Rock {
  * @param clusters - Number of small-rock clusters.
  * @param worldWidth - Full world width.
  * @param playerSize - Player size (scales rocks).
+ * @param creek - Creek: land rocks stay out of it, and extra rocks sit in the water.
  */
 function spawnRocks(
   boulders: number,
   clusters: number,
   worldWidth: number,
   playerSize: number,
+  creek: Creek,
 ): Rock[] {
   const rocks: Rock[] = []
+  const water = { x: creek.x, halfWidth: creek.halfWidth + creek.bank * 0.3 }
+  const landX = (): number => {
+    let x = randRange(40, worldWidth - 40)
+    for (let attempt = 0; attempt < 20 && blocked(water, x, playerSize * 0.7); attempt += 1) {
+      x = randRange(40, worldWidth - 40)
+    }
+    return x
+  }
   for (let i = 0; i < boulders; i += 1) {
     const rx = randRange(0.4, 0.7) * playerSize
-    rocks.push(makeRock(randRange(40, worldWidth - 40), rx, rx * randRange(0.6, 0.9)))
+    rocks.push(makeRock(landX(), rx, rx * randRange(0.6, 0.9)))
+  }
+  // A lining of rocks along both banks, hugging the water's edge (most within a few inches of it).
+  for (let i = 0; i < BANK_ROCK_COUNT; i += 1) {
+    const side = Math.random() < 0.5 ? -1 : 1
+    // Always on the shore: the rock's inner edge starts at the water's edge, never over the water.
+    const rx = randRange(0.07, 0.3) * playerSize
+    const x = creek.x + side * (creek.halfWidth + rx + Math.random() ** 2 * creek.bank * 0.45)
+    rocks.push(makeRock(x, rx, rx * randRange(0.55, 0.85)))
   }
   for (let i = 0; i < clusters; i += 1) {
-    const cx = randRange(40, worldWidth - 40)
+    const cx = landX()
     const n = 1 + Math.floor(Math.random() * 3)
     for (let k = 0; k < n; k += 1) {
       const rx = randRange(0.07, 0.15) * playerSize
@@ -318,28 +474,77 @@ function spawnRocks(
  * @param worldWidth - Full world width.
  * @param viewWidth - Window width.
  * @param viewHeight - Window height.
+ * @param creek - Foreground creek the background creeks follow.
  */
-function spawnForest(worldWidth: number, viewWidth: number, viewHeight: number): ForestLayer[] {
-  return FOREST_LAYERS.map((layer) => {
+function spawnForest(
+  worldWidth: number,
+  viewWidth: number,
+  viewHeight: number,
+  creek: Creek,
+): ForestLayer[] {
+  // The creek flows back through the layers: each layer's creek is narrower than the one in front
+  // of it and shifted by a gaussian offset (4 standard deviations = the front creek's width),
+  // never by more than half that width. Positions are tracked as screen x with the camera centered
+  // on the foreground creek, then converted into each layer's own x.
+  const refCamera = creek.x - viewWidth / 2
+  const creeks: Span[] = []
+  let screenX = viewWidth / 2
+  let half = creek.halfWidth
+  for (let i = FOREST_LAYERS.length - 1; i >= 0; i -= 1) {
+    // Offsets are scaled by the foreground creek's width, not the (shrinking) layer's, so far
+    // layers wiggle as much as near ones; the shared drift tilts the whole creek one way.
+    const spread = creek.halfWidth
+    const offset =
+      creek.drift * spread * CREEK_DRIFT + Math.max(-spread, Math.min(spread, (randNormal() * spread) / 2))
+    screenX += offset
+    half *= CREEK_LAYER_SHRINK
+    creeks[i] = { x: screenX + (FOREST_LAYERS[i]?.parallax ?? 0) * refCamera, halfWidth: half }
+  }
+
+  return FOREST_LAYERS.map((layer, index) => {
+    const layerCreek = creeks[index] ?? { x: 0, halfWidth: 0 }
+    const keepOut = { x: layerCreek.x, halfWidth: layerCreek.halfWidth * 1.8 }
+    const layerKeepOut = { x: layerCreek.x, halfWidth: layerCreek.halfWidth }
     const span = worldWidth * layer.parallax + viewWidth
     const height = viewHeight * layer.scale * SCENERY_SCALE
     const trunkWidth = Math.max(18, viewHeight * 0.055) * 1.3 * layer.scale * SCENERY_SCALE
     const trees: BackdropTree[] = []
+    // Layers that only exist near the creek fade out this far from it.
+    const localRadius = layer.local ? viewHeight * 1.8 : null
+    const outsideWindow = (px: number): boolean =>
+      localRadius !== null && Math.abs(px - layerCreek.x) > localRadius
     let x = -viewHeight * 0.3 * SCENERY_SCALE
     while (x < span + viewHeight * 0.3 * SCENERY_SCALE) {
-      const shape = generateOak(height * randRange(0.92, 1.08), trunkWidth)
-      trees.push({ x, shape })
+      if (!blocked(keepOut, x, trunkWidth) && !outsideWindow(x)) {
+        const shape = generateOak(height * randRange(0.92, 1.08), trunkWidth)
+        trees.push({ x, shape })
+      }
       x += viewHeight * layer.spacing * randRange(0.6, 1.6)
     }
     const playerSize = playerSizeForView(viewHeight) * layer.scale * SCENERY_SCALE
     const logs: Log[] = []
     for (let i = 0; i < span / (viewHeight * 2.5); i += 1) {
-      logs.push({
-        x: randRange(0, span),
-        length: randRange(1.3, 2.4) * playerSize,
-        radius: randRange(0.16, 0.26) * playerSize,
-        tilt: 0,
-      })
+      const length = randRange(1.3, 2.4) * playerSize
+      const logX = randRange(0, span)
+      if (blocked(keepOut, logX, length / 2) || outsideWindow(logX)) {
+        continue
+      }
+      logs.push({ x: logX, length, radius: randRange(0.16, 0.26) * playerSize, tilt: 0 })
+    }
+    // Rocks on the layer's surface, plus a lining along the creek's edges.
+    const rocks: Rock[] = []
+    for (let i = 0; i < span / (viewHeight * 2); i += 1) {
+      const rx = randRange(0.12, 0.4) * playerSize
+      const rockX = randRange(0, span)
+      if (!blocked(layerKeepOut, rockX, rx) && !outsideWindow(rockX)) {
+        rocks.push(makeRock(rockX, rx, rx * randRange(0.6, 0.9), layer.fog))
+      }
+    }
+    for (let i = 0; i < 14; i += 1) {
+      const side = Math.random() < 0.5 ? -1 : 1
+      const rx = randRange(0.1, 0.3) * playerSize
+      const rockX = layerCreek.x + side * (layerCreek.halfWidth + rx + Math.random() ** 2 * layerCreek.halfWidth * 0.7)
+      rocks.push(makeRock(rockX, rx, rx * randRange(0.55, 0.85), layer.fog))
     }
     return {
       parallax: layer.parallax,
@@ -348,14 +553,24 @@ function spawnForest(worldWidth: number, viewWidth: number, viewHeight: number):
       groundColor: mixColor(GROUND_COLOR, FOREST_HAZE_COLOR, layer.fog),
       trunkColor: mixColor(TRUNK_COLOR, FOREST_HAZE_COLOR, layer.fog),
       tones: OAK_TONES.map((tone) => mixColor(tone, FOREST_HAZE_COLOR, layer.fog)),
+      waterColor: mixColor(WATER_COLOR, FOREST_HAZE_COLOR, layer.fog),
+      scale: layer.scale,
+      edgeRocks: spawnGapRocks(layer.fog),
+      leafColors: LEAF_COLORS.map((color) => mixColor(color, FOREST_HAZE_COLOR, layer.fog)),
+      creek: layerCreek,
       trees,
+      localRadius,
       bushes: spawnBushes(
         Math.ceil(span / (viewHeight * 0.8)),
         span,
         playerSize,
         trees.map((tree) => tree.x),
-      ),
+        { x: layerCreek.x, halfWidth: layerCreek.halfWidth },
+        { x: layerCreek.x, halfWidth: layerCreek.halfWidth, width: layerCreek.halfWidth * (5 / 3), count: 6 },
+      ).filter((bush) => !outsideWindow(bush.x)),
       logs,
+      rocks,
+      fine: buildFineNoise(span, viewHeight),
     }
   })
 }
@@ -375,7 +590,8 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
   const playerSize = playerSizeForView(viewHeight)
   const terrain = buildTerrain(width, groundY, viewHeight)
 
-  const trees = spawnOakTrees(width, viewHeight)
+  const creekKeep = creekKeepOut(terrain.creek)
+  const trees = spawnOakTrees(width, viewHeight, creekKeep)
 
   const world: World = {
     viewHeight,
@@ -385,17 +601,19 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     groundY,
     terrain,
     trees,
-    acorns: spawnAcorns(width, terrain, acornRadiusForPlayer(playerSize), trees),
+    acorns: spawnAcorns(width, terrain, acornRadiusForPlayer(playerSize), trees, creekKeep),
     leaves: spawnLeafLitter(terrain, width, playerSize * SCENERY_SCALE),
     bushes: spawnBushes(
       BUSH_COUNT,
       width,
       playerSize * SCENERY_SCALE,
       trees.map((tree) => tree.x + tree.trunkWidth / 2),
+      { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth },
+      { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth, width: terrain.creek.bank, count: BANK_BUSH_COUNT },
     ),
-    logs: spawnLogs(LOG_COUNT, terrain, width, playerSize * SCENERY_SCALE),
-    rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE),
-    forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight),
+    logs: spawnLogs(LOG_COUNT, terrain, width, playerSize * SCENERY_SCALE, creekKeep),
+    rocks: spawnRocks(BOULDER_COUNT, ROCK_CLUSTER_COUNT, width, playerSize * SCENERY_SCALE, terrain.creek),
+    forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight, terrain.creek),
     npcs: [],
     acornDropTimer: 0,
     time: 0,

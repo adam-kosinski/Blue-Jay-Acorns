@@ -66,6 +66,9 @@ function startReach(
   duration: number,
   acorn: Acorn | null,
 ): void {
+  if (player.floating) {
+    return
+  }
   player.facing = x >= player.x + player.size / 2 ? 1 : -1
   const tipX = player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
   const slide = Math.max(-0.5 * player.size, Math.min(0.8 * player.size, x - tipX))
@@ -89,7 +92,7 @@ function startReach(
  */
 export function startBury(player: Player): void {
   const acorn = player.held
-  if (!acorn) {
+  if (!acorn || player.floating) {
     return
   }
   player.action = {
@@ -199,7 +202,7 @@ export function updateAction(player: Player, world: World, dt: number): void {
  * @param world - Acorn container and terrain.
  */
 export function handleAcornActions(player: Player, edges: KeyEdges, world: World): void {
-  if (player.state !== 'standing' || player.eatTimer > 0 || player.action) {
+  if (player.state !== 'standing' || player.floating || player.eatTimer > 0 || player.action) {
     return
   }
 
@@ -263,7 +266,12 @@ export function updateTreeDrops(
         }
         const angle = Math.random() * Math.PI * 2
         const dist = Math.sqrt(Math.random()) * lobe.r * 0.8
-        const x = baseX + lobe.x + Math.cos(angle) * dist
+        let x = baseX + lobe.x + Math.cos(angle) * dist
+        const { creek } = world.terrain
+        if (Math.abs(x - creek.x) < creek.halfWidth) {
+          // Acorns that would fall into the creek are washed to the nearest bank.
+          x = creek.x + (x < creek.x ? -1 : 1) * (creek.halfWidth + radius * 2)
+        }
         world.acorns.push({
           x: Math.max(radius, Math.min(world.width - radius, x)),
           y: baseY + lobe.y + Math.sin(angle) * dist,

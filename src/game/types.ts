@@ -31,6 +31,8 @@ export type Player = {
   action: PlayerAction | null
   /** World x of a dig that came up empty since the owner last looked (consumed by the NPC code). */
   digFailX: number | null
+  /** Standing on the creek's surface: floats with no legs and cannot pick up, drop, bury or dig. */
+  floating: boolean
 }
 
 /** A burial another bird made that an NPC noticed; it is treated like a free acorn to dig for. */
@@ -150,12 +152,35 @@ export type LeafLitter = {
   color: string
 }
 
-/** Ground heights sampled at a fixed horizontal step. */
+/** The creek carved into the terrain. */
+export type Creek = {
+  /** World x of the creek's center. */
+  x: number
+  /** Half the width of the water surface. */
+  halfWidth: number
+  /** Horizontal distance over which the land slopes from the water's edge up to the normal terrain. */
+  bank: number
+  /** Y of the water surface. */
+  waterY: number
+  /** How far below the water surface the creek bed is at its deepest. */
+  depth: number
+  /** Which way (-1 left, 1 right) the creek tends to wander as it recedes into the background. */
+  drift: number
+  /** The creek continues toward the viewer in front of the foreground: its center offset from `x`... */
+  frontOffset: number
+  /** ...and its half width there (wider, since it is nearer). */
+  frontHalfWidth: number
+}
+
+/** Ground heights sampled at a fixed horizontal step, plus the creek carved into them. */
 export type Terrain = {
+  creek: Creek
   /** Horizontal spacing between samples in pixels. */
   step: number
   /** Absolute surface Y at `i * step`. */
   heights: Float32Array
+  /** Just the coarse (large-scale) part of the land's height above the base line, per sample. */
+  coarse: Float32Array
 }
 
 /** One lobe of a bush cluster, relative to the bush base. */
@@ -191,6 +216,8 @@ export type Rock = {
   jitter: number[]
   color: string
   highlight: string
+  /** Colors of the little fallen leaves drawn over the rock's base, as if it were buried in litter. */
+  litter: string[]
 }
 
 /** One tree silhouette in a parallax background layer. */
@@ -198,6 +225,23 @@ export type BackdropTree = {
   /** Base X within the layer's own span. */
   x: number
   shape: TreeShape
+}
+
+/**
+ * A rock on the ground between a layer and the next nearer one (the ground behind the nearer layer),
+ * positioned relative to the creek's bank so it never lands in the water.
+ */
+export type GapRock = {
+  /** The rock; its x, rx and ry are set each frame from its position. */
+  rock: Rock
+  /** Depth between this layer's waterline (0) and the next nearer one (1). */
+  s: number
+  /** -1 for the left bank, 1 for the right. */
+  side: number
+  /** Rock half width in units of the local scenery size. */
+  size: number
+  /** How far beyond the bank's edge the rock sits, in units of the local scenery size. */
+  out: number
 }
 
 /** Distant forest layer drawn with camera parallax. */
@@ -217,6 +261,21 @@ export type ForestLayer = {
   trees: BackdropTree[]
   bushes: Bush[]
   logs: Log[]
+  rocks: Rock[]
+  /** For the extra layers that only exist around the creek: how far from it they fade out; else null. */
+  localRadius: number | null
+  /** The layer's own fine terrain noise (lift above its base line, per `TERRAIN_STEP`). */
+  fine: Float32Array
+  /** Where the creek flows through this layer, in the layer's own x, and its half width. */
+  creek: { x: number; halfWidth: number }
+  /** Rocks on the ground between this layer and the next nearer one, thickest along the creek banks. */
+  edgeRocks: GapRock[]
+  /** Size of this layer's scenery relative to the foreground. */
+  scale: number
+  /** Fallen-leaf colors, blended toward the haze like the rest of the layer. */
+  leafColors: string[]
+  /** Water color, blended toward the haze like the rest of the layer. */
+  waterColor: string
 }
 
 /** Finite-state-machine states for an NPC blue jay (follow and hide are not wired up yet). */

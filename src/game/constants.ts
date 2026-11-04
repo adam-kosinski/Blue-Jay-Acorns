@@ -96,7 +96,7 @@ export const BEAK_REACH_X = 54
 export const HOVER_OFFSET_IN_SIZES = 140 / 48 / 3
 
 /** How close (in player sizes) a buried acorn must be to where the beak lands for a dig to dig it up. */
-export const DIG_RESPONSE_IN_SIZES = 0.5
+export const DIG_RESPONSE_IN_SIZES = 1 / 3
 
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
 export const REACH_IN_SIZES = 0.9
@@ -172,7 +172,7 @@ export const NPC_IDLE_HUNGER = 0.9
 export const SCENERY_SCALE = 2
 
 /** Oak trunk fill. */
-export const TRUNK_COLOR = '#6b3e1d'
+export const TRUNK_COLOR = '#5f4b3c'
 
 /** Oak crown fill. */
 export const CROWN_COLOR = '#2f7a3a'

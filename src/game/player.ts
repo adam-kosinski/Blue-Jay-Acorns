@@ -3,9 +3,13 @@ import {
   HOP_LENGTH_IN_SIZES,
   HOVER_OFFSET_IN_SIZES,
   MOVE_SPEED_IN_SIZES,
+  WALK_SPEED_FACTOR,
   VERTICAL_SPEED_IN_SIZES,
 } from './constants'
-import { groundYAt } from './terrain'
+import { groundYAt, inWater } from './terrain'
+
+/** How far a floating bird's feet line sits below the water surface, in player sizes. */
+const FLOAT_SINK_IN_SIZES = 0.24
 import type { KeyState, Player, World } from './types'
 
 /**
@@ -32,6 +36,7 @@ export function createPlayer(world: World, size: number): Player {
     hopDir: 1,
     action: null,
     digFailX: null,
+    floating: false,
   }
 }
 
@@ -42,7 +47,12 @@ export function createPlayer(world: World, size: number): Player {
  * @param world - Play space with terrain.
  */
 export function groundUnder(player: Player, world: World): number {
-  return groundYAt(world.terrain, player.x + player.size / 2)
+  const x = player.x + player.size / 2
+  if (inWater(world.terrain, x)) {
+    // Over the creek a bird lands on the surface and floats, its body sunk a little.
+    return world.terrain.creek.waterY + FLOAT_SINK_IN_SIZES * player.size
+  }
+  return groundYAt(world.terrain, x)
 }
 
 /**
@@ -135,7 +145,11 @@ export function updatePlayer(
   if (dir !== 0) {
     player.facing = dir > 0 ? 1 : -1
   }
-  if (player.state === 'standing') {
+  if (player.state === 'standing' && inWater(world.terrain, player.x + player.size / 2)) {
+    // On the creek there is nothing to hop from: the bird glides sideways smoothly at walking speed.
+    player.x += dir * MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size * dt
+    player.hopT = HOP_DURATION
+  } else if (player.state === 'standing') {
     hopOnGround(player, dir, dt, speedScale)
   } else {
     player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * player.size * dt
@@ -156,6 +170,7 @@ export function updatePlayer(
     player.state = 'flying'
   }
   player.walking = player.state === 'standing' && dir !== 0
+  player.floating = player.state === 'standing' && inWater(world.terrain, player.x + player.size / 2)
 
   const dy = VERTICAL_SPEED_IN_SIZES * speedScale * player.size * dt
   const hoverY = hoverTopY(groundY, player.size)
@@ -190,5 +205,6 @@ export function updatePlayer(
     player.y = landingY - player.size
     player.state = 'standing'
     player.takingOff = false
+    player.floating = inWater(world.terrain, player.x + player.size / 2)
   }
 }

@@ -12,7 +12,7 @@ import {
   TRUNK_COLOR,
 } from './constants'
 import { drawLeafyDisk, drawOakVector, getOakSprite, seededRandom, drawOak } from './oak'
-import { groundYAt } from './terrain'
+import { creekWeight, groundYAt, liftAt } from './terrain'
 import type {
   Acorn,
   Bush,
@@ -67,6 +67,7 @@ export function renderScene(
   drawBuriedProps(ctx, world, camera.x, viewWidth)
   drawGround(ctx, world, camera.x, viewWidth)
   drawLeafLitter(ctx, world.leaves, camera.x, viewWidth)
+  drawCreek(ctx, world, camera, viewWidth, viewHeight)
   drawMounds(ctx, world.acorns, world.terrain, camera.x, viewWidth)
   drawProps(ctx, world, camera.x, viewWidth)
   for (const npc of world.npcs) {
@@ -77,6 +78,7 @@ export function renderScene(
     }
   }
   drawBird(ctx, player)
+  drawCreekSurface(ctx, world, camera.x, viewWidth)
   drawNoticeLines(ctx, world)
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
 
@@ -85,14 +87,7 @@ export function renderScene(
   drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
   drawHungerBar(ctx, viewWidth, viewHeight, player)
 
-  ctx.fillStyle = '#1b2838'
-  ctx.font = '18px Georgia, serif'
-  ctx.textAlign = 'left'
-  ctx.fillText(
-    'WASD move · S tap on ground pick up · Q drop · Shift bury / dig up · E eat when hungry',
-    16,
-    viewHeight - 14,
-  )
+  drawControlsOverlay(ctx, viewHeight)
 
   if (gameOver) {
     if (gameOverSince === 0) {
@@ -256,9 +251,73 @@ function drawForest(
       )
     }
     const below = base - strip.originY + stripHeight
-    if (below < viewHeight) {
+    if (below < viewHeight && layer.localRadius === null) {
       ctx.fillStyle = layer.groundColor
       ctx.fillRect(0, below - 1, viewWidth, viewHeight - below + 1)
+    }
+    // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
+    // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
+    const next = layers[layers.indexOf(layer) + 1]
+    const top = base + strip.waterLine
+    let bottom: number
+    let bottomX: number
+    let bottomHalf: number
+    let bottomColor: string
+    if (next) {
+      const nextStrip = forestStripFor(next, world)
+      const nextBase = world.groundY - maxCamY * (1 - next.parallax) - camera.y * next.parallax - next.lift * viewHeight
+      bottom = nextBase + nextStrip.waterLine
+      bottomX = next.creek.x - camera.x * next.parallax
+      bottomHalf = next.creek.halfWidth
+      bottomColor = next.waterColor
+    } else {
+      bottom = world.terrain.creek.waterY - camera.y
+      bottomX = world.terrain.creek.x - camera.x
+      bottomHalf = world.terrain.creek.halfWidth
+      bottomColor = '#6aa3c4'
+    }
+    bottom = Math.max(bottom, top + 1)
+    const topX = layer.creek.x - camera.x * p
+    if (top < viewHeight && bottom > 0) {
+      const water = ctx.createLinearGradient(0, top, 0, bottom)
+      water.addColorStop(0, layer.waterColor)
+      water.addColorStop(1, bottomColor)
+      ctx.fillStyle = water
+      // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
+      const mid = (top + bottom) / 2
+      const topHalf = layer.creek.halfWidth
+      ctx.beginPath()
+      ctx.moveTo(topX - topHalf, top)
+      if (layers.indexOf(layer) === 0) {
+        // The farthest creek ends in a rounded head rather than a flat edge.
+        ctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
+      } else {
+        ctx.lineTo(topX + topHalf, top)
+      }
+      ctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom)
+      ctx.lineTo(bottomX - bottomHalf, bottom)
+      ctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
+      ctx.closePath()
+      ctx.fill()
+
+      // Rocks on the ground between this layer and the next, thickest along the creek's banks.
+      // They are placed from the ribbon's side so they never land in the water.
+      const ownUnit = (world.viewHeight / 8) * 2 * layer.scale
+      const nextUnit = (world.viewHeight / 8) * 2 * (next ? next.scale : 1)
+      for (const edge of layer.edgeRocks) {
+        const t = edge.s
+        const u = 1 - t
+        const x0 = topX + edge.side * topHalf
+        const x3 = bottomX + edge.side * bottomHalf
+        // Cubic Bezier through the same control points as the ribbon's side.
+        const px = u * u * u * x0 + 3 * u * u * t * x0 + 3 * u * t * t * x3 + t * t * t * x3
+        const py = u * u * u * top + 3 * u * u * t * mid + 3 * u * t * t * mid + t * t * t * bottom
+        const unit = ownUnit + (nextUnit - ownUnit) * t
+        edge.rock.rx = edge.size * unit
+        edge.rock.ry = edge.rock.rx * 0.7
+        edge.rock.x = px + edge.side * (edge.rock.rx + edge.out * unit)
+        drawRock(ctx, edge.rock, py)
+      }
     }
   }
 }
@@ -270,6 +329,8 @@ type ForestStrip = {
   resolution: number
   /** Y of the layer's base line inside the bitmap. */
   originY: number
+  /** Y of the layer's creek waterline relative to its base line (negative is up). */
+  waterLine: number
 }
 
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
@@ -289,9 +350,30 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     return cached
   }
   const relief = 0.3 + 0.7 * layer.parallax
-  const phase = Math.round(layer.parallax * 10000)
-  const offset = (layerX: number): number =>
-    (groundYAt(world.terrain, (layerX + phase) % world.width) - world.groundY) * relief
+  // Every layer shares the foreground's coarse hills (mapped sideways so its creek lines up with the
+  // foreground creek) and adds its own fine noise on top.
+  const { creek } = layer
+  const fgCreek = world.terrain.creek
+  const squeeze = fgCreek.halfWidth / creek.halfWidth
+  const baseOffset = (layerX: number): number =>
+    -(liftAt(world.terrain.coarse, fgCreek.x + (layerX - creek.x) * squeeze) + liftAt(layer.fine, layerX)) * relief
+  // Near its creek every layer copies the foreground terrain around the creek (squeezed sideways
+  // to the layer's creek width and scaled in height by the layer's relief), so the banks, the
+  // waterline and the dip all correlate from layer to layer instead of each layer's own noise
+  // putting its creek at an unrelated height. Farther from the creek it fades back to its own noise.
+  const nearRange = creek.halfWidth * (1 + fgCreek.bank / fgCreek.halfWidth)
+  const offset = (layerX: number): number => {
+    const own = baseOffset(layerX)
+    const distance = Math.abs(layerX - creek.x)
+    const weight = creekWeight(distance, nearRange, creek.halfWidth)
+    if (weight === 0) {
+      return own
+    }
+    const copied = (groundYAt(world.terrain, fgCreek.x + (layerX - creek.x) * squeeze) - world.groundY) * relief
+    return own + (copied - own) * weight
+  }
+  const waterLine = (fgCreek.waterY - world.groundY) * relief
+  const bedBottom = Math.max(0, (fgCreek.waterY + fgCreek.depth - world.groundY) * relief)
 
   let minGround = world.groundY
   for (const h of world.terrain.heights) {
@@ -307,34 +389,109 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   const resolution = layer.parallax < 0.4 ? 0.5 : 0.75
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(layer.span * resolution)
-  canvas.height = Math.ceil((originY + 6) * resolution)
+  const bottomPad = 6 + Math.ceil(bedBottom)
+  canvas.height = Math.ceil((originY + bottomPad) * resolution)
   const ctx = canvas.getContext('2d')
   if (ctx) {
     ctx.scale(resolution, resolution)
-    ctx.fillStyle = layer.groundColor
-    ctx.beginPath()
-    ctx.moveTo(0, originY + 6)
-    for (let x = 0; x <= layer.span + 8; x += 8) {
-      ctx.lineTo(x, originY + offset(x))
-    }
-    ctx.lineTo(layer.span + 8, originY + 6)
-    ctx.closePath()
-    ctx.fill()
+    // Everything stands first and the ground is painted over its base afterwards, so trunks, logs,
+    // rocks and bushes sink into slopes instead of ending in flat, floating bases. A trunk reaches
+    // down to the lowest ground under it so neither side of its base hangs in the air.
     for (const tree of layer.trees) {
-      drawOakVector(ctx, tree.shape, tree.x, originY + offset(tree.x), layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4)
+      const trunkHalf = (tree.shape.segments[0]?.w0 ?? 40) / 2
+      const lowest = Math.max(offset(tree.x - trunkHalf), offset(tree.x), offset(tree.x + trunkHalf))
+      drawOakVector(ctx, tree.shape, tree.x, originY + lowest + 2, layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4)
     }
     ctx.fillStyle = layer.trunkColor
     for (const log of layer.logs) {
+      // The log lies along the horizon: tilted with its slope and resting on the ground at its
+      // middle, so neither end hangs in the air.
+      const half = log.length / 2
+      const endL = offset(log.x - half)
+      const endR = offset(log.x + half)
+      const ground = (endL + offset(log.x) + endR) / 3
+      ctx.save()
+      ctx.translate(log.x, originY + ground - log.radius * 0.8)
+      ctx.rotate(Math.atan2(endR - endL, log.length))
+      const logTop = -log.radius
+      const logLeft = -half
+      ctx.fillStyle = layer.trunkColor
       ctx.beginPath()
-      ctx.roundRect(
-        log.x - log.length / 2,
-        originY + offset(log.x) - log.radius * 1.7,
-        log.length,
-        log.radius * 2,
-        log.radius * 0.5,
-      )
+      ctx.roundRect(logLeft, logTop, log.length, log.radius * 2, log.radius * 0.5)
       ctx.fill()
+      // Minimal detail like the background trunks: lengthwise bark lines, a lit top edge, and a
+      // paler cut end with a growth ring.
+      ctx.save()
+      ctx.clip()
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)'
+      ctx.lineWidth = Math.max(1, log.radius * 0.12)
+      for (const f of [0.35, 0.8, 1.35]) {
+        ctx.beginPath()
+        ctx.moveTo(logLeft + log.length * 0.04, logTop + log.radius * f)
+        ctx.lineTo(logLeft + log.length * 0.96, logTop + log.radius * f)
+        ctx.stroke()
+      }
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.12)'
+      ctx.fillRect(logLeft, logTop, log.length, log.radius * 0.4)
+      ctx.restore()
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.28)'
+      ctx.beginPath()
+      ctx.ellipse(logLeft + log.length - log.radius * 0.3, logTop + log.radius, log.radius * 0.3, log.radius * 0.92, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)'
+      ctx.lineWidth = Math.max(1, log.radius * 0.08)
+      ctx.beginPath()
+      ctx.ellipse(logLeft + log.length - log.radius * 0.3, logTop + log.radius, log.radius * 0.15, log.radius * 0.5, 0, 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.restore()
     }
+    for (const rock of layer.rocks) {
+      drawRock(ctx, rock, originY + offset(rock.x))
+    }
+    ctx.fillStyle = layer.groundColor
+    ctx.beginPath()
+    ctx.moveTo(0, originY + bottomPad)
+    for (let x = 0; x <= layer.span + 8; x += 8) {
+      ctx.lineTo(x, originY + offset(x))
+    }
+    ctx.lineTo(layer.span + 8, originY + bottomPad)
+    ctx.closePath()
+    ctx.fill()
+    // Fallen-leaf litter on the ground, like the foreground's but sparser and with plain ellipses:
+    // a band of small leaves just below the horizon line, scaled with the layer.
+    const leafUnit = (world.viewHeight / 8) * 2 * layer.scale
+    for (let x = 0; x < layer.span; x += 7) {
+      if (Math.abs(x - creek.x) < creek.halfWidth) {
+        continue
+      }
+      const count = 1 + Math.floor(Math.random() * 2)
+      for (let i = 0; i < count; i += 1) {
+        const lx = x + (Math.random() * 2 - 1) * 7
+        const rx = (0.035 + Math.random() * 0.045) * leafUnit
+        ctx.fillStyle = layer.leafColors[Math.floor(Math.random() * layer.leafColors.length)] ?? layer.groundColor
+        ctx.beginPath()
+        ctx.ellipse(
+          lx,
+          originY + offset(lx) + (0.02 + Math.random() * 0.45) * leafUnit,
+          rx,
+          rx * (0.35 + Math.random() * 0.2),
+          (Math.random() - 0.5) * Math.PI,
+          0,
+          Math.PI * 2,
+        )
+        ctx.fill()
+      }
+    }
+    ctx.fillStyle = layer.waterColor
+    ctx.beginPath()
+    ctx.moveTo(creek.x - creek.halfWidth, originY + waterLine)
+    ctx.lineTo(creek.x + creek.halfWidth, originY + waterLine)
+    for (let x = creek.x + creek.halfWidth; x >= creek.x - creek.halfWidth; x -= 8) {
+      ctx.lineTo(x, originY + Math.max(waterLine, offset(x)))
+    }
+    ctx.closePath()
+    ctx.fill()
+    // Bushes last, so branches can overhang the creek.
     for (const bush of layer.bushes) {
       const bushY = originY + offset(bush.x)
       const rand = seededRandom(Math.floor(bush.x * 13))
@@ -343,7 +500,19 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       }
     }
   }
-  const strip = { canvas, resolution, originY }
+  if (ctx && layer.localRadius !== null) {
+    // Fade the layer out into the haze away from the creek.
+    ctx.globalCompositeOperation = 'destination-in'
+    const mask = ctx.createLinearGradient(creek.x - layer.localRadius, 0, creek.x + layer.localRadius, 0)
+    mask.addColorStop(0, 'rgba(0, 0, 0, 0)')
+    mask.addColorStop(0.3, 'rgba(0, 0, 0, 1)')
+    mask.addColorStop(0.7, 'rgba(0, 0, 0, 1)')
+    mask.addColorStop(1, 'rgba(0, 0, 0, 0)')
+    ctx.fillStyle = mask
+    ctx.fillRect(0, 0, layer.span + 8, originY + bottomPad + 10)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+  const strip = { canvas, resolution, originY, waterLine }
   forestStrips.set(layer, strip)
   return strip
 }
@@ -365,16 +534,18 @@ function drawGround(
   const { terrain } = world
   const startX = Math.max(0, Math.floor((cameraX - 16) / terrain.step) * terrain.step)
   const endX = Math.min(world.width, cameraX + viewWidth + 16 + terrain.step)
-  const dirt = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, world.height)
+  // The creek bed can lie below the bottom of the world, so the dirt reaches a little lower.
+  const bottom = world.height + world.terrain.creek.depth
+  const dirt = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, bottom)
   dirt.addColorStop(0, GROUND_COLOR)
   dirt.addColorStop(1, '#4b2f1a')
   ctx.fillStyle = dirt
   ctx.beginPath()
-  ctx.moveTo(startX, world.height)
+  ctx.moveTo(startX, bottom)
   for (let x = startX; x <= endX; x += terrain.step) {
     ctx.lineTo(x, groundYAt(terrain, x))
   }
-  ctx.lineTo(endX, world.height)
+  ctx.lineTo(endX, bottom)
   ctx.closePath()
   ctx.fill()
 
@@ -505,7 +676,7 @@ function drawBuriedProps(
   const left = cameraX - 600
   const right = cameraX + viewWidth + 600
   for (const rock of world.rocks) {
-    if (rock.x > left && rock.x < right) {
+    if (rock.x > left && rock.x < right && !isCreekRock(world, rock)) {
       drawRock(ctx, rock, groundYAt(world.terrain, rock.x))
     }
   }
@@ -519,6 +690,123 @@ function drawBuriedProps(
       drawLog(ctx, log, under)
     }
   }
+}
+
+/**
+ * Whether a rock is a shore rock (on the creek's banks): those are drawn in front of the water
+ * rather than behind the ground.
+ *
+ * @param world - Play space.
+ * @param rock - Rock to test.
+ */
+function isCreekRock(world: World, rock: Rock): boolean {
+  const { creek } = world.terrain
+  return Math.abs(rock.x - creek.x) <= creek.halfWidth + creek.bank
+}
+
+/**
+ * Draws the creek: opaque water filling the carved channel up to the waterline, with a
+ * lighter surface line, then the shore rocks in front of the water. The channel itself is the lowered terrain.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawCreek(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  camera: Camera,
+  viewWidth: number,
+  viewHeight: number,
+): void {
+  const cameraX = camera.x
+  const { creek, step } = world.terrain
+  const left = Math.max(creek.x - creek.halfWidth, cameraX - step)
+  const right = Math.min(creek.x + creek.halfWidth, cameraX + viewWidth + step)
+  if (Math.abs(creek.x - (cameraX + viewWidth / 2)) > viewWidth / 2 + creek.frontHalfWidth + creek.halfWidth + creek.bank) {
+    return
+  }
+  const water = ctx.createLinearGradient(0, creek.waterY, 0, creek.waterY + creek.depth)
+  water.addColorStop(0, '#6aa3c4')
+  water.addColorStop(1, '#5f9bbd')
+  ctx.fillStyle = water
+  ctx.beginPath()
+  ctx.moveTo(left, creek.waterY)
+  ctx.lineTo(right, creek.waterY)
+  for (let x = right; x >= left; x -= step) {
+    ctx.lineTo(x, Math.max(creek.waterY, groundYAt(world.terrain, x)))
+  }
+  ctx.lineTo(left, Math.max(creek.waterY, groundYAt(world.terrain, left)))
+  ctx.closePath()
+  ctx.fill()
+
+  // The creek flows on toward the viewer (an imaginary layer in front of the foreground): from the
+  // water's edges it widens to the bottom of the screen, so the water's top is seen rather than
+  // the cross section of the channel.
+  const bottom = camera.y + viewHeight + 4
+  if (bottom > creek.waterY) {
+    const mid = (creek.waterY + bottom) / 2
+    const frontX = creek.x + creek.frontOffset
+    const front = ctx.createLinearGradient(0, creek.waterY, 0, bottom)
+    front.addColorStop(0, '#6aa3c4')
+    front.addColorStop(1, '#5f9bbd')
+    ctx.fillStyle = front
+    ctx.beginPath()
+    ctx.moveTo(creek.x - creek.halfWidth, creek.waterY)
+    ctx.lineTo(creek.x + creek.halfWidth, creek.waterY)
+    ctx.bezierCurveTo(creek.x + creek.halfWidth, mid, frontX + creek.frontHalfWidth, mid, frontX + creek.frontHalfWidth, bottom)
+    ctx.lineTo(frontX - creek.frontHalfWidth, bottom)
+    ctx.bezierCurveTo(frontX - creek.frontHalfWidth, mid, creek.x - creek.halfWidth, mid, creek.x - creek.halfWidth, creek.waterY)
+    ctx.closePath()
+    ctx.fill()
+  }
+
+  // Shore rocks are always in front of the water. Clipping to the area above the terrain keeps
+  // their sunken bases hidden in the ground instead of showing as slabs over the bank.
+  const viewLeft = cameraX - 200
+  const viewRight = cameraX + viewWidth + 200
+  ctx.save()
+  ctx.beginPath()
+  ctx.moveTo(viewLeft, camera.y - 400)
+  for (let x = viewLeft; x <= viewRight; x += step) {
+    ctx.lineTo(x, groundYAt(world.terrain, x))
+  }
+  ctx.lineTo(viewRight, camera.y - 400)
+  ctx.closePath()
+  ctx.clip()
+  for (const rock of world.rocks) {
+    if (isCreekRock(world, rock) && rock.x > viewLeft && rock.x < viewRight) {
+      drawRock(ctx, rock, groundYAt(world.terrain, rock.x))
+    }
+  }
+  ctx.restore()
+}
+
+/**
+ * Draws a thin translucent band of water over the foreground creek's surface after the birds, so a
+ * floating bird's sunken body looks submerged.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawCreekSurface(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  cameraX: number,
+  viewWidth: number,
+): void {
+  const { creek } = world.terrain
+  const left = Math.max(creek.x - creek.halfWidth, cameraX)
+  const right = Math.min(creek.x + creek.halfWidth, cameraX + viewWidth)
+  if (right <= left) {
+    return
+  }
+  // Same color as the water, so it only shows over the sunken part of a floating bird.
+  ctx.fillStyle = 'rgba(106, 163, 196, 0.6)'
+  ctx.fillRect(left, creek.waterY, right - left, world.viewHeight * 0.02)
 }
 
 /**
@@ -595,9 +883,9 @@ function drawLog(ctx: CanvasRenderingContext2D, log: Log, groundY: number): void
   // Sunk about 40% into the ground: the ground polygon is drawn over the lower part.
   ctx.translate(log.x, groundY - r * 0.2)
   ctx.rotate(log.tilt)
-  ctx.fillStyle = '#6b4423'
+  ctx.fillStyle = TRUNK_COLOR
   ctx.fillRect(-len / 2, -r, len, r * 2)
-  ctx.strokeStyle = '#4a2d14'
+  ctx.strokeStyle = 'rgba(30, 22, 16, 0.55)'
   ctx.lineWidth = 2
   for (const f of [-0.5, 0, 0.5]) {
     ctx.beginPath()
@@ -605,15 +893,15 @@ function drawLog(ctx: CanvasRenderingContext2D, log: Log, groundY: number): void
     ctx.lineTo(len / 2 - len * 0.05, r * f)
     ctx.stroke()
   }
-  ctx.fillStyle = '#4f3118'
+  ctx.fillStyle = '#41342a'
   ctx.beginPath()
   ctx.ellipse(-len / 2, 0, r * 0.35, r, 0, 0, Math.PI * 2)
   ctx.fill()
-  ctx.fillStyle = '#d2a972'
+  ctx.fillStyle = '#cdb892'
   ctx.beginPath()
   ctx.ellipse(len / 2, 0, r * 0.35, r, 0, 0, Math.PI * 2)
   ctx.fill()
-  ctx.strokeStyle = '#8c6236'
+  ctx.strokeStyle = '#8a7658'
   ctx.lineWidth = 1.5
   for (const k of [0.7, 0.4, 0.15]) {
     ctx.beginPath()
@@ -635,8 +923,10 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): v
   const baseY = groundY + rock.ry * 0.4
   ctx.fillStyle = rock.color
   ctx.beginPath()
+  // The outline runs a little past the horizontal at both ends, so the bottom is subtly rounded.
+  const sweep = Math.PI + 0.7
   rock.jitter.forEach((j, i) => {
-    const angle = Math.PI + (Math.PI * i) / (n - 1)
+    const angle = Math.PI - 0.35 + (sweep * i) / (n - 1)
     const px = rock.x + Math.cos(angle) * rock.rx * j
     const py = baseY + Math.sin(angle) * rock.ry * j
     if (i === 0) {
@@ -653,6 +943,22 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): v
   ctx.ellipse(rock.x - rock.rx * 0.28, baseY - rock.ry * 0.55, rock.rx * 0.3, rock.ry * 0.2, -0.4, 0, Math.PI * 2)
   ctx.fill()
   ctx.globalAlpha = 1
+  // A few fallen leaves over the base, as if the rock were settled into the litter.
+  rock.litter.forEach((color, k) => {
+    const spread = ((rock.jitter[k] ?? 1) - 0.96) / 0.12
+    ctx.fillStyle = color
+    ctx.beginPath()
+    ctx.ellipse(
+      rock.x + spread * rock.rx * 0.9,
+      baseY + rock.ry * 0.05,
+      rock.rx * 0.2,
+      rock.rx * 0.08,
+      spread * 0.8,
+      0,
+      Math.PI * 2,
+    )
+    ctx.fill()
+  })
 }
 
 /**
@@ -871,6 +1177,7 @@ function birdSpriteFor(player: Player, dpr: number): BirdSprite {
     eatQ,
     player.action ? player.action.kind : '',
     actionQ,
+    player.floating ? 'w' : '',
   ].join('|')
 
   let sprite = birdSprites.get(key)
@@ -958,7 +1265,9 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   // Legs
   ctx.strokeStyle = '#3a3a3a'
   ctx.lineWidth = 4
-  if (flying) {
+  if (player.floating) {
+    // Floating on the creek: the legs are under water, out of sight.
+  } else if (flying) {
     // Legs tucked back in flight
     for (const dx of [-6, 4]) {
       ctx.beginPath()
@@ -1732,6 +2041,15 @@ function drawMinimap(
   ctx.closePath()
   ctx.fill()
 
+  const { creek } = world.terrain
+  ctx.fillStyle = '#5b93b8'
+  ctx.fillRect(
+    (creek.x - creek.halfWidth) * scale,
+    creek.waterY * scale,
+    Math.max(2, creek.halfWidth * 2 * scale),
+    Math.max(1, (world.groundY + world.groundHeight - creek.waterY) * scale),
+  )
+
   // Low-detail ground props: rocks, logs and bushes as tiny shapes sitting on the ground line.
   for (const rock of world.rocks) {
     const ground = groundYAt(world.terrain, rock.x) * scale
@@ -1921,6 +2239,41 @@ function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
 const STARVING_LEVEL = 0.2
 
 /**
+ * Draws the controls cheat sheet as a square overlay in the bottom left corner.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param viewHeight - Viewport height.
+ */
+function drawControlsOverlay(ctx: CanvasRenderingContext2D, viewHeight: number): void {
+  const side = 196
+  const x = 16
+  const y = viewHeight - side - 16
+  ctx.fillStyle = 'rgba(27, 40, 56, 0.72)'
+  ctx.beginPath()
+  ctx.roundRect(x, y, side, side, 10)
+  ctx.fill()
+  ctx.textAlign = 'left'
+  ctx.fillStyle = '#f4efe4'
+  ctx.font = 'bold 17px Georgia, serif'
+  ctx.fillText('Controls', x + 14, y + 28)
+  const rows: [string, string][] = [
+    ['WASD', 'move'],
+    ['S (tap)', 'pick up'],
+    ['Q', 'drop'],
+    ['Shift', 'bury / dig up'],
+    ['E', 'eat when hungry'],
+  ]
+  ctx.font = '15px Georgia, serif'
+  rows.forEach(([key, action], index) => {
+    const rowY = y + 58 + index * 28
+    ctx.fillStyle = '#f2c230'
+    ctx.fillText(key, x + 14, rowY)
+    ctx.fillStyle = '#f4efe4'
+    ctx.fillText(action, x + 84, rowY)
+  })
+}
+
+/**
  * Draws the hunger bar large at the bottom center: green when fed, yellow below the threshold
  * marker, and flashing red when very low.
  *
@@ -1938,7 +2291,7 @@ function drawHungerBar(
   const w = Math.min(520, viewWidth * 0.55)
   const h = 32
   const x = (viewWidth - w) / 2
-  const y = viewHeight - 84
+  const y = viewHeight - 52
   const hungry = player.hunger < HUNGER_THRESHOLD
   const starving = player.hunger <= STARVING_LEVEL
   const flashOn = starving && Math.floor(performance.now() / 300) % 2 === 0
