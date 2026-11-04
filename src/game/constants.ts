@@ -156,11 +156,14 @@ export const NPC_SPEED_SCALE = 0.75
 /** Seconds the dashed line from an NPC to a burial site it noticed takes to fade out. */
 export const NOTICE_LINE_FADE_SECONDS = 2
 
-/** An NPC this hungry (or hungrier) is starving: it eats a held acorn even while on its way to bury it. */
-export const NPC_STARVING_HUNGER = 0.2
-
 /** An exploring NPC this hungry (or hungrier) goes to dig up an acorn it remembers burying. */
 export const NPC_RETRIEVE_HUNGER = 1 / 3
+
+/**
+ * The same threshold: an NPC this hungry (or hungrier) is starving, so it eats any acorn it gets,
+ * even while on its way to bury it.
+ */
+export const NPC_STARVING_HUNGER = NPC_RETRIEVE_HUNGER
 
 /** NPCs idle instead of exploring while hunger is above this; below it they explore. */
 export const NPC_IDLE_HUNGER = 0.9
