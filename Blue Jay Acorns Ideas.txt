@@ -6,7 +6,7 @@ Blue Jay Acorns ideas
 - Add seasons and varying acorn dropping rates throughout
   - find data on acorn abundance phenology
 - Add other types of trees to fill in the gaps
-
+- Allow the bird to carry multiple acorns
 
 Strategies
 - Why don't blue jays always cache acorns near where they find them?
@@ -17,7 +17,6 @@ Strategies
    - But also the cache-discovery via digging provides an incentive
 
 Realism
-- Do we want to allow the bird to carry multiple acorns?
 - Hawks hanging out by oak trees?
 
 

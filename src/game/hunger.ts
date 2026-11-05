@@ -35,7 +35,7 @@ export function updateHunger(
         player.hunger = Math.min(1, player.hunger + ACORN_NUTRITION)
       }
     }
-  } else if (edges.e && player.held && player.hunger < HUNGER_THRESHOLD) {
+  } else if (edges.e && player.held && !player.action && player.hunger < HUNGER_THRESHOLD) {
     player.eatTimer = EAT_DURATION
   }
   if (drain) {

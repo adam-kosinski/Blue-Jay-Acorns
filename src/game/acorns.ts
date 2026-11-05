@@ -153,8 +153,6 @@ export function updateAction(player: Player, world: World, dt: number): void {
     if (action.kind === 'dig') {
       // The nearest buried acorn to the beak responds, if it is close enough.
       const range = DIG_RESPONSE_IN_SIZES * player.size
-      // Digging at a spot clears the digger's memory of burying there.
-      player.burials = player.burials.filter((spot) => Math.abs(spot - action.spotX) > range)
       let nearest: Acorn | null = null
       let nearestDist = range
       for (const candidate of world.acorns) {
@@ -167,9 +165,15 @@ export function updateAction(player: Player, world: World, dt: number): void {
       if (nearest && !player.held) {
         nearest.state = 'held'
         player.held = nearest
+        if (nearest.owner === player) {
+          // It got one of its own acorns back: that burial is gone from its memory (and only that one).
+          forgetBurial(player, nearest.x)
+        }
       } else {
-        // Nothing responded: remember where the empty dig was (NPCs forget sites in range of it).
+        // Nothing responded, so no acorn lies within dig range of here: forget any burial remembered
+        // here (it was taken) and let NPCs forget other birds' sites in range of it.
         if (!nearest) {
+          player.burials = player.burials.filter((spot) => Math.abs(spot - action.spotX) > range)
           player.digFailX = action.spotX
         }
         player.action = null
@@ -295,6 +299,19 @@ export function updateTreeDrops(
         })
       }
     }
+  }
+}
+
+/**
+ * Removes the one remembered burial at `x` (a bird knows exactly where each of its acorns went).
+ *
+ * @param bird - Bird whose memory is edited.
+ * @param x - World x of the burial (the acorn's x).
+ */
+export function forgetBurial(bird: Player, x: number): void {
+  const index = bird.burials.findIndex((spot) => Math.abs(spot - x) < 0.5)
+  if (index >= 0) {
+    bird.burials.splice(index, 1)
   }
 }
 

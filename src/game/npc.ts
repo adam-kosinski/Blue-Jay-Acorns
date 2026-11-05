@@ -14,7 +14,7 @@ import {
   NPC_STARVING_HUNGER,
   NPC_WAIT_SECONDS,
 } from './constants'
-import { startBury, startDigAt, startPickup, trackHops, updateAction } from './acorns'
+import { forgetBurial, startBury, startDigAt, startPickup, trackHops, updateAction } from './acorns'
 import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
 import { inView } from './vision'
 import { updateHunger } from './hunger'
@@ -290,10 +290,10 @@ function applyPick(npc: Npc, pick: { acorn: Acorn | null; site: BurialSite | nul
  */
 function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Player): void {
   const x = action.spotX
-  if (action.kind === 'dig' && inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
-    // Saw another bird dig up an acorn: any of its own burials there are gone, and it knows it.
-    const range = DIG_RESPONSE_IN_SIZES * npc.bird.size
-    npc.bird.burials = npc.bird.burials.filter((spot) => Math.abs(spot - x) > range)
+  const dug = owner.held
+  if (action.kind === 'dig' && dug && dug.owner === npc.bird && inView(npc.bird, { x: dug.x, y: groundYAt(world.terrain, dug.x) })) {
+    // Saw another bird dig up one of its own acorns: it knows exactly which burial that was.
+    forgetBurial(npc.bird, dug.x)
   }
   if (npc.seenActions.has(action) || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
     return
@@ -673,6 +673,29 @@ function runGather(npc: Npc, world: World): void {
 }
 
 /**
+ * Judges the spot where the bird's beak would bury, and starts burying there when its burial quality is
+ * above the bird's secrecy.
+ *
+ * @param npc - NPC standing on the ground.
+ * @param world - Play space.
+ * @returns True when it will bury here.
+ */
+function buryHereIfGood(npc: Npc, world: World): boolean {
+  const { bird } = npc
+  const buryX = bird.x + bird.size / 2 + bird.facing * BEAK_REACH_X * (bird.size / 100)
+  const quality = burialQuality(world, allBirds(world), bird, buryX)
+  if (quality <= npc.secrecy) {
+    return false
+  }
+  releaseKeys(npc.keys)
+  npc.buryQuality = quality
+  npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
+  npc.state = 'bury'
+  npc.waitTimer = NPC_WAIT_SECONDS
+  return true
+}
+
+/**
  * Find burial spot: judge the ground up to half a screen width ahead (every quarter second) and keep
  * flying in the chosen direction until a spot's burial quality is above this bird's secrecy; then
  * glide down and land there. Once landed, the quality is checked again (the birds around may have
@@ -690,6 +713,10 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
     npc.searchTimer -= dt
     if (npc.searchTimer <= 0) {
       npc.searchTimer = 0.25
+      // Standing on a spot that is already good enough: bury right here instead of flying off.
+      if (bird.state === 'standing' && buryHereIfGood(npc, world)) {
+        return
+      }
       const range = BURIAL_QUALITY_RANGE_IN_SIZES * bird.size
       const birds = allBirds(world)
       for (let ahead = 1.5 * bird.size; ahead <= range; ahead += 0.5 * bird.size) {
@@ -739,14 +766,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   if (bird.state === 'standing') {
     releaseKeys(npc.keys)
     // Landed: judge the spot again, where the beak will bury.
-    const buryX = cx + bird.facing * BEAK_REACH_X * (bird.size / 100)
-    const quality = burialQuality(world, allBirds(world), bird, buryX)
-    if (quality > npc.secrecy) {
-      npc.buryQuality = quality
-      npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
-      npc.state = 'bury'
-      npc.waitTimer = NPC_WAIT_SECONDS
-    } else {
+    if (!buryHereIfGood(npc, world)) {
       // Not good enough after all: take off and keep looking the same way.
       npc.spotX = null
       npc.searchTimer = 0
@@ -871,8 +891,8 @@ function runRetrieve(npc: Npc, world: World): void {
 
   // Arrived: forget this spot and dig there. The dig is tied to the place, not to the remembered
   // acorn: whichever buried acorn is nearest the beak (within range) responds, if any.
+  // The dig itself updates the memory: the spot is forgotten when the acorn comes up (or nothing does).
   const spot = npc.digSpot
-  npc.bird.burials.splice(npc.bird.burials.indexOf(spot), 1)
   npc.digSpot = null
   releaseKeys(npc.keys)
   startDigAt(bird, spot)
