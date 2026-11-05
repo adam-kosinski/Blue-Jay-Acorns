@@ -1,18 +1,22 @@
 import {
+  BEAK_REACH_X,
+  BURIAL_HOPS_TO_HIDE,
+  BURIAL_QUALITY_DISPLAY_SECONDS,
+  NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
   DIG_RESPONSE_IN_SIZES,
+  HOP_DURATION,
   HUNGER_THRESHOLD,
-  NPC_BURIAL_SPAN_IN_SIZES,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
   NPC_IDLE_HUNGER,
   NPC_RETRIEVE_HUNGER,
   NPC_SPEED_SCALE,
   NPC_STARVING_HUNGER,
-  NPC_PERCEIVE_AHEAD_IN_SIZES,
-  NPC_PERCEIVE_BEHIND_IN_SIZES,
   NPC_WAIT_SECONDS,
 } from './constants'
-import { startBury, startDigAt, startPickup, updateAction } from './acorns'
+import { startBury, startDigAt, startPickup, trackHops, updateAction } from './acorns'
+import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
+import { inView } from './vision'
 import { updateHunger } from './hunger'
 import { groundYAt, nearCreek } from './terrain'
 import { createPlayer, groundUnder, updatePlayer } from './player'
@@ -79,6 +83,15 @@ export function createNpcs(world: World, size: number): Npc[] {
       bird,
       keys: { w: false, a: false, s: false, d: false },
       nosiness: Math.random(),
+      secrecy: Math.random(),
+      coverHops: 0,
+      coverDir: 1,
+      searchDir: 1,
+      spotX: null,
+      searchTimer: 0,
+      turnTimer: 0,
+      buryQuality: 0,
+      buryQualityTimer: 0,
       state: bird.hunger > NPC_IDLE_HUNGER ? 'idle' : 'explore',
       decisionTimer: Math.random(),
       direction: bird.facing,
@@ -87,10 +100,12 @@ export function createNpcs(world: World, size: number): Npc[] {
       target: null,
       targetX: 0,
       eatAttempted: false,
+      viewedBuried: new Set(),
+      landedRolled: new Set(),
+      wasStanding: true,
       waitTimer: 0,
       idleTargetX: null,
       idleFly: false,
-      memory: [],
       digSpot: null,
       inView: new Set(),
       noticed: new Map(),
@@ -102,24 +117,6 @@ export function createNpcs(world: World, size: number): Npc[] {
     })
   }
   return npcs
-}
-
-/**
- * Whether the bird can currently see a point on the ground (a free acorn or a burial spot).
- *
- * A bird sees acorns up to a third of a typical screen width in front of it and about one bird-width
- * behind it (and within the same distance above or below), all measured in player sizes so the range
- * never depends on the window size. "In front" follows the way the bird faces.
- *
- * @param bird - Looking bird (its facing sets "ahead").
- * @param acorn - Point to check (an acorn, or the spot of a burial).
- */
-function inView(bird: Player, acorn: { x: number; y: number }): boolean {
-  const forward = (acorn.x - (bird.x + bird.size / 2)) * bird.facing
-  const dy = acorn.y - (bird.y + bird.size / 2)
-  const ahead = NPC_PERCEIVE_AHEAD_IN_SIZES * bird.size
-  const behind = NPC_PERCEIVE_BEHIND_IN_SIZES * bird.size
-  return forward <= ahead && forward >= -behind && Math.abs(dy) <= ahead
 }
 
 /**
@@ -157,6 +154,59 @@ function updatePerception(npc: Npc, world: World): void {
     }
   }
   npc.inView = current
+  perceiveBuried(npc, world)
+}
+
+/**
+ * Chance to notice other birds' burial sites. When a buried acorn that is not this bird's own newly
+ * comes into view it may be noticed, with a probability equal to how visible its mound still is
+ * (1 minus its concealment: certain if not at all buried, never if fully buried), times
+ * `NPC_NOTICE_PROBABILITY` while flying. A bird that lands with a site in view rolls once more, without
+ * that flight penalty. A noticed site joins the list of other birds' burial sites (`sites`), which
+ * are treated differently from the bird's own burials; the bird's own are never rolled for. A site
+ * the bird already remembers is not rolled for again.
+ *
+ * @param npc - NPC whose perception updates.
+ * @param world - Acorns, terrain and the game clock.
+ */
+function perceiveBuried(npc: Npc, world: World): void {
+  const standing = npc.bird.state === 'standing'
+  const landed = standing && !npc.wasStanding
+  const current = new Set<Acorn>()
+  for (const acorn of world.acorns) {
+    if (acorn.state !== 'buried' || acorn.owner === npc.bird) {
+      continue
+    }
+    if (!inView(npc.bird, { x: acorn.x, y: groundYAt(world.terrain, acorn.x) })) {
+      continue
+    }
+    current.add(acorn)
+    if (npc.sites.some((site) => Math.abs(site.x - acorn.x) <= 0.25 * npc.bird.size)) {
+      continue
+    }
+    const visibility = 1 - acorn.conceal
+    let noticed = false
+    if (!npc.viewedBuried.has(acorn)) {
+      // Newly in view.
+      noticed = Math.random() < visibility * (standing ? 1 : NPC_NOTICE_PROBABILITY)
+      if (standing) {
+        npc.landedRolled.add(acorn)
+      }
+    } else if (landed && !npc.landedRolled.has(acorn)) {
+      noticed = Math.random() < visibility
+      npc.landedRolled.add(acorn)
+    }
+    if (noticed) {
+      npc.sites.push({ x: acorn.x, owner: acorn.owner ?? npc.bird, noticedAt: world.time })
+    }
+  }
+  for (const acorn of npc.landedRolled) {
+    if (!current.has(acorn)) {
+      npc.landedRolled.delete(acorn)
+    }
+  }
+  npc.viewedBuried = current
+  npc.wasStanding = standing
 }
 
 /**
@@ -240,6 +290,11 @@ function applyPick(npc: Npc, pick: { acorn: Acorn | null; site: BurialSite | nul
  */
 function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Player): void {
   const x = action.spotX
+  if (action.kind === 'dig' && inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
+    // Saw another bird dig up an acorn: any of its own burials there are gone, and it knows it.
+    const range = DIG_RESPONSE_IN_SIZES * npc.bird.size
+    npc.bird.burials = npc.bird.burials.filter((spot) => Math.abs(spot - x) > range)
+  }
   if (npc.seenActions.has(action) || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
     return
   }
@@ -336,6 +391,29 @@ function directionToRemembered(npc: Npc): 1 | -1 | null {
   return nearestX >= cx ? 1 : -1
 }
 
+/** The world's oaks, refreshed every update (so `enterExplore` can head for the nearest one). */
+let activeTrees: World['trees'] = []
+
+/**
+ * Direction to the nearest foreground oak, or null if there is none.
+ *
+ * @param npc - NPC looking for a tree.
+ */
+function directionToNearestOak(npc: Npc): 1 | -1 | null {
+  const cx = npc.bird.x + npc.bird.size / 2
+  let nearest: number | null = null
+  for (const tree of activeTrees) {
+    const x = tree.x + tree.trunkWidth / 2
+    if (nearest === null || Math.abs(x - cx) < Math.abs(nearest - cx)) {
+      nearest = x
+    }
+  }
+  if (nearest === null) {
+    return null
+  }
+  return nearest >= cx ? 1 : -1
+}
+
 /**
  * Switches to the explore state with a fresh direction and altitude.
  *
@@ -343,7 +421,9 @@ function directionToRemembered(npc: Npc): 1 | -1 | null {
  */
 function enterExplore(npc: Npc): void {
   npc.state = 'explore'
-  npc.direction = directionToRemembered(npc) ?? randomDirection()
+  // Toward a remembered acorn or burial site; with none, toward the nearest foreground oak (where
+  // acorns fall), not a random direction.
+  npc.direction = directionToRemembered(npc) ?? directionToNearestOak(npc) ?? randomDirection()
   // While it waits, the bird looks away from its travel direction first and then toward it.
   npc.bird.facing = npc.direction === 1 ? -1 : 1
   npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
@@ -372,27 +452,35 @@ function enterExploreOrIdle(npc: Npc): void {
 }
 
 /**
- * Switches to the find-burial-spot state and picks a distance up to two screens either way.
+ * Switches to the find-burial-spot state: the bird picks a random direction and keeps flying that
+ * way until it finds a spot whose burial quality is above its secrecy (see `runFindBurialSpot`).
  *
  * @param npc - NPC to update.
- * @param world - Play space (clamps the destination).
+ * @param _world - Play space.
  */
-function enterFindBurialSpot(npc: Npc, world: World): void {
-  const span = NPC_BURIAL_SPAN_IN_SIZES * npc.bird.size
-  const cx = npc.bird.x + npc.bird.size / 2
+function enterFindBurialSpot(npc: Npc, _world: World): void {
   npc.state = 'findBurialSpot'
-  const pick = (): number =>
-    Math.max(npc.bird.size, Math.min(world.width - npc.bird.size, cx + randRange(-span, span)))
-  // Never in the creek (or right at its edge, where the bird or its beak would be over the water).
-  let target = pick()
-  for (let attempt = 0; attempt < 30 && nearCreek(world.terrain.creek, target, npc.bird.size * 1.5); attempt += 1) {
-    target = pick()
-  }
-  if (nearCreek(world.terrain.creek, target, npc.bird.size * 1.5)) {
-    // Every try fell in the creek (a bird beside a narrow strip of land): bury where it is instead.
-    target = world.terrain.creek.x + (cx < world.terrain.creek.x ? -1 : 1) * (world.terrain.creek.halfWidth + npc.bird.size * 2)
-  }
-  npc.targetX = target
+  npc.searchDir = randomDirection()
+  npc.direction = npc.searchDir
+  npc.spotX = null
+  npc.searchTimer = 0
+  npc.glide = null
+  npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
+  npc.altitudeTimer = randRange(1, 3)
+}
+
+/** The player, refreshed every update (burial quality counts every bird, the player included). */
+let activePlayer: Player | null = null
+
+/**
+ * Every bird in the world.
+ *
+ * @param world - Play space.
+ */
+function allBirds(world: World): Player[] {
+  const birds = world.npcs.map((npc) => npc.bird)
+  // An invisible player (debug) does not exist as far as the NPCs are concerned.
+  return activePlayer && !activePlayer.invisible ? [activePlayer, ...birds] : birds
 }
 
 /**
@@ -425,7 +513,7 @@ function decide(npc: Npc, world: World): void {
     return
   }
   // Very hungry and nothing in view: go and dig up an acorn this bird remembers burying.
-  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.memory.length > 0) {
+  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.bird.burials.length > 0) {
     npc.state = 'retrieve'
     npc.digSpot = null
   }
@@ -585,26 +673,85 @@ function runGather(npc: Npc, world: World): void {
 }
 
 /**
- * Find burial spot: fly the chosen distance, land, then switch to bury.
+ * Find burial spot: judge the ground up to half a screen width ahead (every quarter second) and keep
+ * flying in the chosen direction until a spot's burial quality is above this bird's secrecy; then
+ * glide down and land there. Once landed, the quality is checked again (the birds around may have
+ * moved): if it is still above its secrecy the bird buries there, otherwise it takes off and keeps
+ * looking.
  *
- * @param npc - Travelling NPC.
+ * @param npc - NPC looking for a spot.
  * @param world - Play space.
+ * @param dt - Elapsed seconds.
  */
-function runFindBurialSpot(npc: Npc, world: World): void {
+function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   const { bird } = npc
-  const dx = npc.targetX - (bird.x + bird.size / 2)
+  const cx = bird.x + bird.size / 2
+  if (npc.spotX === null) {
+    npc.searchTimer -= dt
+    if (npc.searchTimer <= 0) {
+      npc.searchTimer = 0.25
+      const range = BURIAL_QUALITY_RANGE_IN_SIZES * bird.size
+      const birds = allBirds(world)
+      for (let ahead = 1.5 * bird.size; ahead <= range; ahead += 0.5 * bird.size) {
+        const x = cx + npc.searchDir * ahead
+        if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x) > npc.secrecy) {
+          npc.spotX = x
+          npc.glide = null
+          break
+        }
+      }
+    }
+    if (npc.spotX === null) {
+      // Nothing suitable yet. Flying alongside another jay does not help, so once a second, if one is
+      // flying ahead in the same direction, there is a chance to turn around and fly the other way.
+      npc.turnTimer += dt
+      while (npc.turnTimer >= 1) {
+        npc.turnTimer -= 1
+        const range = BURIAL_QUALITY_RANGE_IN_SIZES * bird.size
+        const jayAhead = allBirds(world).some(
+          (other) =>
+            other !== bird &&
+            other.state === 'flying' &&
+            other.facing === npc.searchDir &&
+            (other.x + other.size / 2 - cx) * npc.searchDir > 0 &&
+            (other.x + other.size / 2 - cx) * npc.searchDir <= range,
+        )
+        if (jayAhead && Math.random() < NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND) {
+          npc.searchDir = npc.searchDir === 1 ? -1 : 1
+        }
+      }
+      // Keep flying the same way (bouncing off the world's edges).
+      npc.direction = npc.searchDir
+      runExplore(npc, world, dt)
+      npc.searchDir = npc.direction
+      return
+    }
+  }
+  const dx = npc.spotX - cx
   const arrived = Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size
   if (!arrived) {
-    glideTo(npc, npc.targetX, world)
+    glideTo(npc, npc.spotX, world)
     return
   }
-  steerHorizontal(npc, npc.targetX)
+  steerHorizontal(npc, npc.spotX)
   npc.keys.w = false
   npc.keys.s = true
   if (bird.state === 'standing') {
     releaseKeys(npc.keys)
-    npc.state = 'bury'
-    npc.waitTimer = NPC_WAIT_SECONDS
+    // Landed: judge the spot again, where the beak will bury.
+    const buryX = cx + bird.facing * BEAK_REACH_X * (bird.size / 100)
+    const quality = burialQuality(world, allBirds(world), bird, buryX)
+    if (quality > npc.secrecy) {
+      npc.buryQuality = quality
+      npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
+      npc.state = 'bury'
+      npc.waitTimer = NPC_WAIT_SECONDS
+    } else {
+      // Not good enough after all: take off and keep looking the same way.
+      npc.spotX = null
+      npc.searchTimer = 0
+      npc.glide = null
+    }
   }
 }
 
@@ -624,15 +771,43 @@ function runBury(npc: Npc, world: World): void {
     startBury(bird)
     // startBury sets the action, which the earlier check had narrowed away.
     const started = bird.action as PlayerAction | null
-    if (started) {
-      npc.memory.push(started.spotX)
-    } else {
+    if (!started) {
       // The burial could not start (for example the bird ended up over the creek): pick a new spot.
       enterFindBurialSpot(npc, world)
     }
     return
   }
-  enterExploreOrIdle(npc)
+  // Buried: now cover it up. The bird hops over the site as many times as its secrecy, rounded up to
+  // the next tenth, out of the ten it takes to hide it completely (at least one), which fades the
+  // mound a little more with each hop (see `trackHops`).
+  npc.state = 'cover'
+  npc.coverHops = Math.max(1, Math.ceil(npc.secrecy * BURIAL_HOPS_TO_HIDE))
+  npc.coverDir = bird.facing
+}
+
+/**
+ * Cover: hop over the fresh burial site, back and forth (the first hop toward it, the next away
+ * from it, and so on, so every hop starts beside it), then go back to exploring or idling.
+ *
+ * @param npc - NPC covering a burial.
+ */
+function runCover(npc: Npc): void {
+  const { bird } = npc
+  if (bird.action || bird.hopT < HOP_DURATION) {
+    return
+  }
+  if (npc.coverHops <= 0) {
+    enterExploreOrIdle(npc)
+    return
+  }
+  // A single-frame tap starts one hop (a hop in progress always finishes).
+  if (npc.coverDir === 1) {
+    npc.keys.d = true
+  } else {
+    npc.keys.a = true
+  }
+  npc.coverHops -= 1
+  npc.coverDir = npc.coverDir === 1 ? -1 : 1
 }
 
 /**
@@ -665,9 +840,13 @@ function runRetrieve(npc: Npc, world: World): void {
     return
   }
   const cx = bird.x + bird.size / 2
+  if (npc.digSpot !== null && !bird.burials.includes(npc.digSpot)) {
+    // Forgotten on the way (it saw another bird dig there).
+    npc.digSpot = null
+  }
   if (npc.digSpot === null) {
     let nearest: number | null = null
-    for (const spot of npc.memory) {
+    for (const spot of npc.bird.burials) {
       if (nearest === null || Math.abs(spot - cx) < Math.abs(nearest - cx)) {
         nearest = spot
       }
@@ -693,7 +872,7 @@ function runRetrieve(npc: Npc, world: World): void {
   // Arrived: forget this spot and dig there. The dig is tied to the place, not to the remembered
   // acorn: whichever buried acorn is nearest the beak (within range) responds, if any.
   const spot = npc.digSpot
-  npc.memory.splice(npc.memory.indexOf(spot), 1)
+  npc.bird.burials.splice(npc.bird.burials.indexOf(spot), 1)
   npc.digSpot = null
   releaseKeys(npc.keys)
   startDigAt(bird, spot)
@@ -711,9 +890,16 @@ function runRetrieve(npc: Npc, world: World): void {
  * @param player - The human-controlled bird, which NPCs can watch too.
  */
 export function updateNpcs(world: World, dt: number, player: Player): void {
+  activeTrees = world.trees
+  activePlayer = player
+  for (const npc of world.npcs) {
+    npc.buryQualityTimer = Math.max(0, npc.buryQualityTimer - dt)
+  }
+  // Hops near burial sites (by any bird) kick leaves onto them and hide them.
+  trackHops(world, [player, ...world.npcs.map((npc) => npc.bird)])
   // A bury or dig-up can be noticed from the moment the head reaches the ground (burying) or the
   // acorn enters the beak (digging, only if one came up) until the animation ends; one roll per observer.
-  const actors = [player, ...world.npcs.map((npc) => npc.bird)]
+  const actors = [...(player.invisible ? [] : [player]), ...world.npcs.map((npc) => npc.bird)]
   for (const npc of world.npcs) {
     for (const actor of actors) {
       const action = actor.action
@@ -785,10 +971,13 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
           runGather(npc, world)
           break
         case 'findBurialSpot':
-          runFindBurialSpot(npc, world)
+          runFindBurialSpot(npc, world, dt)
           break
         case 'bury':
           runBury(npc, world)
+          break
+        case 'cover':
+          runCover(npc)
           break
         case 'retrieve':
           runRetrieve(npc, world)

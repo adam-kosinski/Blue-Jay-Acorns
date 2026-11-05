@@ -31,6 +31,12 @@ export type Player = {
   action: PlayerAction | null
   /** World x of a dig that came up empty since the owner last looked (consumed by the NPC code). */
   digFailX: number | null
+  /** World x of every spot where this bird buried an acorn and has not dug there (or seen another bird dig there) since, whether or not an acorn is still there. */
+  burials: number[]
+  /** Debug: the bird is drawn half transparent and the NPCs ignore it for every purpose. */
+  invisible: boolean
+  /** Hops started so far (counted to find hops near burial sites). */
+  hops: number
   /** Standing on the creek's surface: floats with no legs and cannot pick up, drop, bury or dig. */
   floating: boolean
 }
@@ -98,6 +104,32 @@ export type Acorn = {
   state: AcornState
   /** Downward speed while falling after a drop. */
   vy: number
+  /** Hops birds have made near this acorn since it was buried (0 to BURIAL_HOPS_TO_HIDE). */
+  hops: number
+  /** How concealed its mound is, 0 (fully visible) to 1 (gone); eased toward a curve of the hops. */
+  conceal: number
+  /** The bird that buried it (own burials are known to it and never noticed as someone else's). */
+  owner?: Player
+}
+
+/** A leaf kicked up by a hopping bird that lands on a burial mound and stays there. */
+export type KickedLeaf = {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  /** Where it comes to rest. */
+  restX: number
+  restY: number
+  rx: number
+  ry: number
+  angle: number
+  color: string
+  landed: boolean
+  /** True once a nearby hop disturbed it: it then shrinks, sinks and fades into the ground. */
+  fading: boolean
+  /** 0 (lying there) to 1 (gone), eased while `fading`. */
+  fade: number
 }
 
 /** One tapered trunk or branch piece, relative to the tree base. */
@@ -129,6 +161,13 @@ export type TreeShape = {
   halfWidth: number
   /** Highest point (most negative y) of the tree. */
   top: number
+  /**
+   * An old-growth tree's trunk widens smoothly toward the ground (like a fallen log's butt end):
+   * `height` is how far up the flare reaches, `left` / `right` how much wider each side is at the
+   * ground, and `depth` how far below the base the widened trunk is continued (so it meets sloping
+   * ground without a gap).
+   */
+  flare?: { height: number; left: number; right: number; depth: number }
 }
 
 /** Oak tree: a generated trunk, branches, and leaf clusters. */
@@ -338,6 +377,7 @@ export type NpcState =
   | 'findBurialSpot'
   | 'retrieve'
   | 'bury'
+  | 'cover'
 
 /** Computer-controlled blue jay: a bird body driven by simulated keys plus AI state. */
 export type Npc = {
@@ -346,6 +386,20 @@ export type Npc = {
   keys: KeyState
   /** Personality: 0 (aloof) to 1 (nosy). */
   nosiness: number
+  /** Personality 0-1: how thoroughly it hides what it buries (hops over the site 1, 2 or 3 times). */
+  secrecy: number
+  /** Hops still to make over a fresh burial site, and the direction of the next one. */
+  coverHops: number
+  coverDir: 1 | -1
+  /** Direction it keeps flying while looking for a place to bury, and the spot it has picked (null while looking). */
+  searchDir: 1 | -1
+  spotX: number | null
+  searchTimer: number
+  /** Seconds accumulated toward the next once-per-second check for a jay ahead to get away from. */
+  turnTimer: number
+  /** Burial quality of the spot it chose, shown above its head for a few seconds after it starts burying. */
+  buryQuality: number
+  buryQualityTimer: number
   state: NpcState
   /** Seconds accumulated toward the next once-per-second state decision. */
   decisionTimer: number
@@ -367,8 +421,6 @@ export type Npc = {
   idleTargetX: number | null
   /** Whether the idle trip is flown rather than walked. */
   idleFly: boolean
-  /** World x of every spot where this NPC buried an acorn and has not yet checked. */
-  memory: number[]
   /** The remembered spot currently being visited while retrieving, or null. */
   digSpot: number | null
   /** Free acorns currently in the bird's view (used to detect acorns entering view). */
@@ -379,6 +431,11 @@ export type Npc = {
   /** Actions a flying NPC already failed its notice roll for; it notices them on landing. */
   missedActions: WeakSet<PlayerAction>
   noticed: Map<Acorn, { x: number; y: number }>
+  /** Buried acorns (other birds') in view last frame, and those it already rolled for after landing. */
+  viewedBuried: Set<Acorn>
+  landedRolled: Set<Acorn>
+  /** Whether it was standing (or floating) last frame, to spot the moment it lands. */
+  wasStanding: boolean
   /** Other birds' burial sites this NPC noticed and still remembers. */
   sites: BurialSite[]
   /** The burial site being gathered by digging, or null. */
@@ -411,6 +468,8 @@ export type World = {
   npcs: Npc[]
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
   acornDropTimer: number
+  /** Leaves kicked onto burial mounds by hopping birds (oldest are dropped past a limit). */
+  kickedLeaves: KickedLeaf[]
   /** Game clock in seconds (drives the fading lines to noticed burial sites). */
   time: number
 }

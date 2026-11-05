@@ -148,23 +148,17 @@ export function generateOak(
     }
   }
 
-  if (oldGrowth) {
-    // Buttress roots: wide where they leave the trunk, then following the ground outward (half
-    // buried, ending sunk in it) at least `rootReach` past the trunk's edge on both sides.
-    const edge = trunkWidth / 2
-    for (const side of [-1, 1]) {
-      for (let k = 0; k < 3; k += 1) {
-        const reach = edge + rootReach * (1.15 - k * 0.3) * randRange(0.95, 1.1)
-        const midX = side * (edge + (reach - edge) * 0.5)
-        const startX = side * edge * randRange(0.15, 0.55)
-        const startY = -trunkWidth * (1.1 - k * 0.25) * randRange(0.9, 1.1)
-        const midY = groundAt(midX) - 2
-        const endY = groundAt(side * reach) + 14
-        segments.push({ x0: startX, y0: startY, x1: midX, y1: midY, w0: trunkWidth * (0.38 - k * 0.07), w1: trunkWidth * 0.12 })
-        segments.push({ x0: midX, y0: midY, x1: side * reach, y1: endY, w0: trunkWidth * 0.12, w1: trunkWidth * 0.04 })
+  // An old-growth trunk is not given separate root objects: the trunk itself widens toward the
+  // ground (buttressed), by at least `rootReach` (a bird's size) on each side, and its bark ridges
+  // spread out with it. It is continued below the base far enough to meet sloping ground.
+  const flare = oldGrowth
+    ? {
+        height: trunkWidth * 1.5,
+        left: rootReach * randRange(1, 1.3),
+        right: rootReach * randRange(1, 1.3),
+        depth: Math.max(trunkWidth * 1.5, groundAt(-trunkWidth / 2 - rootReach), groundAt(trunkWidth / 2 + rootReach)) + 30,
       }
-    }
-  }
+    : undefined
 
   const bias = randRange(-0.25, 0.25)
   const branchCount = 6 + Math.floor(Math.random() * 3)
@@ -207,14 +201,14 @@ export function generateOak(
   addCluster(lobes, trunkTopX, trunkTopY - leafRadius * 0.6, leafRadius * 1.3)
   addCluster(lobes, trunkTopX + randRange(-0.3, 0.3) * leafRadius, trunkTopY + leafRadius * 0.3, leafRadius * 1.1)
 
-  let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.3 : trunkWidth
+  let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.7 : trunkWidth
   let top = trunkTopY
   for (const lobe of lobes) {
     halfWidth = Math.max(halfWidth, Math.abs(lobe.x) + lobe.r)
     top = Math.min(top, lobe.y - lobe.r)
   }
   nextShapeId += 1
-  return { id: nextShapeId, segments, lobes, halfWidth, top }
+  return { id: nextShapeId, segments, lobes, halfWidth, top, flare }
 }
 
 /**
@@ -424,9 +418,235 @@ export function drawLeafyDisk(
 }
 
 /**
- * Adds subtle bark texture like the logs have: a few straight dark grain lines running unbroken
- * up the trunk (joined smoothly at the trunk's joints), plus one line on each thick branch that
- * starts outside the trunk so nothing is drawn over the junctions.
+ * Paints stylized oak bark along a trunk, branch or log, in the game's flat vector style (not a
+ * photographic texture): long, flowing ridges that swell in the middle and taper at both ends, each
+ * with a lit edge on one side and a shaded edge on the other, separated by dark, wandering furrows
+ * that are also spindle-shaped (thin at the ends, widest in the middle) and break up here and there;
+ * plus a few pale lichen flecks. All shapes are smooth curves, no straight blocks, and everything is
+ * a translucent overlay, so it works on any bark colour and in hazy background layers.
+ *
+ * @param ctx - 2D canvas context.
+ * @param point - Position at fraction `t` along the length and `f` across the width (-1 to 1).
+ * @param steps - Number of cells along the length.
+ * @param furrows - Number of furrows across the width.
+ * @param unit - Line width scale (a fraction of the trunk's width).
+ * @param rand - Seeded random generator.
+ */
+export function paintBark(
+  ctx: CanvasRenderingContext2D,
+  point: (t: number, f: number) => [number, number],
+  steps: number,
+  furrows: number,
+  unit: number,
+  rand: () => number,
+): void {
+  const mid = (p: [number, number], q: [number, number]): [number, number] => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2]
+  // A smooth closed shape through the points (quadratic curves through their midpoints).
+  const closedSmooth = (pts: [number, number][]): void => {
+    const n = pts.length
+    const last = pts[n - 1]
+    const first = pts[0]
+    if (!last || !first) {
+      return
+    }
+    const start = mid(last, first)
+    ctx.moveTo(start[0], start[1])
+    for (let i = 0; i < n; i += 1) {
+      const p = pts[i] ?? first
+      const q = pts[(i + 1) % n] ?? first
+      const m = mid(p, q)
+      ctx.quadraticCurveTo(p[0], p[1], m[0], m[1])
+    }
+    ctx.closePath()
+  }
+
+  // Furrow centre lines across the width, wandering a little as they run along the length.
+  const paths: number[][] = []
+  for (let i = 0; i <= furrows; i += 1) {
+    const base = -0.86 + (1.72 * i) / furrows + (rand() - 0.5) * 0.16
+    const path: number[] = []
+    let f = base
+    for (let j = 0; j <= steps; j += 1) {
+      f += (rand() - 0.5) * 0.09 + (base - f) * 0.18
+      path.push(f)
+    }
+    paths.push(path)
+  }
+
+  // Ridges: a long spindle between each pair of neighbouring furrows (sometimes two shorter ones).
+  const spindle = (
+    from: number[],
+    to: number[],
+    j0: number,
+    j1: number,
+    inner0: number,
+    inner1: number,
+    fill: string,
+  ): void => {
+    const left: [number, number][] = []
+    const right: [number, number][] = []
+    for (let j = j0; j <= j1; j += 1) {
+      const u = (j - j0) / Math.max(1, j1 - j0)
+      const swell = Math.sin(Math.PI * u) ** 0.55
+      const a = from[j] ?? 0
+      const b = to[j] ?? 0
+      const lo = a + (b - a) * (inner0 + (0.5 - inner0) * (1 - swell))
+      const hi = a + (b - a) * (inner1 + (0.5 - inner1) * (1 - swell))
+      left.push(point(j / steps, lo))
+      right.push(point(j / steps, hi))
+    }
+    ctx.fillStyle = fill
+    ctx.beginPath()
+    closedSmooth([...left, ...right.reverse()])
+    ctx.fill()
+  }
+  for (let i = 0; i < furrows; i += 1) {
+    const from = paths[i]
+    const to = paths[i + 1]
+    if (!from || !to) {
+      continue
+    }
+    // A few short, overlapping pieces per ridge (never one that runs the whole length), each
+    // fading in and out: its width swells from nothing and shrinks back, and its strength varies.
+    let j = Math.floor(rand() * steps * 0.35)
+    while (j < steps - 2) {
+      const length = Math.max(3, Math.round(steps * (0.28 + rand() * 0.3)))
+      const j1 = Math.min(steps, j + length)
+      if (j1 - j >= 3) {
+        const strength = 0.45 + rand() * 0.55
+        spindle(from, to, j, j1, 0.12, 0.88, rand() < 0.5 ? `rgba(255, 238, 215, ${0.055 * strength})` : `rgba(25, 14, 6, ${0.055 * strength})`)
+        spindle(from, to, j, j1, 0.16, 0.42, `rgba(255, 238, 215, ${0.12 * strength})`)
+        spindle(from, to, j, j1, 0.66, 0.88, `rgba(25, 14, 6, ${0.11 * strength})`)
+      }
+      j = j1 - Math.floor(length * 0.25) + Math.floor(rand() * steps * 0.15)
+    }
+  }
+
+  // Furrows: dark spindles along the furrow lines, in broken pieces, widest in the middle.
+  paths.forEach((path) => {
+    let j = 0
+    while (j < steps) {
+      const length = 2 + Math.floor(rand() * 5)
+      const j1 = Math.min(steps, j + length)
+      if (j1 - j >= 2 && rand() > 0.3) {
+        const left: [number, number][] = []
+        const right: [number, number][] = []
+        const width = unit * (0.7 + rand() * 1.1)
+        for (let k = j; k <= j1; k += 1) {
+          const u = (k - j) / Math.max(1, j1 - j)
+          const half = width * Math.sin(Math.PI * u) ** 0.7 * 0.5
+          const here = point(k / steps, path[k] ?? 0)
+          const before = point(Math.max(0, k - 1) / steps, path[Math.max(0, k - 1)] ?? 0)
+          const after = point(Math.min(steps, k + 1) / steps, path[Math.min(steps, k + 1)] ?? 0)
+          const dx = after[0] - before[0]
+          const dy = after[1] - before[1]
+          const len = Math.hypot(dx, dy) || 1
+          left.push([here[0] - (dy / len) * half, here[1] + (dx / len) * half])
+          right.push([here[0] + (dy / len) * half, here[1] - (dx / len) * half])
+        }
+        ctx.fillStyle = `rgba(30, 16, 6, ${0.17 + rand() * 0.2})`
+        ctx.beginPath()
+        closedSmooth([...left, ...right.reverse()])
+        ctx.fill()
+      }
+      j = j1 + Math.floor(rand() * 3)
+    }
+  })
+
+  // Pale lichen flecks.
+  const flecks = Math.round(furrows * steps * 0.04)
+  for (let k = 0; k < flecks; k += 1) {
+    const p = point(rand(), (rand() - 0.5) * 1.6)
+    ctx.fillStyle = rand() < 0.7 ? 'rgba(205, 205, 185, 0.09)' : 'rgba(150, 165, 125, 0.09)'
+    ctx.beginPath()
+    ctx.ellipse(p[0], p[1], unit * (1 + rand() * 2.2), unit * (0.7 + rand() * 1.4), rand() * 3, 0, Math.PI * 2)
+    ctx.fill()
+  }
+}
+
+/**
+ * Extra half-width a flared trunk has at a height above the ground, on one side: a smooth concave
+ * flare (steep near the ground, easing off up the trunk) with a second, tighter lobe at the very
+ * base. Below the ground it keeps its ground-level width.
+ *
+ * @param flare - The tree's flare.
+ * @param height - Height above the ground (negative below it).
+ * @param side - -1 for the left side, 1 for the right.
+ */
+export function flareAt(flare: NonNullable<TreeShape['flare']>, height: number, side: number): number {
+  const reach = side < 0 ? flare.left : flare.right
+  const s = Math.max(0, height) / flare.height
+  if (s >= 1) {
+    return 0
+  }
+  return reach * (1 - s) ** 2.4 + reach * 0.28 * Math.max(0, 1 - 2.2 * s) ** 2
+}
+
+/**
+ * The trunk's centre x and width at a y (negative is up) from its three segments.
+ *
+ * @param shape - Generated tree.
+ * @param y - Height in tree space.
+ */
+function trunkAt(shape: TreeShape, y: number): { x: number; w: number } {
+  const trunk = shape.segments.slice(0, 3)
+  const first = trunk[0]
+  if (!first) {
+    return { x: 0, w: 0 }
+  }
+  const pts = [
+    { x: first.x0, y: first.y0, w: first.w0 },
+    ...trunk.map((seg) => ({ x: seg.x1, y: seg.y1, w: seg.w1 })),
+  ]
+  for (let i = 0; i + 1 < pts.length; i += 1) {
+    const a = pts[i]
+    const b = pts[i + 1]
+    if (a && b && y <= a.y && y >= b.y) {
+      const k = (a.y - y) / (a.y - b.y || 1)
+      return { x: a.x + (b.x - a.x) * k, w: a.w + (b.w - a.w) * k }
+    }
+  }
+  return { x: first.x0, w: first.w0 }
+}
+
+/**
+ * Draws a flared (buttressed) trunk base as one smooth shape that continues the trunk, widening
+ * toward the ground and down below it, so there is no gap beneath it and no separate root pieces.
+ *
+ * @param ctx - 2D canvas context (tree space, fill already set to the trunk color).
+ * @param shape - Generated tree with a flare.
+ */
+function drawFlare(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
+  const flare = shape.flare
+  if (!flare) {
+    return
+  }
+  const rows = 30
+  const left: [number, number][] = []
+  const right: [number, number][] = []
+  // From below the ground up to the top of the flare (y is negative upward).
+  for (let i = 0; i <= rows; i += 1) {
+    const y = flare.depth - ((flare.depth + flare.height * 1.02) * i) / rows
+    const { x, w } = trunkAt(shape, y)
+    const h = -y
+    left.push([x - w / 2 - flareAt(flare, h, -1), y])
+    right.push([x + w / 2 + flareAt(flare, h, 1), y])
+  }
+  ctx.beginPath()
+  left.forEach(([px, py], i) => (i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py)))
+  for (let i = right.length - 1; i >= 0; i -= 1) {
+    const p = right[i]
+    if (p) {
+      ctx.lineTo(p[0], p[1])
+    }
+  }
+  ctx.closePath()
+  ctx.fill()
+}
+
+/**
+ * Paints bark on a tree: ridged bark along the trunk (following its joints smoothly) and a few
+ * furrows along each thick branch, starting outside the trunk so nothing crosses the junctions.
  *
  * @param ctx - 2D canvas context (tree space).
  * @param shape - Generated tree.
@@ -437,10 +657,7 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
   if (!first) {
     return
   }
-  ctx.strokeStyle = 'rgba(40, 20, 5, 0.38)'
-  ctx.lineWidth = Math.max(1.5, first.w0 * 0.03)
-  ctx.lineJoin = 'round'
-  ctx.lineCap = 'butt'
+  const rand = seededRandom(shape.id * 104729 + 7)
 
   // Trunk points with the thickness and averaged normal at each joint.
   const joints = [
@@ -464,32 +681,62 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
       joint.ny = my / len
     }
   })
-  for (const f of [-0.3, 0, 0.3]) {
-    ctx.beginPath()
-    joints.forEach((joint, i) => {
-      // Start a little above the ground-covering base and stop short of the top.
-      const px = joint.x + joint.nx * joint.w * f
-      const py = joint.y + joint.ny * joint.w * f
-      if (i === 0) {
-        ctx.moveTo(px, py)
-      } else {
-        ctx.lineTo(px, py)
-      }
-    })
-    ctx.stroke()
+  const trunkPoint = (t: number, f: number): [number, number] => {
+    const u = Math.min(0.9999, Math.max(0, t)) * (joints.length - 1)
+    const i = Math.floor(u)
+    const k = u - i
+    const a = joints[i]
+    const b = joints[i + 1]
+    if (!a || !b) {
+      return [0, 0]
+    }
+    const x = a.x + (b.x - a.x) * k
+    const y = a.y + (b.y - a.y) * k
+    const nx = a.nx + (b.nx - a.nx) * k
+    const ny = a.ny + (b.ny - a.ny) * k
+    const w = a.w + (b.w - a.w) * k
+    // On a flared trunk the bark ridges spread out with the widening, flowing into the buttress.
+    const flare = shape.flare
+    const extra = flare ? flareAt(flare, -y, f < 0 ? -1 : 1) : 0
+    return [x + nx * f * (w * 0.5 + extra), y + ny * f * (w * 0.5 + extra)]
   }
+  let trunkLength = 0
+  for (const seg of trunk) {
+    trunkLength += Math.hypot(seg.x1 - seg.x0, seg.y1 - seg.y0)
+  }
+  const unit = Math.max(1.4, first.w0 * 0.018)
+  paintBark(
+    ctx,
+    trunkPoint,
+    Math.max(8, Math.round(trunkLength / (first.w0 * 0.3))),
+    Math.max(3, Math.min(8, Math.round((first.w0 * 0.8) / 44))),
+    unit,
+    rand,
+  )
 
-  ctx.lineWidth = Math.max(1.5, first.w0 * 0.025)
+  // Thick branches (and old-growth roots) get a few furrows of their own.
   for (const seg of shape.segments.slice(3)) {
     if (seg.w0 < 26) {
       continue
     }
     const dx = seg.x1 - seg.x0
     const dy = seg.y1 - seg.y0
-    ctx.beginPath()
-    ctx.moveTo(seg.x0 + dx * 0.3, seg.y0 + dy * 0.3)
-    ctx.lineTo(seg.x0 + dx * 0.92, seg.y0 + dy * 0.92)
-    ctx.stroke()
+    const len = Math.hypot(dx, dy) || 1
+    const nx = -dy / len
+    const ny = dx / len
+    const branchPoint = (t: number, f: number): [number, number] => {
+      const along = 0.25 + 0.7 * t
+      const w = seg.w0 + (seg.w1 - seg.w0) * along
+      return [seg.x0 + dx * along + nx * w * 0.5 * f, seg.y0 + dy * along + ny * w * 0.5 * f]
+    }
+    paintBark(
+      ctx,
+      branchPoint,
+      Math.max(3, Math.round((len * 0.7) / Math.max(20, seg.w0 * 0.4))),
+      Math.max(1, Math.min(4, Math.round((seg.w0 * 0.7) / 26))),
+      Math.max(1.2, seg.w0 * 0.03),
+      rand,
+    )
   }
 }
 
@@ -535,6 +782,7 @@ export function drawOakVector(
     ctx.fill()
   }
 
+  drawFlare(ctx, shape)
   if (leafDetail >= 0.12) {
     drawBark(ctx, shape)
   }

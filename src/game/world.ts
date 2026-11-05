@@ -1,5 +1,6 @@
 import {
   ACORN_COUNT,
+  LEAF_COLORS,
   GROUND_COLOR,
   FOREST_HAZE_COLOR,
   OAK_TONES,
@@ -28,6 +29,7 @@ import type {
   FrontFern,
   FrontRock,
   GapRock,
+  KickedLeaf,
   ForestLayer,
   LeafLitter,
   Log,
@@ -37,7 +39,6 @@ import type {
   World,
 } from './types'
 
-const LEAF_COLORS = ['#8a5a2b', '#a8691f', '#c47f2a', '#b5651d', '#9c7a2e', '#7a4a22', '#c9962f', '#6e4320']
 const BUSH_COLORS = ['#2f6b34', '#3a7d3d', '#2a5c2f', '#468a44']
 const ROCK_COLORS: [string, string][] = [
   ['#7a7872', '#a5a29a'],
@@ -167,9 +168,17 @@ function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span, te
     const old = i === oldGrowthIndex
     const width = old ? trunkWidth * 2 : trunkWidth
     const slotStart = margin + i * slot
+    // Oaks stand well back from the creek: their acorns fall from all over the crown, so a trunk must
+    // be about a crown's reach from the water or acorns would fall into it.
+    const noOak = { x: keepOut.x, halfWidth: terrain.creek.halfWidth + crownRadius * 0.9 }
     let x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
-    for (let attempt = 0; attempt < 20 && blocked(keepOut, x + width / 2, width); attempt += 1) {
+    for (let attempt = 0; attempt < 40 && blocked(noOak, x + width / 2, width * 0.5); attempt += 1) {
       x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
+    }
+    if (blocked(noOak, x + width / 2, width * 0.5)) {
+      // The whole slot is too close: stand at the edge of the clear zone on the slot's side.
+      const side = x + width / 2 < noOak.x ? -1 : 1
+      x = Math.max(margin, Math.min(worldWidth - margin - width, noOak.x + side * (noOak.halfWidth + width) - width / 2))
     }
     const baseX = x + width / 2
     const baseGround = groundYAt(terrain, baseX)
@@ -188,6 +197,47 @@ function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span, te
   }
 
   return trees
+}
+
+/**
+ * Leaves already kicked up into small piles all over the ground surface when the run starts (so a
+ * pile of kicked leaves, and a hidden burial, look just like the land around them).
+ *
+ * @param terrain - Ground heights.
+ * @param worldWidth - Full world width.
+ * @param playerSize - Player size (sizes the leaves).
+ */
+function spawnKickedLeaves(terrain: Terrain, worldWidth: number, playerSize: number): KickedLeaf[] {
+  const leaves: KickedLeaf[] = []
+  const water = { x: terrain.creek.x, halfWidth: terrain.creek.halfWidth }
+  for (let x = 0; x < worldWidth; x += 170) {
+    const center = x + randRange(0, 170)
+    const count = 5 + Math.floor(Math.random() * 5)
+    for (let i = 0; i < count; i += 1) {
+      const lx = center + randRange(-0.45, 0.45) * playerSize
+      if (blocked(water, lx)) {
+        continue
+      }
+      const rx = randRange(0.035, 0.08) * playerSize * 2
+      const y = groundYAt(terrain, lx) - Math.random() * rx * 0.7
+      leaves.push({
+        x: lx,
+        y,
+        vx: 0,
+        vy: 0,
+        restX: lx,
+        restY: y,
+        rx,
+        ry: rx * randRange(0.35, 0.55),
+        angle: randRange(-Math.PI / 2, Math.PI / 2),
+        color: pick(LEAF_COLORS, '#8a5a2b'),
+        landed: true,
+        fading: false,
+        fade: 0,
+      })
+    }
+  }
+  return leaves
 }
 
 /**
@@ -236,6 +286,8 @@ function spawnAcorns(
       y: groundYAt(terrain, x) - radius,
       radius,
       state: 'ground',
+      hops: 0,
+      conceal: 0,
       vy: 0,
     })
   }
@@ -848,6 +900,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight, terrain.creek),
     npcs: [],
     acornDropTimer: 0,
+    kickedLeaves: spawnKickedLeaves(terrain, width, playerSize),
     time: 0,
   }
   world.npcs = createNpcs(world, playerSize)

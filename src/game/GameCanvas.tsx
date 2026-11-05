@@ -11,7 +11,7 @@ import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
-import { renderScene, warmUpScene } from './render'
+import { renderScene, setBurialHeatmap, warmUpScene } from './render'
 import type { Player, World } from './types'
 import { createWorld } from './world'
 
@@ -55,6 +55,9 @@ export function GameCanvas() {
   const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
   const dropMultiplierRef = useRef<number>(ACORN_DROP_MODES[dropMode])
   const pauseHungerRef = useRef<boolean>(pauseHunger)
+  const [showBurialQuality, setShowBurialQuality] = useState<boolean>(false)
+  const [invisible, setInvisible] = useState<boolean>(false)
+  const invisibleRef = useRef<boolean>(false)
 
   useEffect(() => {
     dropMultiplierRef.current = ACORN_DROP_MODES[dropMode]
@@ -63,6 +66,14 @@ export function GameCanvas() {
   useEffect(() => {
     pauseHungerRef.current = pauseHunger
   }, [pauseHunger])
+
+  useEffect(() => {
+    setBurialHeatmap(showBurialQuality)
+  }, [showBurialQuality])
+
+  useEffect(() => {
+    invisibleRef.current = invisible
+  }, [invisible])
 
   useEffect(() => {
     const canvasEl = canvasRef.current
@@ -131,6 +142,7 @@ export function GameCanvas() {
         warmUp = null
       }
       if (!gameOver) {
+        player.invisible = invisibleRef.current
         updatePlayer(player, keys, dt, world)
         updateAction(player, world, dt)
         handleAcornActions(player, edges, world)
@@ -221,6 +233,28 @@ export function GameCanvas() {
         <label className="debug-toggle">
           <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
           Pause my hunger
+        </label>
+        <label className="debug-toggle">
+          <input
+            type="checkbox"
+            checked={showBurialQuality}
+            onChange={(event) => {
+              setShowBurialQuality(event.target.checked)
+              event.currentTarget.blur()
+            }}
+          />
+          Burial quality heatmap
+        </label>
+        <label className="debug-toggle">
+          <input
+            type="checkbox"
+            checked={invisible}
+            onChange={(event) => {
+              setInvisible(event.target.checked)
+              event.currentTarget.blur()
+            }}
+          />
+          Turn invisible
         </label>
       </fieldset>
       <button type="button" className="restart-button" onClick={onRestart}>

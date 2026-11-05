@@ -36,6 +36,9 @@ export function createPlayer(world: World, size: number): Player {
     hopDir: 1,
     action: null,
     digFailX: null,
+    burials: [],
+    invisible: false,
+    hops: 0,
     floating: false,
   }
 }
@@ -103,6 +106,7 @@ function hopOnGround(player: Player, dir: number, dt: number, speedScale: number
         break
       }
       player.hopT = 0
+      player.hops += 1
       player.hopStartX = player.x
       player.hopDir = dir > 0 ? 1 : -1
     }
@@ -117,6 +121,7 @@ function hopOnGround(player: Player, dir: number, dt: number, speedScale: number
   // Keep hopping without a landing frame when the key is still held.
   if (player.hopT >= HOP_DURATION && dir !== 0) {
     player.hopT = 0
+    player.hops += 1
     player.hopStartX = player.x
     player.hopDir = dir > 0 ? 1 : -1
   }

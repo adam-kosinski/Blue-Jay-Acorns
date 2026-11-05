@@ -111,6 +111,52 @@ export const REACH_IN_SIZES = 0.9
 /** Fall acceleration of a dropped acorn, in player sizes per second squared. */
 export const ACORN_GRAVITY_IN_SIZES = 12
 
+/** Fallen-leaf colors (the ground's litter, and the leaves a hopping bird kicks up). */
+export const LEAF_COLORS = ['#8a5a2b', '#a8691f', '#c47f2a', '#b5651d', '#9c7a2e', '#7a4a22', '#c9962f', '#6e4320']
+
+/** How many hops near a burial site it takes to conceal it completely. */
+export const BURIAL_HOPS_TO_HIDE = 10
+
+/**
+ * How concealed a burial is, against its share of the hops needed: `(hops / hops to hide) ^ curve`.
+ * Above 1, so the first hops change the mound little and the last ones the most.
+ */
+export const BURIAL_CONCEAL_CURVE = 2.2
+
+/** How close (in player sizes) a bird must be when a hop starts to kick leaves over a burial site. */
+export const BURIAL_HOP_RANGE_IN_SIZES = 1.1
+
+/**
+ * Kicked-up leaves lying on the ground per player size of ground (the starting piles average this,
+ * and a hop keeps the stretch around the bird at the same density, so no spot, burial sites
+ * included, ends up with more leaves than anywhere else).
+ */
+export const KICKED_LEAF_DENSITY_PER_SIZE = 4.1
+
+/** Most kicked leaves kept lying around. */
+export const KICKED_LEAVES_LIMIT = 600
+
+/**
+ * Burial quality (0-1) of a spot, for a bird looking to bury: every other bird (that the burier can
+ * see) within half a screen width of the spot lowers it by this much if that bird can see the spot
+ * (it is in its view, which reaches farther ahead of it than behind) and by the smaller amount below
+ * if it cannot...
+ */
+export const BURIAL_QUALITY_BIRD_PENALTY = 0.4
+export const BURIAL_QUALITY_UNSEEN_PENALTY = 0.2
+
+/** Burial-quality penalty near a spot where the burier itself remembers burying an acorn (within the dig-up tolerance). */
+export const BURIAL_QUALITY_OWN_SITE_PENALTY = 0.2
+
+/** ...an oak lowers it by up to this much (at its trunk, easing to 0 at the farthest an acorn can fall)... */
+export const BURIAL_QUALITY_OAK_PENALTY = 0.5
+
+/** Chance per second that a bird searching for a burial spot turns around when another flying jay is ahead of it going the same way. */
+export const NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND = 0.4
+
+/** How long (seconds) an NPC shows the burial quality of the spot it chose, from when it starts burying. */
+export const BURIAL_QUALITY_DISPLAY_SECONDS = 4
+
 /** Fill color for the blue jay's body. */
 export const PLAYER_COLOR = '#4a82c4'
 
