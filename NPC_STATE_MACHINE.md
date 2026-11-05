@@ -63,7 +63,7 @@ flowchart TD
     eat["<b>eat</b><br/>eating animation,<br/>acorn consumed, hunger +1/3"]
     eat --> rest
 
-    find["<b>find burial spot</b><br/>pick a random direction and keep flying that way, judging the ground<br/>up to half a screen ahead (burial quality) until a spot's quality &gt; secrecy;<br/>land there and judge it again: still &gt; secrecy: wait 1 s and bury;<br/>otherwise take off and keep looking"]
+    find["<b>find burial spot</b><br/>pick a random direction and keep flying that way, judging every spot it can see<br/>(its perception region, nearest first; burial quality) until a spot's quality &gt; secrecy;<br/>land there and judge it again: still &gt; secrecy: wait 1 s and bury;<br/>otherwise take off and keep looking"]
     find -. "each second: another jay flying ahead the same way? 40% to turn around" .-> find
     find --> bury
 

@@ -8,6 +8,8 @@ import {
   HUNGER_THRESHOLD,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
+  NPC_PERCEIVE_AHEAD_IN_SIZES,
+  NPC_PERCEIVE_BEHIND_IN_SIZES,
   NPC_IDLE_HUNGER,
   NPC_RETRIEVE_HUNGER,
   NPC_SPEED_SCALE,
@@ -696,7 +698,7 @@ function buryHereIfGood(npc: Npc, world: World): boolean {
 }
 
 /**
- * Find burial spot: judge the ground up to half a screen width ahead (every quarter second) and keep
+ * Find burial spot: judge every spot the bird can see (its perception region, every quarter second) and keep
  * flying in the chosen direction until a spot's burial quality is above this bird's secrecy; then
  * glide down and land there. Once landed, the quality is checked again (the birds around may have
  * moved): if it is still above its secrecy the bird buries there, otherwise it takes off and keeps
@@ -713,14 +715,18 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
     npc.searchTimer -= dt
     if (npc.searchTimer <= 0) {
       npc.searchTimer = 0.25
-      // Standing on a spot that is already good enough: bury right here instead of flying off.
-      if (bird.state === 'standing' && buryHereIfGood(npc, world)) {
-        return
-      }
-      const range = BURIAL_QUALITY_RANGE_IN_SIZES * bird.size
+      // Every spot the bird can see is fair game (its perception region: far ahead, a little behind,
+      // along the way it faces), the nearest acceptable one first; the spot under it is not special.
       const birds = allBirds(world)
-      for (let ahead = 1.5 * bird.size; ahead <= range; ahead += 0.5 * bird.size) {
-        const x = cx + npc.searchDir * ahead
+      const ahead = NPC_PERCEIVE_AHEAD_IN_SIZES
+      const behind = NPC_PERCEIVE_BEHIND_IN_SIZES
+      const offsets: number[] = []
+      for (let f = -behind; f <= ahead + 1e-9; f += 0.25) {
+        offsets.push(f)
+      }
+      offsets.sort((p, q) => Math.abs(p) - Math.abs(q))
+      for (const f of offsets) {
+        const x = cx + bird.facing * f * bird.size
         if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x) > npc.secrecy) {
           npc.spotX = x
           npc.glide = null
