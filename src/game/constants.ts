@@ -25,6 +25,13 @@ export const WORLD_WIDTH_MULTIPLIER = 5
  */
 export const WORLD_TOP_EXTRA_FACTOR = 0.65
 
+/**
+ * Extra dirt below the flat reference ground line, as a fraction of the viewport height. With the
+ * camera keeping the bird two thirds of the way down the screen, this is what lets a standing bird
+ * sit about a third up from the bottom instead of right at it.
+ */
+export const WORLD_BOTTOM_EXTRA_FACTOR = 0.25
+
 /** Ground strip height as a fraction of the viewport height. */
 export const GROUND_VIEW_FRACTION = 0.04
 

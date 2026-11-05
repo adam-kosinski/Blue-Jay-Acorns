@@ -445,7 +445,9 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   if (cached) {
     return cached
   }
-  const relief = 0.3 + 0.7 * layer.parallax
+  // Vertical scale of the layer's elevation: close to its parallax (perspective), with a little
+  // extra so the nearest layers keep some relief and the farthest ones do not tower.
+  const relief = 0.12 + 0.88 * layer.parallax
   // The layer's elevation is the foreground's coarse elevation and hill scaled horizontally by the
   // layer's parallax factor about the screen center (so features line up with the foreground's the
   // way perspective demands), plus the layer's own fine noise on top.
@@ -553,6 +555,10 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
         const top = offset(lx) + 0.02 * leafUnit
         const bottomEdge = bottomPad - 2
         const y = top + Math.random() * Math.max(0, bottomEdge - top)
+        // Nothing under the creek: below its waterline across the carved channel and its banks.
+        if (y > waterLine && Math.abs(lx - creek.x) < nearRange) {
+          continue
+        }
         const nearness = Math.min(1, Math.max(0, (y - top) / Math.max(1, bottomEdge - top)))
         const rx = (0.035 + Math.random() * 0.045) * leafUnit * (1 + 0.5 * nearness)
         batches[Math.floor(Math.random() * batches.length)]?.push(lx, originY + y, rx, rx * (0.35 + Math.random() * 0.2), (Math.random() - 0.5) * Math.PI)
@@ -648,7 +654,9 @@ function drawGround(
 ): void {
   const { terrain } = world
   const startX = Math.max(0, Math.floor((cameraX - 16) / terrain.step) * terrain.step)
-  const endX = Math.min(world.width, cameraX + viewWidth + 16 + terrain.step)
+  // Drawn a little past the world's edge (the ground just continues level), so rounding in the
+  // view's size can never leave a sliver of backdrop showing at the rightmost edge.
+  const endX = Math.min(world.width + 64, cameraX + viewWidth + 16 + terrain.step)
   // The creek bed can lie below the bottom of the world, so the dirt reaches a little lower.
   const bottom = world.height + world.terrain.creek.depth
   const dirt = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, bottom)

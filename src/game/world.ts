@@ -6,6 +6,7 @@ import {
   OAK_TREE_COUNT,
   SCENERY_SCALE,
   TYPICAL_ASPECT_RATIO,
+  WORLD_BOTTOM_EXTRA_FACTOR,
   WORLD_TOP_EXTRA_FACTOR,
   WORLD_WIDTH_MULTIPLIER,
   acornRadiusForPlayer,
@@ -80,14 +81,14 @@ const FOREST_LAYERS: {
 }[] = [
   // Three extra, much farther layers that exist only near the creek: the creek lets the player
   // see much deeper into the forest than anywhere else.
-  { parallax: 0.045, fog: 0.48, lift: 0.55, scale: 0.2, spacing: 0.08, local: true },
-  { parallax: 0.065, fog: 0.46, lift: 0.5, scale: 0.25, spacing: 0.09, local: true },
-  { parallax: 0.09, fog: 0.435, lift: 0.45, scale: 0.3, spacing: 0.1, local: true },
-  { parallax: 0.12, fog: 0.4, lift: 0.4, scale: 0.36, spacing: 0.11 },
-  { parallax: 0.22, fog: 0.31, lift: 0.33, scale: 0.42, spacing: 0.15 },
-  { parallax: 0.35, fog: 0.225, lift: 0.26, scale: 0.5, spacing: 0.2 },
-  { parallax: 0.5, fog: 0.14, lift: 0.2, scale: 0.58, spacing: 0.27 },
-  { parallax: 0.68, fog: 0.06, lift: 0.14, scale: 0.66, spacing: 0.36 },
+  { parallax: 0.045, fog: 0.48, lift: 0.4125, scale: 0.2, spacing: 0.08, local: true },
+  { parallax: 0.065, fog: 0.46, lift: 0.375, scale: 0.25, spacing: 0.09, local: true },
+  { parallax: 0.09, fog: 0.435, lift: 0.3375, scale: 0.3, spacing: 0.1, local: true },
+  { parallax: 0.12, fog: 0.4, lift: 0.3, scale: 0.36, spacing: 0.11 },
+  { parallax: 0.22, fog: 0.31, lift: 0.2475, scale: 0.42, spacing: 0.15 },
+  { parallax: 0.35, fog: 0.225, lift: 0.195, scale: 0.5, spacing: 0.2 },
+  { parallax: 0.5, fog: 0.14, lift: 0.15, scale: 0.58, spacing: 0.27 },
+  { parallax: 0.68, fog: 0.06, lift: 0.105, scale: 0.66, spacing: 0.36 },
 ]
 
 /** Atmospheric perspective of the farthest background layer: the backdrop behind every layer matches it. */
@@ -287,6 +288,11 @@ function spawnLeafLitter(
       }
       const ground = groundYAt(terrain, lx)
       const y = ground - 0.03 * playerSize + Math.random() * (bottom - ground + 0.03 * playerSize)
+      // Nothing under the creek: below the waterline across the whole creek bowl (the water, the
+      // front stretch that widens toward the viewer, and the ground beneath the banks) stays bare.
+      if (y > terrain.creek.waterY && Math.abs(lx - terrain.creek.x) < terrain.creek.halfWidth + terrain.creek.bank) {
+        continue
+      }
       const nearness = bottom > ground ? Math.min(1, (y - ground) / (bottom - ground)) : 0
       const rx = randRange(0.035, 0.075) * playerSize * (1 + 0.2 * nearness)
       leaves.push({
@@ -798,10 +804,11 @@ function spawnForest(
  */
 export function createWorld(viewWidth: number, viewHeight: number): World {
   const groundHeight = groundHeightForView(viewHeight)
-  const height = viewHeight + groundHeight + viewHeight * WORLD_TOP_EXTRA_FACTOR
+  const bottomExtra = viewHeight * WORLD_BOTTOM_EXTRA_FACTOR
+  const height = viewHeight + groundHeight + viewHeight * WORLD_TOP_EXTRA_FACTOR + bottomExtra
   // The world's width comes from the typical aspect ratio, never from the window's width.
   const width = viewHeight * TYPICAL_ASPECT_RATIO * WORLD_WIDTH_MULTIPLIER
-  const groundY = height - groundHeight
+  const groundY = height - groundHeight - bottomExtra
   const playerSize = playerSizeForView(viewHeight)
   const terrain = buildTerrain(width, groundY, viewHeight)
 
