@@ -1,0 +1,35 @@
+Blue Jay Acorns ideas
+
+- Make harder to see caches: lower the prob, but maybe still keep 100% if you haven't tried to hide it at all?
+- Back and forth hopping is awkward, sometimes you hop twice without meaning to
+- Read a research paper, learn more about caching sites
+- Add seasons and varying acorn dropping rates throughout
+  - find data on acorn abundance phenology
+- Add other types of trees to fill in the gaps
+
+
+Strategies
+- Why don't blue jays always cache acorns near where they find them?
+   - animals might search under trees more (resident squirrel?)
+- Why don't they cache everything in one place?
+   - To help expand their range. If I add a hawk creating an exclusion zone this could be useful
+   - I wonder if a squirrel could sniff around and dig up acorns it finds?
+   - But also the cache-discovery via digging provides an incentive
+
+Realism
+- Do we want to allow the bird to carry multiple acorns?
+- Hawks hanging out by oak trees?
+
+
+=========================================================================
+
+Not doing
+- Opponent birds can see easily-visible caches and will attempt to dig
+  - it seems that in reality caches are in ideal tree-growing conditions (sunny forest floor), and usually disguised
+
+Done
+- When you dig up an acorn, other birds see it
+- Other birds can see acorn burying or digging at any time during the process, not just the start or end
+- Fewer oak trees perhaps, to make them more distinct as hubs
+- More landscape variation
+- Disguising caches
