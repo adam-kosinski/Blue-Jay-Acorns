@@ -104,12 +104,11 @@ export const HOVER_OFFSET_IN_SIZES = 140 / 48 / 3
 
 /**
  * How close (in player sizes) a buried acorn must be to the beak tip for a dig to bring it up (the
- * closest one in range does). Hardcoded from the sprite: a bird standing just off a fresh mound, its
- * rear foot's back edge (8 units behind the centre, at size 100) at the mound's edge (half-width 22.5)
- * and facing away, has its beak tip (54 ahead of the centre) 54 + 8 + 22.5 = 84.5 from the mound's
- * centre: just out of range. It used to be 1/3 and was measured around wherever the bird was told to dig.
+ * closest one in range does). Hardcoded; everything derived from the dig range (burial-quality penalties
+ * near remembered burials and sites, what an empty dig forgets) is expressed in terms of this value.
+ * It used to be 1/3 (measured around wherever the bird was told to dig), then 0.84.
  */
-export const DIG_RESPONSE_IN_SIZES = 0.84
+export const DIG_RESPONSE_IN_SIZES = 0.25
 
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
 export const REACH_IN_SIZES = 0.9
