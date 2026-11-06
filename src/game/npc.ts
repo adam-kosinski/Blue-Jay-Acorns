@@ -1,7 +1,6 @@
 import {
   BEAK_REACH_X,
   BURIAL_HOPS_TO_HIDE,
-  BURIAL_SITE_NOTICE_FACTOR,
   BURIAL_QUALITY_DISPLAY_SECONDS,
   NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
   DIG_RESPONSE_IN_SIZES,
@@ -19,7 +18,7 @@ import {
 } from './constants'
 import { forgetBurial, startBury, startDigAt, startPickup, trackHops, updateAction } from './acorns'
 import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
-import { inView } from './vision'
+import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
 import { groundYAt, nearCreek } from './terrain'
 import { createPlayer, groundUnder, updatePlayer } from './player'
@@ -195,9 +194,9 @@ function updatePerception(npc: Npc, world: World): void {
 
 /**
  * Chance to notice other birds' burial sites. When a buried acorn that is not this bird's own newly
- * comes into view it may be noticed, with a probability equal to how visible its mound still is
- * (1 minus its concealment: never if fully buried), times `BURIAL_SITE_NOTICE_FACTOR` (one half) and,
- * while flying, `NPC_NOTICE_PROBABILITY`. A bird that lands with a site in view rolls once more, without
+ * comes into view it may be noticed, with a probability that falls with the hops that disguised it
+ * (`burialSiteVisibility`: 1 when fresh, steeply at first, 0 when fully hidden) times, while flying,
+ * `NPC_NOTICE_PROBABILITY`. A bird that lands with a site in view rolls once more, without
  * that flight penalty. A noticed site joins the list of other birds' burial sites (`sites`), which
  * are treated differently from the bird's own burials; the bird's own are never rolled for. A site
  * the bird already remembers is not rolled for again.
@@ -225,16 +224,16 @@ function perceiveBuried(npc: Npc, world: World): void {
     if (npc.sites.some((site) => Math.abs(site.x - acorn.x) <= 0.25 * npc.bird.size)) {
       continue
     }
-    const visibility = 1 - acorn.conceal
+    const visibility = burialSiteVisibility(acorn.hops)
     let noticed = false
     if (!npc.viewedBuried.has(acorn)) {
       // Newly in view.
-      noticed = Math.random() < visibility * BURIAL_SITE_NOTICE_FACTOR * (standing ? 1 : NPC_NOTICE_PROBABILITY)
+      noticed = Math.random() < visibility * (standing ? 1 : NPC_NOTICE_PROBABILITY)
       if (standing) {
         npc.landedRolled.add(acorn)
       }
     } else if (landed && !npc.landedRolled.has(acorn)) {
-      noticed = Math.random() < visibility * BURIAL_SITE_NOTICE_FACTOR
+      noticed = Math.random() < visibility
       npc.landedRolled.add(acorn)
     }
     if (noticed) {
