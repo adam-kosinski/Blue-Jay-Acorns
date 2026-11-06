@@ -145,7 +145,6 @@ export function updateAction(player: Player, world: World, dt: number): void {
   const slideP = Math.min(1, action.timer / (action.duration * 0.4))
   const slide = action.slideTotal * (1 - (1 - slideP) * (1 - slideP))
   player.x += slide - action.slideApplied
-  player.hopStartX += slide - action.slideApplied
   action.slideApplied = slide
   if (!action.transferred && action.timer >= action.duration / 2) {
     action.transferred = true

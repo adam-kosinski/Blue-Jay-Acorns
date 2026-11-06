@@ -23,10 +23,6 @@ export type Player = {
   eatTimer: number
   /** Seconds since the current hop began; at or past `HOP_DURATION` the bird is not hopping. */
   hopT: number
-  /** World x where the current hop began. */
-  hopStartX: number
-  /** Direction of the current hop. */
-  hopDir: 1 | -1
   /** Pick-up, bury or dig-up animation in progress, if any. */
   action: PlayerAction | null
   /** World x of a dig that came up empty since the owner last looked (consumed by the NPC code). */

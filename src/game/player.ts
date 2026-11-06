@@ -1,6 +1,5 @@
 import {
   HOP_DURATION,
-  HOP_LENGTH_IN_SIZES,
   HOVER_OFFSET_IN_SIZES,
   MOVE_SPEED_IN_SIZES,
   WALK_SPEED_FACTOR,
@@ -32,8 +31,6 @@ export function createPlayer(world: World, size: number): Player {
     hunger: 1,
     eatTimer: 0,
     hopT: HOP_DURATION,
-    hopStartX: 0,
-    hopDir: 1,
     action: null,
     digFailX: null,
     burials: [],
@@ -88,17 +85,19 @@ export function syncPlayerToWorld(player: Player, world: World, size: number): v
 }
 
 /**
- * Moves a standing bird by hopping: while A/D are held it hops continuously at a constant ground
- * speed (half the flying speed), landing and taking off again with no pause. A hop in progress
- * always finishes; the first press hops immediately.
+ * Moves a standing bird by hopping. Only the hops themselves are discrete, and only vertically:
+ * horizontal movement always follows the A/D keys held at that moment (so a direction change, or a
+ * release, takes effect immediately, even in mid-hop). A hop in progress always finishes its arc; if
+ * A or D is held when the bird lands, it hops again at once (the first press hops immediately).
+ * Within a hop the ground speed is 1.4x the average at the start, easing to 0.6x at the end.
  *
  * @param player - Mutable player.
  * @param dir - Held direction: -1 left, 1 right, 0 none.
  * @param dt - Elapsed seconds.
- * @param speedScale - Speed multiplier (shortens the hops for slower birds).
+ * @param speedScale - Speed multiplier (NPCs are slower).
  */
 function hopOnGround(player: Player, dir: number, dt: number, speedScale: number): void {
-  const length = HOP_LENGTH_IN_SIZES * player.size * speedScale
+  const average = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size
   let left = dt
   while (left > 1e-9) {
     if (player.hopT >= HOP_DURATION) {
@@ -107,23 +106,17 @@ function hopOnGround(player: Player, dir: number, dt: number, speedScale: number
       }
       player.hopT = 0
       player.hops += 1
-      player.hopStartX = player.x
-      player.hopDir = dir > 0 ? 1 : -1
     }
     const step = Math.min(left, HOP_DURATION - player.hopT)
+    const p = (player.hopT + step / 2) / HOP_DURATION
+    player.x += dir * average * (1.4 - 0.8 * p) * step
     player.hopT += step
     left -= step
-    // Faster at the start of the hop, slower at the end (1.4x down to 0.6x of the average speed).
-    const p = player.hopT / HOP_DURATION
-    const eased = 0.6 * p + 0.4 * (1 - (1 - p) * (1 - p))
-    player.x = player.hopStartX + player.hopDir * length * eased
   }
   // Keep hopping without a landing frame when the key is still held.
   if (player.hopT >= HOP_DURATION && dir !== 0) {
     player.hopT = 0
     player.hops += 1
-    player.hopStartX = player.x
-    player.hopDir = dir > 0 ? 1 : -1
   }
 }
 

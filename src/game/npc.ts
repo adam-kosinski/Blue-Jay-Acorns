@@ -814,20 +814,34 @@ function runBury(npc: Npc, world: World): void {
 
 /**
  * Cover: hop over the fresh burial site, back and forth (the first hop toward it, the next away
- * from it, and so on, so every hop starts beside it), then go back to exploring or idling.
+ * from it, and so on, so every hop starts beside it), then go back to exploring or idling. The
+ * direction key is held through each hop and let go just before landing, so exactly one hop is made
+ * (a key still held on landing would start another).
  *
  * @param npc - NPC covering a burial.
+ * @param dt - Elapsed seconds.
  */
-function runCover(npc: Npc): void {
+function runCover(npc: Npc, dt: number): void {
   const { bird } = npc
-  if (bird.action || bird.hopT < HOP_DURATION) {
+  if (bird.action) {
+    return
+  }
+  if (bird.hopT < HOP_DURATION) {
+    // Mid-hop: keep moving the way the hop started, until the last frame of it.
+    if (bird.hopT + dt * 1.5 < HOP_DURATION) {
+      if (bird.facing === 1) {
+        npc.keys.d = true
+      } else {
+        npc.keys.a = true
+      }
+    }
     return
   }
   if (npc.coverHops <= 0) {
     enterExploreOrIdle(npc)
     return
   }
-  // A single-frame tap starts one hop (a hop in progress always finishes).
+  // Start the next hop toward / away from the site.
   if (npc.coverDir === 1) {
     npc.keys.d = true
   } else {
@@ -1004,7 +1018,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
           runBury(npc, world)
           break
         case 'cover':
-          runCover(npc)
+          runCover(npc, dt)
           break
         case 'retrieve':
           runRetrieve(npc, world)
