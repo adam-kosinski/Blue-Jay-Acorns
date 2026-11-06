@@ -190,6 +190,9 @@ export const NPC_PERCEIVE_AHEAD_IN_SIZES = TYPICAL_VIEW_WIDTH_IN_SIZES / 3
 /** How far behind itself (in player sizes) an NPC can perceive acorns. */
 export const NPC_PERCEIVE_BEHIND_IN_SIZES = 1
 
+/** Scales the chance to notice another bird's burial mound (burying and digging in progress are unaffected). */
+export const BURIAL_SITE_NOTICE_FACTOR = 0.5
+
 /**
  * Chance that a flying NPC notices an acorn at the moment it enters the bird's view. The roll is
  * made once per acorn each time it comes into view (simulating whether the bird sees it). A

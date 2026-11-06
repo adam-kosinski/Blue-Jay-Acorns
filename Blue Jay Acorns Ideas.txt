@@ -1,12 +1,15 @@
 Blue Jay Acorns ideas
 
 - Make harder to see caches: lower the prob, but maybe still keep 100% if you haven't tried to hide it at all?
+- Try tuning burial_quality penalties to result in fewer rejected burial landings? Requires that it make sense based on the need to hide caches from other birds or squirrels
 - Back and forth hopping is awkward, sometimes you hop twice without meaning to
 - Read a research paper, learn more about caching sites
 - Add seasons and varying acorn dropping rates throughout
   - find data on acorn abundance phenology
 - Add other types of trees to fill in the gaps
 - Allow the bird to carry multiple acorns
+- Maybe the "noticing" notification should only apply to your burials, not other birds? Other birds are not your business
+  - since other birds could reveal quite hidden burial sites for you, which is not intended
 
 Strategies
 - Why don't blue jays always cache acorns near where they find them?
