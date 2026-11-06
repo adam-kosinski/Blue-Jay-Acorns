@@ -332,8 +332,11 @@ function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Pl
   const x = action.spotX
   const dug = owner.held
   if (action.kind === 'dig' && dug && dug.owner === npc.bird && inView(npc.bird, { x: dug.x, y: groundYAt(world.terrain, dug.x) })) {
-    // Saw another bird dig up one of its own acorns: it knows exactly which burial that was.
+    // Saw another bird dig up one of its own acorns: it knows exactly which burial that was, so the
+    // burial is forgotten and the spot is not noted as another bird's site (nothing is left there).
     forgetBurial(npc.bird, dug.x)
+    npc.seenActions.add(action)
+    return
   }
   if (npc.seenActions.has(action) || !inView(npc.bird, { x, y: groundYAt(world.terrain, x) })) {
     return
