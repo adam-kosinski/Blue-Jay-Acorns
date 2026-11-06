@@ -123,6 +123,31 @@ export function createNpcs(world: World, size: number): Npc[] {
 }
 
 /**
+ * Whether the NPC remembers burying one of its own acorns within dig range of x. A spot is either one
+ * of its own burials (`bird.burials`, retrieved when hungry) or another bird's site (`sites`, treated
+ * like a free acorn), never both.
+ *
+ * @param npc - The NPC.
+ * @param x - World x of the spot.
+ */
+function isOwnBurial(npc: Npc, x: number): boolean {
+  const range = DIG_RESPONSE_IN_SIZES * npc.bird.size
+  return npc.bird.burials.some((spot) => Math.abs(spot - x) <= range)
+}
+
+/**
+ * Keeps own burials and other birds' sites mutually exclusive: a spot the bird buried at (also if it
+ * noted it as someone else's before) is only ever one of its own.
+ *
+ * @param npc - The NPC.
+ */
+function dropOwnBurialsFromSites(npc: Npc): void {
+  if (npc.sites.some((site) => isOwnBurial(npc, site.x))) {
+    npc.sites = npc.sites.filter((site) => !isOwnBurial(npc, site.x))
+  }
+}
+
+/**
  * Updates what the NPC notices. While standing, every free acorn in view is noticed. While flying,
  * each free acorn that newly enters view gets one roll (`NPC_NOTICE_PROBABILITY`), unless it was
  * already noticed: a noticed acorn is remembered with the spot where it was last seen (even out of
@@ -181,6 +206,11 @@ function perceiveBuried(npc: Npc, world: World): void {
       continue
     }
     if (!inView(npc.bird, { x: acorn.x, y: groundYAt(world.terrain, acorn.x) })) {
+      continue
+    }
+    if (isOwnBurial(npc, acorn.x)) {
+      // The bird remembers burying here itself (another bird may have moved the acorn since): that spot
+      // belongs on its own list, never on the list of other birds' sites.
       continue
     }
     current.add(acorn)
@@ -312,6 +342,9 @@ function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Pl
     }
   }
   npc.seenActions.add(action)
+  if (isOwnBurial(npc, x)) {
+    return
+  }
   const known = npc.sites.find((site) => Math.abs(site.x - x) <= 0.25 * npc.bird.size)
   if (known) {
     known.noticedAt = world.time
@@ -968,6 +1001,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
 
     updatePerception(npc, world)
+    dropOwnBurialsFromSites(npc)
 
     let waiting = npc.waitTimer > 0
     if (waiting) {
@@ -1037,6 +1071,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
 
     updatePlayer(bird, npc.keys, dt, world, NPC_SPEED_SCALE)
     updateAction(bird, world, dt)
+    // (a burial that just finished may sit on a site noted before)
+    dropOwnBurialsFromSites(npc)
     if (bird.digFailX !== null) {
       // A dig that comes up empty removes the other-bird burial sites within range of it.
       const failX = bird.digFailX
