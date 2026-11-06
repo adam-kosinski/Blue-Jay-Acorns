@@ -27,6 +27,8 @@ export type Player = {
   action: PlayerAction | null
   /** World x of a dig that came up empty since the owner last looked (consumed by the NPC code). */
   digFailX: number | null
+  /** Spots where this bird dug up an acorn that was not its own and has not since found them empty (the human player's list, used by the burial-quality heatmap; NPCs keep `Npc.sites`). */
+  dugSites: number[]
   /** World x of every spot where this bird buried an acorn and has not dug there (or seen another bird dig there) since, whether or not an acorn is still there. */
   burials: number[]
   /** Debug: the bird is drawn half transparent and the NPCs ignore it for every purpose. */
@@ -62,6 +64,8 @@ export type PlayerAction = {
   slideTotal: number
   /** Part of the slide applied so far. */
   slideApplied: number
+  /** For a dig: never bring up one of the digger's own acorns (the closest other one, or nothing, responds). */
+  avoidOwn: boolean
 }
 
 /** One-shot key presses (fresh key-downs, not auto-repeat) since the last frame. */

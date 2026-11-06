@@ -1,6 +1,7 @@
 import {
   BURIAL_QUALITY_BIRD_PENALTY,
   BURIAL_QUALITY_OAK_PENALTY,
+  BURIAL_QUALITY_OTHER_SITE_PENALTY,
   BURIAL_QUALITY_OWN_SITE_PENALTY,
   BURIAL_QUALITY_UNSEEN_PENALTY,
   DIG_RESPONSE_IN_SIZES,
@@ -45,8 +46,15 @@ function acornReach(tree: OakTree): number {
  * @param birds - Every bird (the player and the NPCs).
  * @param burier - The bird looking to bury.
  * @param x - World x of the spot.
+ * @param sites - World x of every burial site of another bird the burier remembers (the player's `dugSites` by default).
  */
-export function burialQuality(world: World, birds: Player[], burier: Player, x: number): number {
+export function burialQuality(
+  world: World,
+  birds: Player[],
+  burier: Player,
+  x: number,
+  sites: readonly number[] = burier.dugSites,
+): number {
   const size = burier.size
   const range = BURIAL_QUALITY_RANGE_IN_SIZES * size
   const burierX = burier.x + size / 2
@@ -83,5 +91,8 @@ export function burialQuality(world: World, birds: Player[], burier: Player, x: 
   for (const spot of burier.burials) {
     own = Math.max(own, BURIAL_QUALITY_OWN_SITE_PENALTY * (1 - Math.abs(spot - x) / (2 * tolerance)))
   }
-  return Math.max(0, q - own)
+  // Burying within dig range of a site of another bird is very bad: its owner may come to dig there
+  // and would find the new acorn.
+  const nearOther = sites.some((spot) => Math.abs(spot - x) <= tolerance)
+  return Math.max(0, q - own - (nearOther ? BURIAL_QUALITY_OTHER_SITE_PENALTY : 0))
 }

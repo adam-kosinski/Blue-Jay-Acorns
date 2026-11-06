@@ -71,6 +71,7 @@ function startReach(
   kind: 'pickup' | 'dig',
   duration: number,
   acorn: Acorn | null,
+  avoidOwn = false,
 ): void {
   if (player.floating) {
     return
@@ -87,6 +88,7 @@ function startReach(
     transferred: false,
     slideTotal: slide,
     slideApplied: 0,
+    avoidOwn,
   }
 }
 
@@ -110,6 +112,7 @@ export function startBury(player: Player): void {
     transferred: false,
     slideTotal: 0,
     slideApplied: 0,
+    avoidOwn: false,
   }
 }
 
@@ -121,9 +124,11 @@ export function startBury(player: Player): void {
  *
  * @param player - Bird doing the digging.
  * @param x - World x the beak should land on.
+ * @param avoidOwn - True to never bring up one of the digger's own acorns (what NPCs do unless they are
+ *   retrieving): the closest other acorn in range, or nothing, responds. The player does not avoid them.
  */
-export function startDigAt(player: Player, x: number): void {
-  startReach(player, x, 'dig', BURY_DURATION, null)
+export function startDigAt(player: Player, x: number, avoidOwn = false): void {
+  startReach(player, x, 'dig', BURY_DURATION, null, avoidOwn)
 }
 
 /**
@@ -154,9 +159,17 @@ export function updateAction(player: Player, world: World, dt: number): void {
       const range = DIG_RESPONSE_IN_SIZES * player.size
       let nearest: Acorn | null = null
       let nearestDist = range
+      let ownInRange = false
       for (const candidate of world.acorns) {
         const dist = Math.abs(candidate.x - action.spotX)
-        if (candidate.state === 'buried' && dist <= nearestDist) {
+        if (candidate.state !== 'buried' || dist > range) {
+          continue
+        }
+        if (action.avoidOwn && candidate.owner === player) {
+          ownInRange = true
+          continue
+        }
+        if (dist <= nearestDist) {
           nearest = candidate
           nearestDist = dist
         }
@@ -167,12 +180,19 @@ export function updateAction(player: Player, world: World, dt: number): void {
         if (nearest.owner === player) {
           // It got one of its own acorns back: that burial is gone from its memory (and only that one).
           forgetBurial(player, nearest.x)
+        } else if (!player.dugSites.some((spot) => Math.abs(spot - action.spotX) <= range)) {
+          // Another bird's acorn came up here: it counts as one of that bird's sites until it comes up empty.
+          player.dugSites.push(action.spotX)
         }
       } else {
         // Nothing responded, so no acorn lies within dig range of here: forget any burial remembered
         // here (it was taken) and let NPCs forget other birds' sites in range of it.
         if (!nearest) {
-          player.burials = player.burials.filter((spot) => Math.abs(spot - action.spotX) > range)
+          if (!ownInRange) {
+            // Nothing at all within dig range: any burial remembered here was taken.
+            player.burials = player.burials.filter((spot) => Math.abs(spot - action.spotX) > range)
+          }
+          player.dugSites = player.dugSites.filter((spot) => Math.abs(spot - action.spotX) > range)
           player.digFailX = action.spotX
         }
         player.action = null

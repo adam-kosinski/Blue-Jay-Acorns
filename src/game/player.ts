@@ -33,6 +33,7 @@ export function createPlayer(world: World, size: number): Player {
     hopT: HOP_DURATION,
     action: null,
     digFailX: null,
+    dugSites: [],
     burials: [],
     invisible: false,
     hops: 0,

@@ -123,6 +123,15 @@ export function createNpcs(world: World, size: number): Npc[] {
 }
 
 /**
+ * World x of every burial site of another bird that the NPC remembers.
+ *
+ * @param npc - The NPC.
+ */
+function siteXs(npc: Npc): number[] {
+  return npc.sites.map((site) => site.x)
+}
+
+/**
  * Whether x is exactly where the NPC remembers burying one of its own acorns. A spot is either one of
  * its own burials (`bird.burials`, retrieved when hungry) or another bird's site (`sites`, treated like a
  * free acorn), never both. (A spot merely near one of its own burials can still be another bird's site.)
@@ -700,7 +709,7 @@ function runGather(npc: Npc, world: World): void {
   if (Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size) {
     releaseKeys(npc.keys)
     if (npc.siteTarget) {
-      startDigAt(bird, npc.siteTarget.x)
+      startDigAt(bird, npc.siteTarget.x, true)
     } else if (npc.target) {
       startPickup(bird, npc.target)
     }
@@ -718,7 +727,7 @@ function runGather(npc: Npc, world: World): void {
 function buryHereIfGood(npc: Npc, world: World): boolean {
   const { bird } = npc
   const buryX = bird.x + bird.size / 2 + bird.facing * BEAK_REACH_X * (bird.size / 100)
-  const quality = burialQuality(world, allBirds(world), bird, buryX)
+  const quality = burialQuality(world, allBirds(world), bird, buryX, siteXs(npc))
   if (quality <= npc.secrecy) {
     return false
   }
@@ -760,7 +769,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
       offsets.sort((p, q) => Math.abs(p) - Math.abs(q))
       for (const f of offsets) {
         const x = cx + bird.facing * f * bird.size
-        if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x) > npc.secrecy) {
+        if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x, siteXs(npc)) > npc.secrecy) {
           npc.spotX = x
           npc.glide = null
           break

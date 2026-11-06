@@ -148,6 +148,9 @@ export const BURIAL_QUALITY_UNSEEN_PENALTY = 0.2
 /** Burial-quality penalty near a spot where the burier itself remembers burying an acorn (within the dig-up tolerance). */
 export const BURIAL_QUALITY_OWN_SITE_PENALTY = 0.2
 
+/** Burial-quality penalty within dig range of a remembered burial site of another bird: the owner may come to dig there and would get the new acorn. */
+export const BURIAL_QUALITY_OTHER_SITE_PENALTY = 0.9
+
 /** ...an oak lowers it by up to this much (at its trunk, easing to 0 at the farthest an acorn can fall)... */
 export const BURIAL_QUALITY_OAK_PENALTY = 0.5
 
