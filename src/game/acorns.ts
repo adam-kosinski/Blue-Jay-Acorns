@@ -108,7 +108,7 @@ export function startBury(player: Player): void {
     timer: 0,
     duration: BURY_DURATION,
     acorn,
-    spotX: player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100),
+    spotX: beakTipX(player),
     transferred: false,
     slideTotal: 0,
     slideApplied: 0,
@@ -117,18 +117,81 @@ export function startBury(player: Player): void {
 }
 
 /**
- * Starts a dig animation at a location. A dig is not tied to any particular burial spot: at the
- * halfway point whichever buried acorn is nearest to where the beak landed (within
- * `DIG_RESPONSE_IN_SIZES`) responds and comes up into the beak; if none is close enough, nothing
- * happens.
+ * World x of the bird's beak tip when it pecks the ground: ahead of its centre, the way it faces.
+ * Burying and digging both act exactly here.
+ *
+ * @param player - The bird.
+ */
+export function beakTipX(player: Player): number {
+  return player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
+}
+
+/**
+ * The buried acorn closest to `x` within dig range, and whether one of the digger's own acorns was in
+ * range but skipped (when `avoidOwn`).
+ *
+ * @param world - Acorn container.
+ * @param digger - Bird digging.
+ * @param x - World x the beak is on.
+ * @param avoidOwn - Skip the digger's own acorns.
+ */
+function closestBuried(
+  world: World,
+  digger: Player,
+  x: number,
+  avoidOwn: boolean,
+): { nearest: Acorn | null; ownInRange: boolean } {
+  const range = DIG_RESPONSE_IN_SIZES * digger.size
+  let nearest: Acorn | null = null
+  let nearestDist = range
+  let ownInRange = false
+  for (const candidate of world.acorns) {
+    const dist = Math.abs(candidate.x - x)
+    if (candidate.state !== 'buried' || dist > range) {
+      continue
+    }
+    if (avoidOwn && candidate.owner === digger) {
+      ownInRange = true
+      continue
+    }
+    if (dist <= nearestDist) {
+      nearest = candidate
+      nearestDist = dist
+    }
+  }
+  return { nearest, ownInRange }
+}
+
+/**
+ * Starts a dig animation at the beak tip. The buried acorn closest to the beak tip (within
+ * `DIG_RESPONSE_IN_SIZES`) is the target: if it is not exactly under the beak, the bird shuffles
+ * sideways during the first part of the animation so that its beak lands on it, and it comes up into
+ * the beak at the halfway point. If none is in range, the bird digs where it stands and nothing
+ * comes up.
  *
  * @param player - Bird doing the digging.
- * @param x - World x the beak should land on.
+ * @param world - Acorn container.
  * @param avoidOwn - True to never bring up one of the digger's own acorns (what NPCs do unless they are
  *   retrieving): the closest other acorn in range, or nothing, responds. The player does not avoid them.
  */
-export function startDigAt(player: Player, x: number, avoidOwn = false): void {
-  startReach(player, x, 'dig', BURY_DURATION, null, avoidOwn)
+export function startDig(player: Player, world: World, avoidOwn = false): void {
+  if (player.floating) {
+    return
+  }
+  const tip = beakTipX(player)
+  const { nearest } = closestBuried(world, player, tip, avoidOwn)
+  const spotX = nearest ? nearest.x : tip
+  player.action = {
+    kind: 'dig',
+    timer: 0,
+    duration: BURY_DURATION,
+    acorn: null,
+    spotX,
+    transferred: false,
+    slideTotal: spotX - tip,
+    slideApplied: 0,
+    avoidOwn,
+  }
 }
 
 /**
@@ -155,25 +218,9 @@ export function updateAction(player: Player, world: World, dt: number): void {
     action.transferred = true
     const acorn = action.acorn
     if (action.kind === 'dig') {
-      // The nearest buried acorn to the beak responds, if it is close enough.
+      // The buried acorn closest to the beak (now on the target the bird shuffled to) responds.
       const range = DIG_RESPONSE_IN_SIZES * player.size
-      let nearest: Acorn | null = null
-      let nearestDist = range
-      let ownInRange = false
-      for (const candidate of world.acorns) {
-        const dist = Math.abs(candidate.x - action.spotX)
-        if (candidate.state !== 'buried' || dist > range) {
-          continue
-        }
-        if (action.avoidOwn && candidate.owner === player) {
-          ownInRange = true
-          continue
-        }
-        if (dist <= nearestDist) {
-          nearest = candidate
-          nearestDist = dist
-        }
-      }
+      const { nearest, ownInRange } = closestBuried(world, player, action.spotX, action.avoidOwn)
       if (nearest && !player.held) {
         nearest.state = 'held'
         player.held = nearest
@@ -260,10 +307,8 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
     if (player.held) {
       startBury(player)
     } else {
-      // Dig at the nearest burial spot in reach, or just ahead of the beak when there is none.
-      const nearby = nearestAcorn(player, world, 'buried')
-      const ahead = player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
-      startDigAt(player, nearby ? nearby.x : ahead)
+      // Dig where the beak is: the closest buried acorn in range of the beak tip comes up.
+      startDig(player, world)
     }
   }
 }

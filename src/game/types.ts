@@ -423,6 +423,9 @@ export type Npc = {
   idleFly: boolean
   /** The remembered spot currently being visited while retrieving, or null. */
   digSpot: number | null
+  /** The beak target an NPC is currently moving to, and the way it faces on arrival (fixed per target). */
+  reachX: number | null
+  reachDir: 1 | -1
   /** Free acorns currently in the bird's view (used to detect acorns entering view). */
   inView: Set<Acorn>
   /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */

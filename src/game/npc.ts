@@ -16,7 +16,7 @@ import {
   NPC_STARVING_HUNGER,
   NPC_WAIT_SECONDS,
 } from './constants'
-import { forgetBurial, startBury, startDigAt, startPickup, trackHops, updateAction } from './acorns'
+import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction } from './acorns'
 import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
 import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
@@ -109,6 +109,8 @@ export function createNpcs(world: World, size: number): Npc[] {
       idleTargetX: null,
       idleFly: false,
       digSpot: null,
+      reachX: null,
+      reachDir: 1,
       inView: new Set(),
       noticed: new Map(),
       seenActions: new WeakSet(),
@@ -397,6 +399,56 @@ function steerHorizontal(npc: Npc, x: number): void {
   const arrive = ARRIVE_IN_SIZES * npc.bird.size
   npc.keys.a = dx < -arrive
   npc.keys.d = dx > arrive
+}
+
+/** Horizontal gap (player sizes) within which a bird walking up to a beak target stops, and the looser one allowed once it faces the right way. */
+const BEAK_ARRIVE_IN_SIZES = 0.1
+const BEAK_FACING_SLACK_IN_SIZES = 0.2
+
+/**
+ * Moves the NPC so that its beak tip is exactly on a ground spot, facing the way it came (so a bury or
+ * dig action will act on exactly that spot). Far targets are flown to and landed at; the last stretch is
+ * hopped with the keys, stopping at once when the key is released, and a bird that ends up facing
+ * the wrong way turns with a one-frame key tap. The way to face is fixed when the target is first
+ * chosen (toward it), so the bird does not dither.
+ *
+ * @param npc - Moving NPC.
+ * @param targetX - World x the beak tip should be on.
+ * @param world - Play space.
+ * @returns True once the beak is on the spot, the bird is standing, still, and facing the right way.
+ */
+function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
+  const { bird } = npc
+  const cx = bird.x + bird.size / 2
+  const offset = BEAK_REACH_X * (bird.size / 100)
+  if (npc.reachX === null || Math.abs(npc.reachX - targetX) > 1) {
+    npc.reachX = targetX
+    npc.reachDir = targetX >= cx ? 1 : -1
+  }
+  const dir = npc.reachDir
+  // Where the bird's centre must be for its beak to be on the target.
+  const centerTarget = targetX - dir * offset
+  const dx = centerTarget - cx
+  if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * bird.size) {
+    glideTo(npc, centerTarget, world)
+    return false
+  }
+  const close = Math.abs(dx) <= (bird.facing === dir ? BEAK_FACING_SLACK_IN_SIZES : BEAK_ARRIVE_IN_SIZES) * bird.size
+  if (!close) {
+    npc.keys.a = dx < 0
+    npc.keys.d = dx > 0
+    return false
+  }
+  if (bird.facing !== dir) {
+    // In place but facing the wrong way: a one-frame tap turns it.
+    if (dir === 1) {
+      npc.keys.d = true
+    } else {
+      npc.keys.a = true
+    }
+    return false
+  }
+  return bird.hopT >= HOP_DURATION
 }
 
 /**
@@ -696,7 +748,16 @@ function runGather(npc: Npc, world: World): void {
       return
     }
   }
-  const targetX = npc.siteTarget ? npc.siteTarget.x : (npc.target?.x ?? bird.x)
+  if (npc.siteTarget) {
+    // Another bird's site: put the beak on it and dig, never bringing up one of its own acorns.
+    if (moveBeakTo(npc, npc.siteTarget.x, world)) {
+      releaseKeys(npc.keys)
+      npc.reachX = null
+      startDig(bird, world, true)
+    }
+    return
+  }
+  const targetX = npc.target?.x ?? bird.x
   const dx = targetX - (bird.x + bird.size / 2)
 
   if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * bird.size) {
@@ -710,35 +771,10 @@ function runGather(npc: Npc, world: World): void {
 
   if (Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size) {
     releaseKeys(npc.keys)
-    if (npc.siteTarget) {
-      startDigAt(bird, npc.siteTarget.x, true)
-    } else if (npc.target) {
+    if (npc.target) {
       startPickup(bird, npc.target)
     }
   }
-}
-
-/**
- * Judges the spot where the bird's beak would bury, and starts burying there when its burial quality is
- * above the bird's secrecy.
- *
- * @param npc - NPC standing on the ground.
- * @param world - Play space.
- * @returns True when it will bury here.
- */
-function buryHereIfGood(npc: Npc, world: World): boolean {
-  const { bird } = npc
-  const buryX = bird.x + bird.size / 2 + bird.facing * BEAK_REACH_X * (bird.size / 100)
-  const quality = burialQuality(world, allBirds(world), bird, buryX, siteXs(npc))
-  if (quality <= npc.secrecy) {
-    return false
-  }
-  releaseKeys(npc.keys)
-  npc.buryQuality = quality
-  npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
-  npc.state = 'bury'
-  npc.waitTimer = NPC_WAIT_SECONDS
-  return true
 }
 
 /**
@@ -770,6 +806,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
       }
       offsets.sort((p, q) => Math.abs(p) - Math.abs(q))
       for (const f of offsets) {
+        // The burial point (where the beak will be) is somewhere in the bird's perception region.
         const x = cx + bird.facing * f * bird.size
         if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x, siteXs(npc)) > npc.secrecy) {
           npc.spotX = x
@@ -804,24 +841,25 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
       return
     }
   }
-  const dx = npc.spotX - cx
-  const arrived = Math.abs(dx) <= ARRIVE_IN_SIZES * bird.size
-  if (!arrived) {
-    glideTo(npc, npc.spotX, world)
+  // Put the beak tip exactly on the chosen spot, then judge it once more (the birds around may have
+  // moved) and bury there, or take off and keep looking the same way.
+  if (!moveBeakTo(npc, npc.spotX, world)) {
     return
   }
-  steerHorizontal(npc, npc.spotX)
-  npc.keys.w = false
-  npc.keys.s = true
-  if (bird.state === 'standing') {
-    releaseKeys(npc.keys)
-    // Landed: judge the spot again, where the beak will bury.
-    if (!buryHereIfGood(npc, world)) {
-      // Not good enough after all: take off and keep looking the same way.
-      npc.spotX = null
-      npc.searchTimer = 0
-      npc.glide = null
-    }
+  releaseKeys(npc.keys)
+  npc.reachX = null
+  // (The beak is within a few pixels of the chosen spot; judging the chosen spot itself keeps this check
+  // consistent with the one that picked it.)
+  const quality = burialQuality(world, allBirds(world), bird, npc.spotX, siteXs(npc))
+  if (quality > npc.secrecy) {
+    npc.buryQuality = quality
+    npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
+    npc.state = 'bury'
+    npc.waitTimer = NPC_WAIT_SECONDS
+  } else {
+    npc.spotX = null
+    npc.searchTimer = 0
+    npc.glide = null
   }
 }
 
@@ -941,25 +979,15 @@ function runRetrieve(npc: Npc, world: World): void {
     }
     npc.digSpot = nearest
   }
-  const dx = npc.digSpot - cx
-  const far = Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * bird.size
-  if (far || bird.state === 'flying') {
-    // Fly straight to the spot, descending along the way, and land at it.
-    glideTo(npc, npc.digSpot, world)
+  // Put the beak on the remembered spot and dig there (the closest buried acorn in range of the beak
+  // comes up, possibly one of its own: it is retrieving).
+  if (!moveBeakTo(npc, npc.digSpot, world)) {
     return
   }
-  if (Math.abs(dx) > ARRIVE_IN_SIZES * bird.size) {
-    steerHorizontal(npc, npc.digSpot)
-    return
-  }
-
-  // Arrived: forget this spot and dig there. The dig is tied to the place, not to the remembered
-  // acorn: whichever buried acorn is nearest the beak (within range) responds, if any.
-  // The dig itself updates the memory: the spot is forgotten when the acorn comes up (or nothing does).
-  const spot = npc.digSpot
   npc.digSpot = null
+  npc.reachX = null
   releaseKeys(npc.keys)
-  startDigAt(bird, spot)
+  startDig(bird, world, false)
 }
 
 /**
