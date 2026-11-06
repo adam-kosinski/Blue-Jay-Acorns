@@ -123,16 +123,15 @@ export function createNpcs(world: World, size: number): Npc[] {
 }
 
 /**
- * Whether the NPC remembers burying one of its own acorns within dig range of x. A spot is either one
- * of its own burials (`bird.burials`, retrieved when hungry) or another bird's site (`sites`, treated
- * like a free acorn), never both.
+ * Whether x is exactly where the NPC remembers burying one of its own acorns. A spot is either one of
+ * its own burials (`bird.burials`, retrieved when hungry) or another bird's site (`sites`, treated like a
+ * free acorn), never both. (A spot merely near one of its own burials can still be another bird's site.)
  *
  * @param npc - The NPC.
  * @param x - World x of the spot.
  */
 function isOwnBurial(npc: Npc, x: number): boolean {
-  const range = DIG_RESPONSE_IN_SIZES * npc.bird.size
-  return npc.bird.burials.some((spot) => Math.abs(spot - x) <= range)
+  return npc.bird.burials.some((spot) => Math.abs(spot - x) < 1)
 }
 
 /**
