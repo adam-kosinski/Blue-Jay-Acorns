@@ -17,6 +17,7 @@ import { createWorld } from './world'
 
 const DROP_MODE_STORAGE_KEY = 'blue-jay-acorns:drop-mode'
 const PAUSE_HUNGER_STORAGE_KEY = 'blue-jay-acorns:pause-hunger'
+const DEBUG_OPEN_STORAGE_KEY = 'blue-jay-acorns:debug-open'
 
 /**
  * Reads whether the debug "pause my hunger" toggle was left on.
@@ -26,6 +27,17 @@ function loadPauseHunger(): boolean {
     return window.localStorage.getItem(PAUSE_HUNGER_STORAGE_KEY) === 'true'
   } catch {
     return false
+  }
+}
+
+/**
+ * Reads whether the debug panel was left open (it is open by default).
+ */
+function loadDebugOpen(): boolean {
+  try {
+    return window.localStorage.getItem(DEBUG_OPEN_STORAGE_KEY) !== 'false'
+  } catch {
+    return true
   }
 }
 
@@ -57,6 +69,8 @@ export function GameCanvas() {
   const pauseHungerRef = useRef<boolean>(pauseHunger)
   const [showBurialQuality, setShowBurialQuality] = useState<boolean>(false)
   const [invisible, setInvisible] = useState<boolean>(false)
+  const [debugOpen, setDebugOpen] = useState<boolean>(loadDebugOpen)
+  const [buriedCount, setBuriedCount] = useState<number>(0)
   const invisibleRef = useRef<boolean>(false)
 
   useEffect(() => {
@@ -103,6 +117,7 @@ export function GameCanvas() {
       (window.devicePixelRatio || 1) * scale,
     )
     let lastTime = performance.now()
+    let lastBuried = -1
 
     /**
      * Rebuilds world scenery and resets the player to the starting pose.
@@ -153,6 +168,15 @@ export function GameCanvas() {
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
+        // How many of the player's buried acorns are still buried (shown in the debug panel).
+        const buried = world.acorns.reduce(
+          (count, acorn) => (acorn.state === 'buried' && acorn.owner === player ? count + 1 : count),
+          0,
+        )
+        if (buried !== lastBuried) {
+          lastBuried = buried
+          setBuriedCount(buried)
+        }
       }
       clearEdges()
       const camera = cameraForPlayer(player, world, width, height)
@@ -210,53 +234,73 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      <fieldset className="debug-panel">
-        <legend>Debug</legend>
-        {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
-          <label key={mode}>
-            <input
-              type="radio"
-              name="acorn-drop-mode"
-              value={mode}
-              checked={dropMode === mode}
-              onChange={onDropModeChange}
-            />
-            {mode === 'none'
-              ? 'No acorns'
-              : mode === 'deficit'
-                ? 'Deficit (-25%)'
-                : mode === 'surplus'
-                  ? 'Surplus (+25%)'
-                  : 'Default'}
+      <button
+        type="button"
+        className="debug-button"
+        aria-pressed={debugOpen}
+        onClick={(event) => {
+          const next = !debugOpen
+          setDebugOpen(next)
+          try {
+            window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
+          } catch {
+            // Not being able to save is fine; the choice still applies for this session.
+          }
+          event.currentTarget.blur()
+        }}
+      >
+        Debug {debugOpen ? 'on' : 'off'}
+      </button>
+      {debugOpen && (
+        <fieldset className="debug-panel">
+          <legend>Debug</legend>
+          <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
+          {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
+            <label key={mode}>
+              <input
+                type="radio"
+                name="acorn-drop-mode"
+                value={mode}
+                checked={dropMode === mode}
+                onChange={onDropModeChange}
+              />
+              {mode === 'none'
+                ? 'No acorns'
+                : mode === 'deficit'
+                  ? 'Deficit (-25%)'
+                  : mode === 'surplus'
+                    ? 'Surplus (+25%)'
+                    : 'Default'}
+            </label>
+          ))}
+          <label className="debug-toggle">
+            <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
+            Pause my hunger
           </label>
-        ))}
-        <label className="debug-toggle">
-          <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
-          Pause my hunger
-        </label>
-        <label className="debug-toggle">
-          <input
-            type="checkbox"
-            checked={showBurialQuality}
-            onChange={(event) => {
-              setShowBurialQuality(event.target.checked)
-              event.currentTarget.blur()
-            }}
-          />
-          Burial quality heatmap
-        </label>
-        <label className="debug-toggle">
-          <input
-            type="checkbox"
-            checked={invisible}
-            onChange={(event) => {
-              setInvisible(event.target.checked)
-              event.currentTarget.blur()
-            }}
-          />
-          Turn invisible
-        </label>
-      </fieldset>
+          <label className="debug-toggle">
+            <input
+              type="checkbox"
+              checked={showBurialQuality}
+              onChange={(event) => {
+                setShowBurialQuality(event.target.checked)
+                event.currentTarget.blur()
+              }}
+            />
+            Burial quality heatmap
+          </label>
+          <label className="debug-toggle">
+            <input
+              type="checkbox"
+              checked={invisible}
+              onChange={(event) => {
+                setInvisible(event.target.checked)
+                event.currentTarget.blur()
+              }}
+            />
+            Turn invisible
+          </label>
+        </fieldset>
+      )}
       <button type="button" className="restart-button" onClick={onRestart}>
         Restart
       </button>

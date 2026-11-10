@@ -36,9 +36,9 @@ function acornReach(tree: OakTree): number {
 
 /**
  * How good a spot is for `burier` to bury an acorn, from 0 (terrible) to 1 (ideal). Starting at 1:
- * every other bird (the player included) within half a screen width of the spot, as long as the
- * burier can see it too (it is within half a screen width of the burier), lowers it by 0.4 if that
- * bird can see the spot (its view reaches farther ahead than behind) and by 0.2 if it cannot; an oak lowers it by up to 0.5
+ * every other bird (the player included) within half a screen width of the spot, wherever the burier
+ * is, lowers it by 0.8 if that bird can see the spot (its view reaches farther ahead than behind) and
+ * by 0.4 if it cannot; an oak lowers it by up to 0.5
  * (at its trunk's center, easing off linearly to 0 at the farthest an acorn can fall); a place the burier remembers burying an acorn at lowers it by 0.2, easing to 0 two dig tolerances away; the creek
  * and its edge score 0; nothing goes below 0.
  *
@@ -57,7 +57,6 @@ export function burialQuality(
 ): number {
   const size = burier.size
   const range = BURIAL_QUALITY_RANGE_IN_SIZES * size
-  const burierX = burier.x + size / 2
   if (nearCreek(world.terrain.creek, x, size * 1.5)) {
     return 0
   }
@@ -67,9 +66,8 @@ export function burialQuality(
       continue
     }
     const bx = bird.x + bird.size / 2
-    // Only a bird the burier can see (within half a screen of it) counts, and only for spots it can
-    // also see (within half a screen of the spot).
-    if (Math.abs(bx - x) < range && Math.abs(bx - burierX) < range) {
+    // Every bird within half a screen of the spot counts, wherever the burier is.
+    if (Math.abs(bx - x) < range) {
       // Worse if that bird can see the spot, less bad if it is near but cannot see it.
       q -= inView(bird, { x, y: groundYAt(world.terrain, x) })
         ? BURIAL_QUALITY_BIRD_PENALTY

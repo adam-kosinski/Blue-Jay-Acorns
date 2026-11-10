@@ -43,9 +43,35 @@ body,
   height: 100%;
 }
 
-.debug-panel {
+.debug-button {
   position: absolute;
   top: 12px;
+  left: 12px;
+  z-index: 2;
+  padding: 3px 10px;
+  border: 1px solid rgba(31, 61, 82, 0.6);
+  border-radius: 6px;
+  background: rgba(244, 239, 228, 0.82);
+  color: #1b2838;
+  font: 13px Georgia, 'Times New Roman', serif;
+  cursor: pointer;
+}
+
+.debug-button[aria-pressed='true'] {
+  background: rgba(255, 248, 234, 0.95);
+  font-weight: bold;
+}
+
+.debug-readout {
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(31, 61, 82, 0.3);
+  line-height: 1.5;
+}
+
+.debug-panel {
+  position: absolute;
+  top: 46px;
   left: 12px;
   z-index: 1;
   margin: 0;

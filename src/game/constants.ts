@@ -142,13 +142,12 @@ export const KICKED_LEAF_DENSITY_PER_SIZE = 4.1
 export const KICKED_LEAVES_LIMIT = 600
 
 /**
- * Burial quality (0-1) of a spot, for a bird looking to bury: every other bird (that the burier can
- * see) within half a screen width of the spot lowers it by this much if that bird can see the spot
- * (it is in its view, which reaches farther ahead of it than behind) and by the smaller amount below
- * if it cannot...
+ * Burial quality (0-1) of a spot, for a bird looking to bury: every other bird within half a screen
+ * width of the spot lowers it by this much if that bird can see the spot (it is in its view, which
+ * reaches farther ahead of it than behind) and by the smaller amount below if it cannot...
  */
-export const BURIAL_QUALITY_BIRD_PENALTY = 0.4
-export const BURIAL_QUALITY_UNSEEN_PENALTY = 0.2
+export const BURIAL_QUALITY_BIRD_PENALTY = 0.8
+export const BURIAL_QUALITY_UNSEEN_PENALTY = 0.4
 
 /** Burial-quality penalty near a spot where the burier itself remembers burying an acorn (within the dig-up tolerance). */
 export const BURIAL_QUALITY_OWN_SITE_PENALTY = 0.2
