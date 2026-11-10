@@ -11,7 +11,7 @@ import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
-import { renderScene, setBurialHeatmap, warmUpScene } from './render'
+import { renderScene, setBurialHeatmap, setShowMinimap, warmUpScene } from './render'
 import type { Player, World } from './types'
 import { createWorld } from './world'
 
@@ -84,6 +84,10 @@ export function GameCanvas() {
   useEffect(() => {
     setBurialHeatmap(showBurialQuality)
   }, [showBurialQuality])
+
+  useEffect(() => {
+    setShowMinimap(debugOpen)
+  }, [debugOpen])
 
   useEffect(() => {
     invisibleRef.current = invisible

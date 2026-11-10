@@ -191,7 +191,7 @@ export function createSquirrels(world: World, playerSize: number): Npc[] {
     bird.species = 'squirrel'
     bird.reach = SQUIRREL_NOSE_REACH_X
     bird.hungerScale = SQUIRREL_HUNGER_SCALE
-    bird.hunger = randRange(0.4, 1)
+    bird.hunger = randRange(0.7, 0.9)
     const trunkX = tree.x + tree.trunkWidth / 2
     const reach = acornReach(tree)
     const npc = newNpc(bird, SQUIRREL_SECRECY)

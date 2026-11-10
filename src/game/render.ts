@@ -114,7 +114,9 @@ export function renderScene(
 
   ctx.restore()
 
-  drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
+  if (showMinimap) {
+    drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
+  }
   drawHungerBar(ctx, viewWidth, viewHeight, player)
 
   drawControlsOverlay(ctx, viewHeight)
@@ -907,6 +909,18 @@ function buildLeafTile(leaves: LeafLitter[], index: number, top: number, height:
   // recorded leaf shapes every time the tile is drawn.
   ctx?.getImageData(0, 0, 1, 1)
   return { canvas, res }
+}
+
+/** Whether the minimap is drawn (it is part of the debug display and goes away with it). */
+let showMinimap = true
+
+/**
+ * Shows or hides the minimap.
+ *
+ * @param on - Whether to show it.
+ */
+export function setShowMinimap(on: boolean): void {
+  showMinimap = on
 }
 
 /** Debug: whether the foreground surface is colored by burial quality (see `drawBurialHeatmap`). */
