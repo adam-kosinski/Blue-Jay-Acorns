@@ -1,7 +1,6 @@
 Blue Jay Acorns ideas
 
-- Make harder to see caches: lower the prob, but maybe still keep 100% if you haven't tried to hide it at all?
-- Try tuning burial_quality penalties to result in fewer rejected burial landings? Requires that it make sense based on the need to hide caches from other birds or squirrels
+- NPC standing with acorn in findBurialState, waiting for player to leave before burying bug
 - Read a research paper, learn more about caching sites
 - Add seasons and varying acorn dropping rates throughout
   - find data on acorn abundance phenology
@@ -9,11 +8,14 @@ Blue Jay Acorns ideas
 - Allow the bird to carry multiple acorns
 - Maybe the "noticing" notification should only apply to your burials, not other birds? Other birds are not your business
   - since other birds could reveal quite hidden burial sites for you, which is not intended
+  - maybe only if they decide to go for the acorn immediately should they indicate the white dashed line
+- Assess burial quality algorithm by watching birds bury acorns while invisible
 
 Strategies
 - Why don't blue jays always cache acorns near where they find them?
    - animals might search under trees more (resident squirrel?)
 - Why don't they cache everything in one place?
+   - In my game, because once someone discovers your cache, it disappears very quickly
    - To help expand their range. If I add a hawk creating an exclusion zone this could be useful
    - I wonder if a squirrel could sniff around and dig up acorns it finds?
    - But also the cache-discovery via digging provides an incentive
@@ -35,3 +37,5 @@ Done
 - More landscape variation
 - Disguising caches
 - Back and forth hopping is awkward, sometimes you hop twice without meaning to
+- Make harder to see caches: lower the prob, but maybe still keep 100% if you haven't tried to hide it at all?
+
