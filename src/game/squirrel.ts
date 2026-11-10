@@ -2,6 +2,7 @@ import {
   HOP_DURATION,
   SQUIRREL_CLIMB_SPEED_IN_SIZES,
   SQUIRREL_SNIFF_EVERY_HOPS_MAX,
+  SQUIRREL_SNIFF_FLOOR_HOPS,
   SQUIRREL_SNIFF_EVERY_HOPS_MIN,
   SQUIRREL_SNIFF_NOTICE_FACTOR,
   SQUIRREL_SNIFF_RADIUS_IN_SIZES,
@@ -190,7 +191,8 @@ export function squirrelWalk(npc: Npc): void {
 /**
  * Starts a sniff: the squirrel stops and puts its nose to the ground. Every buried acorn of another
  * animal within a squirrel width of its nose gets one roll to be noticed, at twice the usual chance
- * (the usual chance falls with the hops that disguised it).
+ * (the usual chance falls with the hops that disguised it, but never below its value for
+ * `SQUIRREL_SNIFF_FLOOR_HOPS` hops).
  *
  * @param npc - A squirrel standing still.
  * @param world - Acorns and the clock.
@@ -211,7 +213,8 @@ function startSniff(npc: Npc, world: World): void {
     if (npc.sites.some((site) => Math.abs(site.x - acorn.x) <= 0.25 * bird.size)) {
       continue
     }
-    const chance = Math.min(1, SQUIRREL_SNIFF_NOTICE_FACTOR * burialSiteVisibility(acorn.hops))
+    const visibility = Math.max(burialSiteVisibility(acorn.hops), burialSiteVisibility(SQUIRREL_SNIFF_FLOOR_HOPS))
+    const chance = Math.min(1, SQUIRREL_SNIFF_NOTICE_FACTOR * visibility)
     if (Math.random() < chance) {
       npc.sites.push({ x: acorn.x, owner: acorn.owner ?? bird, noticedAt: world.time })
     }

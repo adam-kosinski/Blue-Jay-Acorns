@@ -239,6 +239,9 @@ export const SQUIRREL_SNIFF_SECONDS = 0.9
 export const SQUIRREL_SNIFF_RADIUS_IN_SIZES = 1
 export const SQUIRREL_SNIFF_NOTICE_FACTOR = 2
 
+/** A sniff always has at least the chance it has for a mound disguised by this many hops (even a fully hidden one). */
+export const SQUIRREL_SNIFF_FLOOR_HOPS = 6
+
 /** How far ahead of itself (in player sizes) an NPC can perceive acorns: a third of a typical screen. */
 export const NPC_PERCEIVE_AHEAD_IN_SIZES = TYPICAL_VIEW_WIDTH_IN_SIZES / 3
 
