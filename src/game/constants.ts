@@ -241,7 +241,7 @@ export const SQUIRREL_SNIFF_RADIUS_IN_SIZES = 1
 export const SQUIRREL_SNIFF_NOTICE_FACTOR = 2
 
 /** A sniff notices any buried acorn of another animal within range with at least this chance (even a fully hidden one). */
-export const SQUIRREL_SNIFF_MIN_CHANCE = 0.5
+export const SQUIRREL_SNIFF_MIN_CHANCE = 0.2
 
 /** How far ahead of itself (in player sizes) an NPC can perceive acorns: a third of a typical screen. */
 export const NPC_PERCEIVE_AHEAD_IN_SIZES = TYPICAL_VIEW_WIDTH_IN_SIZES / 3
