@@ -455,6 +455,8 @@ export type Npc = {
   /** The beak target an NPC is currently moving to, and the way it faces on arrival (fixed per target). */
   reachX: number | null
   reachDir: 1 | -1
+  /** How many acorns and burial sites it remembers (a rise means it just noticed something). */
+  knownCount: number
   /** Free acorns currently in the bird's view (used to detect acorns entering view). */
   inView: Set<Acorn>
   /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */

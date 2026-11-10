@@ -313,3 +313,18 @@ export function returnHome(npc: Npc): boolean {
   }
   return false
 }
+
+/**
+ * Whether a squirrel is outside its home stretch (by more than 0.3 of its size).
+ *
+ * @param npc - A squirrel.
+ */
+export function isOutsideHome(npc: Npc): boolean {
+  const home = npc.home
+  if (!home) {
+    return false
+  }
+  const slack = 0.3 * npc.bird.size
+  const cx = npc.bird.x + npc.bird.size / 2
+  return cx < home.left - slack || cx > home.right + slack
+}

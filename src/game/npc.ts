@@ -26,6 +26,7 @@ import {
 import { acornReach } from './burial'
 import {
   inHome,
+  isOutsideHome,
   returnHome,
   nextSniffHops,
   placeHidden,
@@ -144,6 +145,7 @@ function newNpc(bird: Player, secrecy: number): Npc {
       reachX: null,
       reachDir: 1,
       inView: new Set(),
+      knownCount: 0,
       noticed: new Map(),
       seenActions: new WeakSet(),
       missedActions: new WeakSet(),
@@ -563,6 +565,9 @@ function directionToRemembered(npc: Npc): 1 | -1 | null {
   const cx = npc.bird.x + npc.bird.size / 2
   let nearestX: number | null = null
   const consider = (x: number): void => {
+    if (!inHome(npc, x)) {
+      return
+    }
     if (nearestX === null || Math.abs(x - cx) < Math.abs(nearestX - cx)) {
       nearestX = x
     }
@@ -710,7 +715,34 @@ function decide(npc: Npc, world: World): void {
   if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.bird.burials.length > 0) {
     npc.state = 'retrieve'
     npc.digSpot = null
+    return
   }
+  // Nothing in view, but it remembers an acorn or burial site it noticed: that is a known destination,
+  // so it heads that way (turning round if it has to) until the spot comes back into view.
+  const heading = directionToRemembered(npc)
+  if (heading !== null) {
+    npc.direction = heading
+  }
+}
+
+/**
+ * How long (seconds) a squirrel stands still after each hop right now: the full pause while it explores
+ * with nothing to head for or looks for a spot to bury, none on the way to a chosen burial spot, back
+ * to its home stretch, or to an acorn or burial site it has seen or remembers.
+ *
+ * @param npc - The animal.
+ */
+function squirrelHopRest(npc: Npc): number {
+  if (!npc.home || isOutsideHome(npc)) {
+    return 0
+  }
+  if (npc.state === 'explore') {
+    return directionToRemembered(npc) === null ? SQUIRREL_HOP_PAUSE_SECONDS : 0
+  }
+  if (npc.state === 'findBurialSpot') {
+    return npc.spotX === null ? SQUIRREL_HOP_PAUSE_SECONDS : 0
+  }
+  return 0
 }
 
 /**
@@ -1166,6 +1198,13 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
     updatePerception(npc, world)
     dropOwnBurialsFromSites(npc)
+    // Having just noticed something it decides at once what to do about it (the once-per-second
+    // decision would let it wander off before it looked).
+    const known = npc.sites.length + npc.noticed.size
+    if (known > npc.knownCount) {
+      npc.decisionTimer = Math.max(npc.decisionTimer, 1)
+    }
+    npc.knownCount = known
 
     let waiting = npc.waitTimer > 0
     if (waiting) {
@@ -1177,6 +1216,10 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     } else {
       npc.decisionTimer += dt
       while (npc.decisionTimer >= 1) {
+        if (npc.home && npc.sniffTimer > 0) {
+          // Let a squirrel finish sniffing first.
+          break
+        }
         npc.decisionTimer -= 1
         decide(npc, world)
       }
@@ -1246,14 +1289,19 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       npc.keys.w = false
       npc.keys.s = false
     }
-    // Squirrels stand still for a moment after every hop (done in the hop physics, where the landing is).
+    // Squirrels stand still for a moment after every hop while they wander or search, never on the way to
+    // somewhere (done in the hop physics, where the landing is).
+    const rest = squirrelHopRest(npc)
+    if (rest === 0) {
+      bird.hopRest = 0
+    }
     updatePlayer(
       bird,
       npc.keys,
       dt,
       world,
       npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE,
-      npc.home ? SQUIRREL_HOP_PAUSE_SECONDS : 0,
+      rest,
     )
     updateAction(bird, world, dt)
     // (a burial that just finished may sit on a site noted before)
