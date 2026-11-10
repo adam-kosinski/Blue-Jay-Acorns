@@ -232,7 +232,7 @@ export const SQUIRREL_HOP_PAUSE_SECONDS = 0.5
 
 /** A foraging squirrel sniffs after every this many hops (a random whole number from min to max). */
 export const SQUIRREL_SNIFF_EVERY_HOPS_MIN = 2
-export const SQUIRREL_SNIFF_EVERY_HOPS_MAX = 3
+export const SQUIRREL_SNIFF_EVERY_HOPS_MAX = 4
 
 /** How long (seconds) a sniff lasts, how near (in squirrel widths) a buried acorn must be to the nose to be sniffed out, and by how much a sniff multiplies the usual chance to notice it. */
 export const SQUIRREL_SNIFF_SECONDS = 0.9
