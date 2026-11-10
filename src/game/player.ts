@@ -32,6 +32,7 @@ export function createPlayer(world: World, size: number): Player {
     hunger: 1,
     eatTimer: 0,
     hopT: HOP_DURATION,
+    hopRest: 0,
     action: null,
     digFailX: null,
     dugSites: [],
@@ -105,10 +106,26 @@ export function syncPlayerToWorld(player: Player, world: World, size: number): v
  * @param dir - Held direction: -1 left, 1 right, 0 none.
  * @param dt - Elapsed seconds.
  * @param speedScale - Speed multiplier (NPCs are slower).
+ * @param restAfterHop - Seconds the bird stands still after every hop before it can hop again (squirrels).
  */
-function hopOnGround(player: Player, dir: number, dt: number, speedScale: number): void {
+function hopOnGround(
+  player: Player,
+  dir: number,
+  dt: number,
+  speedScale: number,
+  restAfterHop: number,
+): void {
   const average = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size
   let left = dt
+  // Standing still after a hop (counts down whether or not a key is held).
+  const rest = (): void => {
+    if (player.hopT >= HOP_DURATION && player.hopRest > 0) {
+      const used = Math.min(left, player.hopRest)
+      player.hopRest -= used
+      left -= used
+    }
+  }
+  rest()
   while (left > 1e-9) {
     if (player.hopT >= HOP_DURATION) {
       if (dir === 0) {
@@ -122,9 +139,14 @@ function hopOnGround(player: Player, dir: number, dt: number, speedScale: number
     player.x += dir * average * (1.4 - 0.8 * p) * step
     player.hopT += step
     left -= step
+    if (player.hopT >= HOP_DURATION) {
+      // Landed: rest before the next hop.
+      player.hopRest = restAfterHop
+      rest()
+    }
   }
-  // Keep hopping without a landing frame when the key is still held.
-  if (player.hopT >= HOP_DURATION && dir !== 0) {
+  // Keep hopping without a landing frame when the key is still held (unless the bird has to rest).
+  if (player.hopT >= HOP_DURATION && dir !== 0 && player.hopRest <= 0) {
     player.hopT = 0
     player.hops += 1
   }
@@ -138,6 +160,7 @@ function hopOnGround(player: Player, dir: number, dt: number, speedScale: number
  * @param dt - Elapsed seconds since the last frame.
  * @param world - Play-space bounds and ground.
  * @param speedScale - Multiplier on flying, climbing and hopping speed (NPCs are slower).
+ * @param restAfterHop - Seconds a standing bird stands still after each hop (squirrels).
  */
 export function updatePlayer(
   player: Player,
@@ -145,6 +168,7 @@ export function updatePlayer(
   dt: number,
   world: World,
   speedScale = 1,
+  restAfterHop = 0,
 ): void {
   // While a pick-up, bury or dig-up animation plays the bird stays put.
   const busy = player.action !== null
@@ -158,7 +182,7 @@ export function updatePlayer(
     player.x += dir * MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size * dt
     player.hopT = HOP_DURATION
   } else if (player.state === 'standing') {
-    hopOnGround(player, dir, dt, speedScale)
+    hopOnGround(player, dir, dt, speedScale, restAfterHop)
   } else {
     player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * player.size * dt
     player.hopT = HOP_DURATION

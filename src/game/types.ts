@@ -21,6 +21,8 @@ export type Player = {
   hunger: number
   /** Seconds left in the eating animation (0 when not eating). */
   eatTimer: number
+  /** Seconds left standing still after the last hop (squirrels rest between hops; 0 for birds). */
+  hopRest: number
   /** Seconds since the current hop began; at or past `HOP_DURATION` the bird is not hopping. */
   hopT: number
   /** Pick-up, bury or dig-up animation in progress, if any. */
@@ -409,9 +411,6 @@ export type Npc = {
   sniffHopsLeft: number
   /** Squirrels only: `bird.hops` when the last sniff finished. */
   sniffHopsAt: number
-  /** Squirrels only: seconds left in the pause after a hop, and whether it was mid-hop last frame. */
-  hopPause: number
-  wasHopping: boolean
   /** Simulated held keys fed to the shared player movement code. */
   keys: KeyState
   /** Personality: 0 (aloof) to 1 (nosy); squirrels have none (null). */

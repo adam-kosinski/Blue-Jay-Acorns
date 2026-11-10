@@ -127,8 +127,6 @@ function newNpc(bird: Player, secrecy: number): Npc {
     sniffTimer: 0,
     sniffHopsLeft: nextSniffHops(),
     sniffHopsAt: 0,
-  hopPause: 0,
-  wasHopping: false,
       decisionTimer: Math.random(),
       direction: bird.facing,
       targetAltitude: randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE),
@@ -1011,7 +1009,7 @@ function runBury(npc: Npc, world: World): void {
  */
 function runCover(npc: Npc, dt: number): void {
   const { bird } = npc
-  if (bird.action || (npc.home && npc.hopPause > 0)) {
+  if (bird.action || (npc.home && bird.hopRest > 0)) {
     return
   }
   if (bird.hopT < HOP_DURATION) {
@@ -1244,21 +1242,19 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
 
     if (npc.home) {
-      // Squirrels never fly, and stand still for a moment after every hop.
+      // Squirrels never fly.
       npc.keys.w = false
       npc.keys.s = false
-      const landed = bird.hopT >= HOP_DURATION
-      if (npc.wasHopping && landed) {
-        npc.hopPause = SQUIRREL_HOP_PAUSE_SECONDS
-      }
-      npc.wasHopping = !landed
-      if (landed && npc.hopPause > 0) {
-        npc.hopPause -= dt
-        npc.keys.a = false
-        npc.keys.d = false
-      }
     }
-    updatePlayer(bird, npc.keys, dt, world, npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE)
+    // Squirrels stand still for a moment after every hop (done in the hop physics, where the landing is).
+    updatePlayer(
+      bird,
+      npc.keys,
+      dt,
+      world,
+      npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE,
+      npc.home ? SQUIRREL_HOP_PAUSE_SECONDS : 0,
+    )
     updateAction(bird, world, dt)
     // (a burial that just finished may sit on a site noted before)
     dropOwnBurialsFromSites(npc)
