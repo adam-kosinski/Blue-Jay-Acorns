@@ -106,7 +106,8 @@ export function syncPlayerToWorld(player: Player, world: World, size: number): v
  * @param dir - Held direction: -1 left, 1 right, 0 none.
  * @param dt - Elapsed seconds.
  * @param speedScale - Speed multiplier (NPCs are slower).
- * @param restAfterHop - Seconds the bird stands still after every hop before it can hop again (squirrels).
+ * @param restAfterHop - Longest time (seconds) the bird stands still after a hop before it can hop again (squirrels).
+ * @param restAfterHopMin - Shortest such time; the rest is random in between.
  */
 function hopOnGround(
   player: Player,
@@ -114,6 +115,7 @@ function hopOnGround(
   dt: number,
   speedScale: number,
   restAfterHop: number,
+  restAfterHopMin: number,
 ): void {
   const average = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size
   let left = dt
@@ -141,7 +143,7 @@ function hopOnGround(
     left -= step
     if (player.hopT >= HOP_DURATION) {
       // Landed: rest before the next hop.
-      player.hopRest = restAfterHop
+      player.hopRest = restAfterHopMin + Math.random() * (restAfterHop - restAfterHopMin)
       rest()
     }
   }
@@ -160,7 +162,8 @@ function hopOnGround(
  * @param dt - Elapsed seconds since the last frame.
  * @param world - Play-space bounds and ground.
  * @param speedScale - Multiplier on flying, climbing and hopping speed (NPCs are slower).
- * @param restAfterHop - Seconds a standing bird stands still after each hop (squirrels).
+ * @param restAfterHop - Longest time a standing bird stands still after each hop (squirrels; 0 for none).
+ * @param restAfterHopMin - Shortest such time.
  */
 export function updatePlayer(
   player: Player,
@@ -169,6 +172,7 @@ export function updatePlayer(
   world: World,
   speedScale = 1,
   restAfterHop = 0,
+  restAfterHopMin = 0,
 ): void {
   // While a pick-up, bury or dig-up animation plays the bird stays put.
   const busy = player.action !== null
@@ -182,7 +186,7 @@ export function updatePlayer(
     player.x += dir * MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size * dt
     player.hopT = HOP_DURATION
   } else if (player.state === 'standing') {
-    hopOnGround(player, dir, dt, speedScale, restAfterHop)
+    hopOnGround(player, dir, dt, speedScale, restAfterHop, restAfterHopMin)
   } else {
     player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * player.size * dt
     player.hopT = HOP_DURATION

@@ -7,7 +7,8 @@ import {
   HUNGER_THRESHOLD,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
-  SQUIRREL_HOP_PAUSE_SECONDS,
+  SQUIRREL_HOP_PAUSE_MAX_SECONDS,
+  SQUIRREL_HOP_PAUSE_MIN_SECONDS,
   SQUIRREL_HUNGER_SCALE,
   SQUIRREL_IDLE_ENTER_HUNGER,
   SQUIRREL_IDLE_LEAVE_HUNGER,
@@ -726,23 +727,23 @@ function decide(npc: Npc, world: World): void {
 }
 
 /**
- * How long (seconds) a squirrel stands still after each hop right now: the full pause while it explores
- * with nothing to head for or looks for a spot to bury, none on the way to a chosen burial spot, back
- * to its home stretch, or to an acorn or burial site it has seen or remembers.
+ * Whether a squirrel stands still for a moment after each hop right now: while it explores with nothing
+ * to head for or looks for a spot to bury, but not on the way to a chosen burial spot, back to its home
+ * stretch, or to an acorn or burial site it has seen or remembers.
  *
  * @param npc - The animal.
  */
-function squirrelHopRest(npc: Npc): number {
+function squirrelRests(npc: Npc): boolean {
   if (!npc.home || isOutsideHome(npc)) {
-    return 0
+    return false
   }
   if (npc.state === 'explore') {
-    return directionToRemembered(npc) === null ? SQUIRREL_HOP_PAUSE_SECONDS : 0
+    return directionToRemembered(npc) === null
   }
   if (npc.state === 'findBurialSpot') {
-    return npc.spotX === null ? SQUIRREL_HOP_PAUSE_SECONDS : 0
+    return npc.spotX === null
   }
-  return 0
+  return false
 }
 
 /**
@@ -1291,8 +1292,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
     // Squirrels stand still for a moment after every hop while they wander or search, never on the way to
     // somewhere (done in the hop physics, where the landing is).
-    const rest = squirrelHopRest(npc)
-    if (rest === 0) {
+    const rests = squirrelRests(npc)
+    if (!rests) {
       bird.hopRest = 0
     }
     updatePlayer(
@@ -1301,7 +1302,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       dt,
       world,
       npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE,
-      rest,
+      rests ? SQUIRREL_HOP_PAUSE_MAX_SECONDS : 0,
+      rests ? SQUIRREL_HOP_PAUSE_MIN_SECONDS : 0,
     )
     updateAction(bird, world, dt)
     // (a burial that just finished may sit on a site noted before)

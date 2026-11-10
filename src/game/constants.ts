@@ -222,13 +222,14 @@ export const SQUIRREL_IDLE_LEAVE_HUNGER = 0.7
 export const ACORN_SPREAD_FACTOR = 0.5
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
-export const SQUIRREL_NOSE_REACH_X = 43
+export const SQUIRREL_NOSE_REACH_X = 45
 
 /** Squirrels climb this many sizes per second (all the way up out of the play area, where they are out of sight). */
 export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 4.8
 
-/** A squirrel stands still this long (seconds) after every hop before it hops again. */
-export const SQUIRREL_HOP_PAUSE_SECONDS = 0.5
+/** A squirrel stands still for a random time from the first to the second value (seconds) after every hop before it hops again. */
+export const SQUIRREL_HOP_PAUSE_MIN_SECONDS = 0.1
+export const SQUIRREL_HOP_PAUSE_MAX_SECONDS = 0.4
 
 /** A foraging squirrel sniffs after every this many hops (a random whole number from min to max). */
 export const SQUIRREL_SNIFF_EVERY_HOPS_MIN = 2

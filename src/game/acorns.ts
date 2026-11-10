@@ -18,7 +18,7 @@ import {
   REACH_IN_SIZES,
   acornRadiusForPlayer,
 } from './constants'
-import { groundYAt } from './terrain'
+import { groundYAt, inWater } from './terrain'
 import type { Acorn, KeyEdges, Player, World } from './types'
 
 /**
@@ -505,6 +505,10 @@ export function updateAcorns(world: World, playerSize: number, dt: number): void
       leaf.x = leaf.restX
       leaf.y = leaf.restY
       leaf.landed = true
+      if (inWater(world.terrain, leaf.restX)) {
+        // A leaf that falls in the creek does not stay: it fades away right away.
+        leaf.fading = true
+      }
     }
   }
   if (faded) {
