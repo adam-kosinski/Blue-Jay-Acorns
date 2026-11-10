@@ -1158,6 +1158,11 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       }
     }
 
+    if (npc.home && npc.sniffTimer > 0 && npc.state !== 'explore') {
+      // A sniff cut short (it saw an acorn, say): the nose comes up at once.
+      npc.sniffTimer = 0
+      bird.sniff = -1
+    }
     updatePerception(npc, world)
     dropOwnBurialsFromSites(npc)
 

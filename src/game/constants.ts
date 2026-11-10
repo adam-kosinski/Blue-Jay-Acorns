@@ -222,7 +222,7 @@ export const SQUIRREL_IDLE_LEAVE_HUNGER = 0.7
 export const ACORN_SPREAD_FACTOR = 0.5
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
-export const SQUIRREL_NOSE_REACH_X = 44
+export const SQUIRREL_NOSE_REACH_X = 43
 
 /** Squirrels climb this many sizes per second (all the way up out of the play area, where they are out of sight). */
 export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 4.8

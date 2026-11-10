@@ -1272,12 +1272,91 @@ function drawBirdOnWater(ctx: CanvasRenderingContext2D, bird: Player, world: Wor
 const SQUIRREL_FUR = '#8c9096'
 const SQUIRREL_FUR_DARK = '#686c73'
 const SQUIRREL_FUR_LIGHT = '#c4c7cb'
+const SQUIRREL_FUR_WARM = '#a09a93'
 const SQUIRREL_BELLY = '#dcdedf'
 
 /**
- * Draws a squirrel: gray fur, a big bushy tail, a pale belly, small round ears. A standing one hops
- * with a little arch; while sniffing, digging or burying its nose goes to the ground; it sits up to
- * eat; and on its trunk it is turned to climb up or down, clinging to the trunk's side.
+ * Draws a squirrel's bushy tail from its rump. Stretched out fully (`curl` 0) it trails straight back
+ * and is 0.8 of the body's length; the more it is curled (up to 1) the more it arches up and forward
+ * over the back, as it does when the squirrel is in motion or sitting up to eat.
+ *
+ * @param ctx - 2D canvas context (sprite units, body facing +x).
+ * @param curl - 0 stretched out, 1 curled over the back.
+ */
+function drawSquirrelTail(ctx: CanvasRenderingContext2D, curl: number): void {
+  const lerp = (a: number, b: number): number => a + (b - a) * curl
+  const p0 = [-44, 10]
+  const p1 = [lerp(-70, -90), lerp(12, 0)]
+  const p2 = [lerp(-100, -96), lerp(10, -62)]
+  const p3 = [lerp(-124, -46), lerp(6, -70)]
+  const n = 22
+  const centre: [number, number][] = []
+  for (let i = 0; i <= n; i += 1) {
+    const t = i / n
+    const m = 1 - t
+    const c = [m * m * m, 3 * m * m * t, 3 * m * t * t, t * t * t]
+    centre.push([
+      c[0] * p0[0] + c[1] * p1[0] + c[2] * p2[0] + c[3] * p3[0],
+      c[0] * p0[1] + c[1] * p1[1] + c[2] * p2[1] + c[3] * p3[1],
+    ])
+  }
+  const left: [number, number][] = []
+  const right: [number, number][] = []
+  const normals: [number, number][] = []
+  const halfWidths: number[] = []
+  centre.forEach(([x, y], i) => {
+    const a = centre[Math.max(0, i - 1)]
+    const b = centre[Math.min(n, i + 1)]
+    const tx = b[0] - a[0]
+    const ty = b[1] - a[1]
+    const len = Math.hypot(tx, ty) || 1
+    const nx = -ty / len
+    const ny = tx / len
+    // Bushy: narrow at the rump, fullest past the middle, a rounded fuzzy end.
+    const t = i / n
+    const w = 3.5 + 8 * Math.sin(Math.PI * Math.min(1, t * 0.95 + 0.04)) ** 0.8 + (t > 0.9 ? 1.5 : 0)
+    normals.push([nx, ny])
+    halfWidths.push(w)
+    left.push([x + nx * w, y + ny * w])
+    right.push([x - nx * w, y - ny * w])
+  })
+  ctx.fillStyle = SQUIRREL_FUR
+  ctx.strokeStyle = SQUIRREL_FUR_WARM
+  ctx.lineWidth = 2.4
+  ctx.beginPath()
+  left.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+  for (let i = n; i >= 0; i -= 1) {
+    ctx.lineTo(right[i]?.[0] ?? 0, right[i]?.[1] ?? 0)
+  }
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  // Fur: lighter hairs along the tail and a pale grizzled rim.
+  ctx.lineWidth = 1.5
+  for (const f of [-0.62, -0.28, 0.08, 0.42, 0.7]) {
+    ctx.strokeStyle = f > 0.5 || f < -0.5 ? SQUIRREL_FUR_LIGHT : SQUIRREL_FUR_DARK
+    ctx.globalAlpha = 0.75
+    ctx.beginPath()
+    for (let i = 2; i <= n - 1; i += 1) {
+      const [x, y] = centre[i] ?? [0, 0]
+      const [nx, ny] = normals[i] ?? [0, 0]
+      const w = (halfWidths[i] ?? 0) * f
+      if (i === 2) {
+        ctx.moveTo(x + nx * w, y + ny * w)
+      } else {
+        ctx.lineTo(x + nx * w, y + ny * w)
+      }
+    }
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+}
+
+/**
+ * Draws a squirrel: gray fur, a long body (as long as a blue jay) with a big bushy tail, a pale belly
+ * and small round ears. A standing one hops with a little arch, its tail arched over its back; while
+ * sniffing, digging or burying its nose goes to the ground; it sits up on its haunches, tail curled
+ * behind, to eat; and on its trunk it is turned to climb up or down with its tail trailing.
  *
  * @param ctx - 2D canvas context in world space.
  * @param bird - The squirrel's body.
@@ -1291,14 +1370,34 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
   const hopP = hopping ? bird.hopT / HOP_DURATION : 0
   const lift = hopping ? Math.sin(Math.PI * hopP) * 12 : 0
   const eating = bird.eatTimer > 0
-  // How far the head is down (0 up, 1 nose on the ground).
+  // How far the head is down (0 up, 1 nose on the ground), smoothly in and out so it never jumps.
+  const smooth = (x: number): number => {
+    const t = Math.max(0, Math.min(1, x))
+    return t * t * (3 - 2 * t)
+  }
+  const envelope = (p: number): number => smooth(p / 0.15) * smooth((1 - p) / 0.15)
+  // Digging (burying, digging up): the front paws scratch at the ground, alternating.
+  let digging = false
+  let digPhase = 0
   let dip = 0
   if (bird.sniff >= 0) {
-    dip = 0.85 + 0.15 * Math.sin(bird.sniff * Math.PI * 8)
+    // Sniffing: the nose goes down and stays there, hardly moving.
+    dip = envelope(bird.sniff) * (0.97 + 0.03 * Math.sin(bird.sniff * Math.PI * 9))
   } else if (bird.action) {
-    const p = bird.action.timer / bird.action.duration
-    dip = 0.75 + 0.25 * Math.sin(p * Math.PI * 7)
+    const p = Math.max(0, Math.min(1, bird.action.timer / bird.action.duration))
+    if (bird.action.kind === 'pickup') {
+      // One smooth stoop to the acorn and back up.
+      dip = Math.sin(Math.PI * p) ** 0.8
+    } else {
+      // Burying / digging up: the head works up and down while the paws scratch.
+      digging = true
+      digPhase = p * Math.PI * 2 * 4
+      dip = envelope(p) * (0.8 + 0.2 * Math.sin(p * Math.PI * 2 * 2.5))
+    }
   }
+  // The tail is rarely stretched out: arched over the back when moving or standing, curled right up
+  // when sitting, trailing when climbing.
+  const curl = eating ? 1 : climbing ? 0.25 : hopping ? 0.6 : dip > 0 ? 0.55 : 0.75
 
   ctx.save()
   ctx.translate(cx, cy)
@@ -1308,117 +1407,129 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
     ctx.scale(bird.climbSide, 1)
     ctx.rotate(bird.climbDir > 0 ? -Math.PI / 2 : Math.PI / 2)
     ctx.scale(1, bird.climbDir > 0 ? 1 : -1)
-    // The animation: legs alternate, body stretches a little.
     ctx.translate(0, 6)
   } else {
     ctx.scale(bird.facing, 1)
     ctx.translate(0, 10 - lift)
     if (eating) {
-      // Sits up on its haunches to eat, tail curled behind.
-      ctx.translate(-4, -2)
-      ctx.rotate(-0.55)
+      // The tail stays curled up behind the lower back while the squirrel sits up.
+      ctx.save()
+      ctx.translate(12, 20)
+      drawSquirrelTail(ctx, 1)
+      ctx.restore()
+      // Sits up on its haunches, torso upright, about the hind feet.
+      ctx.translate(-26, 36)
+      ctx.rotate(-1.15)
+      ctx.translate(26, -36)
     }
   }
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
-  const step = climbing ? Math.sin(bird.animTime * 14) : bird.walking ? Math.sin(bird.animTime * 14) : 0
+  const step = bird.walking || climbing ? Math.sin(bird.animTime * 14) : 0
 
-  // Bushy tail: a big plume curling up behind and over the back, with fur strokes along it.
-  ctx.fillStyle = SQUIRREL_FUR
-  ctx.strokeStyle = SQUIRREL_FUR_DARK
-  ctx.lineWidth = 2
-  ctx.beginPath()
-  ctx.moveTo(-20, 16)
-  ctx.bezierCurveTo(-54, 20, -66, -14, -48, -38)
-  ctx.bezierCurveTo(-40, -50, -22, -52, -16, -42)
-  ctx.bezierCurveTo(-26, -34, -22, -14, -12, -2)
-  ctx.closePath()
-  ctx.fill()
-  ctx.stroke()
-  ctx.strokeStyle = SQUIRREL_FUR_LIGHT
-  ctx.lineWidth = 1.6
-  for (const [x0, y0, x1, y1] of [
-    [-24, 10, -52, 2],
-    [-26, 4, -56, -14],
-    [-26, -6, -50, -30],
-    [-24, -16, -40, -42],
-  ] as const) {
-    ctx.beginPath()
-    ctx.moveTo(x0, y0)
-    ctx.quadraticCurveTo((x0 + x1) / 2 - 4, (y0 + y1) / 2 - 2, x1, y1)
-    ctx.stroke()
+  if (!eating) {
+    drawSquirrelTail(ctx, curl)
   }
 
   // Hind leg and haunch.
   ctx.fillStyle = SQUIRREL_FUR_DARK
   ctx.beginPath()
-  ctx.ellipse(-14, 22, 14, 13, 0, 0, Math.PI * 2)
+  ctx.ellipse(-28, 19, 19, 18, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.strokeStyle = SQUIRREL_FUR_DARK
-  ctx.lineWidth = 5
+  ctx.lineWidth = 6
   ctx.beginPath()
-  ctx.moveTo(-14, 28)
-  ctx.lineTo(-14 + 6 * step, 38)
-  ctx.lineTo(-4 + 6 * step, 40)
+  ctx.moveTo(-26, 30)
+  ctx.lineTo(-26 + 6 * step, 37)
+  ctx.lineTo(-14 + 6 * step, 39)
   ctx.stroke()
 
-  // Body.
+  // Body and chest.
   ctx.fillStyle = SQUIRREL_FUR
   ctx.beginPath()
-  ctx.ellipse(2, 16, 28, 16, -0.06, 0, Math.PI * 2)
+  ctx.ellipse(-6, 13, 40, 21, -0.08, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.beginPath()
+  ctx.ellipse(22, 10, 17, 17, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = SQUIRREL_BELLY
   ctx.beginPath()
-  ctx.ellipse(8, 25, 17, 7, 0, 0, Math.PI)
+  ctx.ellipse(8, 28, 26, 7, 0, 0, Math.PI)
   ctx.fill()
 
-  // Front leg.
+  // Front leg (raised to the mouth while eating).
   ctx.strokeStyle = SQUIRREL_FUR_DARK
-  ctx.lineWidth = 4.5
+  ctx.lineWidth = 5
   ctx.beginPath()
-  ctx.moveTo(20, 24)
-  ctx.lineTo(22 - 6 * step, 36)
-  ctx.lineTo(28 - 6 * step, 39)
+  if (eating && bird.held) {
+    ctx.moveTo(24, 24)
+    ctx.lineTo(36, 18)
+    ctx.lineTo(41, 13)
+  } else if (digging) {
+    // Two front paws scratching the ground under the nose, one back as the other comes forward.
+    for (const offset of [0, Math.PI]) {
+      const reach = Math.cos(digPhase + offset)
+      const lifted = Math.max(0, Math.sin(digPhase + offset)) * 6
+      ctx.moveTo(22, 25)
+      ctx.lineTo(30 + 4 * reach, 33)
+      ctx.lineTo(37 + 9 * reach, 39 - lifted)
+    }
+  } else {
+    ctx.moveTo(22, 25)
+    ctx.lineTo(24 - 6 * step, 35)
+    ctx.lineTo(31 - 6 * step, 39)
+  }
   ctx.stroke()
 
   // Head: dips toward the ground about the neck.
   ctx.save()
-  ctx.translate(-2 * dip, 28 * dip)
-  ctx.translate(40, 6)
+  ctx.translate(-2 * dip, 22 * dip)
+  ctx.translate(30, 6)
   ctx.rotate(0.6 * dip)
-  ctx.translate(-40, -6)
-  // Far ear, head, near ear.
+  ctx.translate(-30, -6)
   ctx.fillStyle = SQUIRREL_FUR_DARK
   ctx.beginPath()
-  ctx.ellipse(27, -8, 4, 7, -0.3, 0, Math.PI * 2)
+  ctx.ellipse(31, -9, 4.2, 7, -0.3, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = SQUIRREL_FUR
   ctx.beginPath()
-  ctx.ellipse(30, 4, 14, 12, 0, 0, Math.PI * 2)
+  ctx.ellipse(34, 3, 15, 12.5, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = SQUIRREL_BELLY
   ctx.beginPath()
-  ctx.ellipse(38, 9, 8, 5.5, 0, 0, Math.PI * 2)
+  ctx.ellipse(42, 8, 8, 5.5, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = SQUIRREL_FUR_DARK
   ctx.beginPath()
-  ctx.ellipse(21, -7, 4.2, 7.4, 0.25, 0, Math.PI * 2)
+  ctx.ellipse(26, -8, 4.4, 7.4, 0.25, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = '#3b2c2c'
   ctx.beginPath()
-  ctx.arc(44.5, 7, 2.4, 0, Math.PI * 2)
+  ctx.arc(49, 7, 2.4, 0, Math.PI * 2)
   ctx.fill()
+  // Eye with a pale ring.
+  ctx.strokeStyle = SQUIRREL_FUR_LIGHT
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  ctx.arc(37, 0, 3.6, 0, Math.PI * 2)
+  ctx.stroke()
   ctx.fillStyle = '#16181b'
   ctx.beginPath()
-  ctx.arc(33, 1, 2.1, 0, Math.PI * 2)
+  ctx.arc(37, 0, 2.2, 0, Math.PI * 2)
   ctx.fill()
   ctx.fillStyle = '#ffffff'
   ctx.beginPath()
-  ctx.arc(33.7, 0.4, 0.7, 0, Math.PI * 2)
+  ctx.arc(37.7, -0.6, 0.7, 0, Math.PI * 2)
   ctx.fill()
   if (bird.held) {
-    // The acorn held in the mouth.
-    drawAcornShape(ctx, 43, 12, (bird.held.radius / u) * (1 - (eating ? (1 - bird.eatTimer / EAT_DURATION) * 0.85 : 0)), -Math.PI / 2)
+    // The acorn held in the mouth (in the front paws while eating).
+    drawAcornShape(ctx, 44, 12, (bird.held.radius / u) * (1 - (eating ? (1 - bird.eatTimer / EAT_DURATION) * 0.85 : 0)), -Math.PI / 2)
+    if (eating) {
+      ctx.fillStyle = SQUIRREL_FUR_DARK
+      ctx.beginPath()
+      ctx.ellipse(40, 14, 4.5, 3.2, 0.4, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
   ctx.restore()
   ctx.restore()
