@@ -32,13 +32,13 @@ export function updateHunger(
       if (eaten) {
         world.acorns = world.acorns.filter((acorn) => acorn !== eaten)
         player.held = null
-        player.hunger = Math.min(1, player.hunger + ACORN_NUTRITION)
+        player.hunger = Math.min(1, player.hunger + ACORN_NUTRITION / player.hungerScale)
       }
     }
   } else if (edges.e && player.held && !player.action && player.hunger < HUNGER_THRESHOLD) {
     player.eatTimer = EAT_DURATION
   }
   if (drain) {
-    player.hunger = Math.max(0, player.hunger - dt / HUNGER_DRAIN_SECONDS)
+    player.hunger = Math.max(0, player.hunger - dt / (HUNGER_DRAIN_SECONDS * player.hungerScale))
   }
 }

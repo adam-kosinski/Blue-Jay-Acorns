@@ -37,6 +37,22 @@ export type Player = {
   hops: number
   /** Standing on the creek's surface: floats with no legs and cannot pick up, drop, bury or dig. */
   floating: boolean
+  /** Which animal this body is. */
+  species: 'jay' | 'squirrel'
+  /** Where the beak (or nose) tip touches the ground in a pecking pose, in sprite units ahead of the centre at size 100. */
+  reach: number
+  /** Hunger bar scale: it drains this many times slower, and an acorn fills this many times less of it. */
+  hungerScale: number
+  /** Squirrels: up in its tree, not visible, perceiving nothing and perceived by nobody. */
+  hidden: boolean
+  /** Squirrels: how high up its tree's trunk it is (pixels); 0 on the ground. */
+  climbH: number
+  /** Squirrels: 1 climbing up the trunk, -1 climbing down, 0 not climbing. */
+  climbDir: 0 | 1 | -1
+  /** Squirrels: which side of the trunk it climbs on (-1 left, 1 right). */
+  climbSide: 1 | -1
+  /** Squirrels: progress 0-1 of a sniff (nose to the ground), or -1 when not sniffing. */
+  sniff: number
 }
 
 /** A burial another bird made that an NPC noticed; it is treated like a free acorn to dig for. */
@@ -379,9 +395,21 @@ export type NpcState =
   | 'bury'
   | 'cover'
 
-/** Computer-controlled blue jay: a bird body driven by simulated keys plus AI state. */
+/** Where a squirrel is relative to its home oak. */
+export type TreePhase = 'ground' | 'up' | 'hidden' | 'down'
+
+/** Computer-controlled animal (a blue jay or a squirrel): a body driven by simulated keys plus AI state. */
 export type Npc = {
   bird: Player
+  /** Squirrels only: the oak this squirrel lives in and the horizontal stretch of ground around it it stays within. */
+  home: { tree: OakTree; trunkX: number; left: number; right: number } | null
+  /** Squirrels only: on the ground, climbing up, hidden up in the tree, or climbing down. */
+  treePhase: TreePhase
+  /** Squirrels only: seconds left in the current sniff (0 when not sniffing) and hops left before the next one. */
+  sniffTimer: number
+  sniffHopsLeft: number
+  /** Squirrels only: `bird.hops` when the last sniff finished. */
+  sniffHopsAt: number
   /** Simulated held keys fed to the shared player movement code. */
   keys: KeyState
   /** Personality: 0 (aloof) to 1 (nosy). */
@@ -469,6 +497,8 @@ export type World = {
   frontFerns: FrontFern[]
   forest: ForestLayer[]
   npcs: Npc[]
+  /** One squirrel per oak. */
+  squirrels: Npc[]
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
   acornDropTimer: number
   /** Leaves kicked onto burial mounds by hopping birds (oldest are dropped past a limit). */

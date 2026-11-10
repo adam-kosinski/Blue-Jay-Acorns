@@ -65,7 +65,9 @@ export const NPC_WAIT_SECONDS = 1
  * so (4/60) / (1/3) = 0.2 acorns per second, which with 5 oaks and 6.5 acorns per group was 0.00615.
  * Groups were then halved (2-5 acorns, average 3.5) and the chance doubled to 0.0123 (5 oaks).
  * With 3 oaks the chance is 0.0205 so the total stays 3 x 0.0205 x 3.5 = about 0.215 acorns per
- * second in expectation.
+ * second in expectation. Every squirrel is one more mouth (it needs as many acorns per second as a bird:
+ * its bar is twice as big and drains half as fast, an acorn fills half as much of it), so
+ * `updateTreeDrops` multiplies the chance and the world cap by (birds + squirrels) / birds.
  */
 export const ACORN_DROP_CHANCE_PER_SECOND = 0.0205
 
@@ -190,6 +192,41 @@ export const EAT_DURATION = 0.7
 
 /** NPC blue jays spawned per run. */
 export const NPC_COUNT = 3
+
+/** Squirrel size relative to the player's bird. */
+export const SQUIRREL_SIZE_FRACTION = 0.8
+
+/** Every squirrel's secrecy. */
+export const SQUIRREL_SECRECY = 0.5
+
+/** Squirrels' hunger bar is this many times as large: it drains this much slower and an acorn fills this much less of it. */
+export const SQUIRREL_HUNGER_SCALE = 2
+
+/** Squirrels hop at this multiple of the player's walking speed (the jays use NPC_SPEED_SCALE). */
+export const SQUIRREL_SPEED_SCALE = 1
+
+/**
+ * A squirrel idles in its tree while its hunger is above this. A jay's is 0.9; an acorn fills only a
+ * sixth of a squirrel's bar, so after eating one it sits around 0.83: the level is lowered so that a squirrel
+ * that has just eaten does rest for about as long as a jay does.
+ */
+export const SQUIRREL_IDLE_HUNGER = 0.78
+
+/** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
+export const SQUIRREL_NOSE_REACH_X = 44
+
+/** Squirrels climb this many sizes per second, and are out of sight this many sizes up the trunk. */
+export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 2.4
+export const SQUIRREL_HIDE_HEIGHT_IN_SIZES = 5.5
+
+/** A foraging squirrel sniffs after every this many hops (a random whole number from min to max). */
+export const SQUIRREL_SNIFF_EVERY_HOPS_MIN = 2
+export const SQUIRREL_SNIFF_EVERY_HOPS_MAX = 3
+
+/** How long (seconds) a sniff lasts, how near (in squirrel widths) a buried acorn must be to the nose to be sniffed out, and by how much a sniff multiplies the usual chance to notice it. */
+export const SQUIRREL_SNIFF_SECONDS = 0.9
+export const SQUIRREL_SNIFF_RADIUS_IN_SIZES = 1
+export const SQUIRREL_SNIFF_NOTICE_FACTOR = 2
 
 /** How far ahead of itself (in player sizes) an NPC can perceive acorns: a third of a typical screen. */
 export const NPC_PERCEIVE_AHEAD_IN_SIZES = TYPICAL_VIEW_WIDTH_IN_SIZES / 3

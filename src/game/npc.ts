@@ -1,5 +1,4 @@
 import {
-  BEAK_REACH_X,
   BURIAL_HOPS_TO_HIDE,
   BURIAL_QUALITY_DISPLAY_SECONDS,
   NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
@@ -8,6 +7,12 @@ import {
   HUNGER_THRESHOLD,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
+  SQUIRREL_HUNGER_SCALE,
+  SQUIRREL_IDLE_HUNGER,
+  SQUIRREL_NOSE_REACH_X,
+  SQUIRREL_SECRECY,
+  SQUIRREL_SIZE_FRACTION,
+  SQUIRREL_SPEED_SCALE,
   NPC_PERCEIVE_AHEAD_IN_SIZES,
   NPC_PERCEIVE_BEHIND_IN_SIZES,
   NPC_IDLE_HUNGER,
@@ -16,6 +21,17 @@ import {
   NPC_STARVING_HUNGER,
   NPC_WAIT_SECONDS,
 } from './constants'
+import { acornReach } from './burial'
+import {
+  inHome,
+  nextSniffHops,
+  placeHidden,
+  runSquirrelExplore,
+  runSquirrelIdle,
+  squirrelWalk,
+  startClimbDown,
+  updateTreePhase,
+} from './squirrel'
 import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction } from './acorns'
 import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
 import { burialSiteVisibility, inView } from './vision'
@@ -65,27 +81,26 @@ function randomDirection(): 1 | -1 {
 }
 
 /**
- * Spawns the NPC blue jays standing at random spots in the explore state.
+ * The hunger level above which the animal is full enough to idle.
  *
- * @param world - Play space (npcs list is ignored; the caller assigns the result).
- * @param size - Player square size.
+ * @param npc - The animal.
  */
-export function createNpcs(world: World, size: number): Npc[] {
-  const npcs: Npc[] = []
-  for (let i = 0; i < NPC_COUNT; i += 1) {
-    const bird = createPlayer(world, size)
-    bird.x = randRange(0, world.width - size)
-    while (nearCreek(world.terrain.creek, bird.x + size / 2, size)) {
-      bird.x = randRange(0, world.width - size)
-    }
-    bird.y = groundUnder(bird, world) - size
-    bird.facing = randomDirection()
-    bird.hunger = randRange(0.4, 1)
-    npcs.push({
+function idleHunger(npc: Npc): number {
+  return npc.home ? SQUIRREL_IDLE_HUNGER : NPC_IDLE_HUNGER
+}
+
+/**
+ * A fresh NPC with default AI state around a body.
+ *
+ * @param bird - The body.
+ * @param secrecy - Personality 0-1: how thoroughly it hides what it buries.
+ */
+function newNpc(bird: Player, secrecy: number): Npc {
+  return {
       bird,
       keys: { w: false, a: false, s: false, d: false },
       nosiness: Math.random(),
-      secrecy: Math.random(),
+      secrecy,
       coverHops: 0,
       coverDir: 1,
       searchDir: 1,
@@ -95,6 +110,11 @@ export function createNpcs(world: World, size: number): Npc[] {
       buryQuality: 0,
       buryQualityTimer: 0,
       state: bird.hunger > NPC_IDLE_HUNGER ? 'idle' : 'explore',
+    home: null,
+    treePhase: 'ground',
+    sniffTimer: 0,
+    sniffHopsLeft: nextSniffHops(),
+    sniffHopsAt: 0,
       decisionTimer: Math.random(),
       direction: bird.facing,
       targetAltitude: randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE),
@@ -118,9 +138,66 @@ export function createNpcs(world: World, size: number): Npc[] {
       sites: [],
       siteTarget: null,
       glide: null,
-    })
+  }
+}
+
+/**
+ * Spawns the NPC blue jays standing at random spots in the explore state.
+ *
+ * @param world - Play space (npcs list is ignored; the caller assigns the result).
+ * @param size - Player square size.
+ */
+export function createNpcs(world: World, size: number): Npc[] {
+  const npcs: Npc[] = []
+  for (let i = 0; i < NPC_COUNT; i += 1) {
+    const bird = createPlayer(world, size)
+    bird.x = randRange(0, world.width - size)
+    while (nearCreek(world.terrain.creek, bird.x + size / 2, size)) {
+      bird.x = randRange(0, world.width - size)
+    }
+    bird.y = groundUnder(bird, world) - size
+    bird.facing = randomDirection()
+    bird.hunger = randRange(0.4, 1)
+    npcs.push(newNpc(bird, Math.random()))
   }
   return npcs
+}
+
+/**
+ * Spawns one squirrel per oak: each lives in its tree and stays on the ground within the reach of
+ * that oak's crown. About half start resting out of sight in the tree, the others foraging on the ground.
+ *
+ * @param world - Play space (trees and terrain are used).
+ * @param playerSize - Player square size (a squirrel is a little smaller).
+ */
+export function createSquirrels(world: World, playerSize: number): Npc[] {
+  const size = playerSize * SQUIRREL_SIZE_FRACTION
+  return world.trees.map((tree) => {
+    const bird = createPlayer(world, size)
+    bird.species = 'squirrel'
+    bird.reach = SQUIRREL_NOSE_REACH_X
+    bird.hungerScale = SQUIRREL_HUNGER_SCALE
+    bird.hunger = randRange(0.4, 1)
+    const trunkX = tree.x + tree.trunkWidth / 2
+    const reach = acornReach(tree)
+    const npc = newNpc(bird, SQUIRREL_SECRECY)
+    npc.state = bird.hunger > SQUIRREL_IDLE_HUNGER ? 'idle' : 'explore'
+    npc.home = {
+      tree,
+      trunkX,
+      left: Math.max(size, trunkX - reach),
+      right: Math.min(world.width - size, trunkX + reach),
+    }
+    if (npc.state === 'idle') {
+      placeHidden(npc, world)
+    } else {
+      bird.x = randRange(npc.home.left, npc.home.right) - size / 2
+      bird.y = groundUnder(bird, world) - size
+      bird.facing = randomDirection()
+      npc.direction = bird.facing
+    }
+    return npc
+  })
 }
 
 /**
@@ -262,7 +339,7 @@ function nearestNoticedAcorn(npc: Npc): Acorn | null {
   let best: Acorn | null = null
   let bestDist = Infinity
   for (const acorn of npc.noticed.keys()) {
-    if (acorn.state !== 'ground' || !npc.inView.has(acorn)) {
+    if (acorn.state !== 'ground' || !npc.inView.has(acorn) || !inHome(npc, acorn.x)) {
       continue
     }
     const dist = Math.hypot(acorn.x - cx, acorn.y - cy)
@@ -290,7 +367,7 @@ function pickTarget(npc: Npc, world: World): { acorn: Acorn | null; site: Burial
   let siteDist = Infinity
   for (const candidate of npc.sites) {
     const y = groundYAt(world.terrain, candidate.x)
-    if (!inView(npc.bird, { x: candidate.x, y })) {
+    if (!inHome(npc, candidate.x) || !inView(npc.bird, { x: candidate.x, y })) {
       continue
     }
     const dist = Math.hypot(candidate.x - cx, y - cy)
@@ -420,7 +497,7 @@ const BEAK_FACING_SLACK_IN_SIZES = 0.2
 function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
   const { bird } = npc
   const cx = bird.x + bird.size / 2
-  const offset = BEAK_REACH_X * (bird.size / 100)
+  const offset = bird.reach * (bird.size / 100)
   if (npc.reachX === null || Math.abs(npc.reachX - targetX) > 1) {
     npc.reachX = targetX
     npc.reachDir = targetX >= cx ? 1 : -1
@@ -519,6 +596,10 @@ function directionToNearestOak(npc: Npc): 1 | -1 | null {
  */
 function enterExplore(npc: Npc): void {
   npc.state = 'explore'
+  if (npc.home) {
+    // A squirrel resting in its tree climbs down first.
+    startClimbDown(npc)
+  }
   // Toward a remembered acorn or burial site; with none, toward the nearest foreground oak (where
   // acorns fall), not a random direction.
   npc.direction = directionToRemembered(npc) ?? directionToNearestOak(npc) ?? randomDirection()
@@ -538,7 +619,7 @@ function enterExplore(npc: Npc): void {
  * @param npc - NPC to update.
  */
 function enterExploreOrIdle(npc: Npc): void {
-  if (npc.bird.hunger > NPC_IDLE_HUNGER) {
+  if (npc.bird.hunger > idleHunger(npc)) {
     npc.state = 'idle'
     npc.target = null
     npc.siteTarget = null
@@ -576,7 +657,7 @@ let activePlayer: Player | null = null
  * @param world - Play space.
  */
 function allBirds(world: World): Player[] {
-  const birds = world.npcs.map((npc) => npc.bird)
+  const birds = [...world.npcs, ...world.squirrels].filter((npc) => !npc.bird.hidden).map((npc) => npc.bird)
   // An invisible player (debug) does not exist as far as the NPCs are concerned.
   return activePlayer && !activePlayer.invisible ? [activePlayer, ...birds] : birds
 }
@@ -590,7 +671,7 @@ function allBirds(world: World): Player[] {
  */
 function decide(npc: Npc, world: World): void {
   if (npc.state === 'idle') {
-    if (npc.bird.hunger < NPC_IDLE_HUNGER) {
+    if (npc.bird.hunger < idleHunger(npc)) {
       enterExplore(npc)
     } else if (npc.idleTargetX === null && Math.random() < IDLE_WANDER_PROBABILITY) {
       const size = npc.bird.size
@@ -808,7 +889,8 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
       for (const f of offsets) {
         // The burial point (where the beak will be) is somewhere in the bird's perception region.
         const x = cx + bird.facing * f * bird.size
-        if (x > bird.size && x < world.width - bird.size && burialQuality(world, birds, bird, x, siteXs(npc)) > npc.secrecy) {
+        if (x > bird.size && x < world.width - bird.size && inHome(npc, x) &&
+          burialQuality(world, birds, bird, x, siteXs(npc), !npc.home) > npc.secrecy) {
           npc.spotX = x
           npc.glide = null
           break
@@ -836,7 +918,11 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
       }
       // Keep flying the same way (bouncing off the world's edges).
       npc.direction = npc.searchDir
-      runExplore(npc, world, dt)
+      if (npc.home) {
+        squirrelWalk(npc)
+      } else {
+        runExplore(npc, world, dt)
+      }
       npc.searchDir = npc.direction
       return
     }
@@ -850,7 +936,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   npc.reachX = null
   // (The beak is within a few pixels of the chosen spot; judging the chosen spot itself keeps this check
   // consistent with the one that picked it.)
-  const quality = burialQuality(world, allBirds(world), bird, npc.spotX, siteXs(npc))
+  const quality = burialQuality(world, allBirds(world), bird, npc.spotX, siteXs(npc), !npc.home)
   if (quality > npc.secrecy) {
     npc.buryQuality = quality
     npc.buryQualityTimer = BURIAL_QUALITY_DISPLAY_SECONDS
@@ -1004,15 +1090,22 @@ function runRetrieve(npc: Npc, world: World): void {
 export function updateNpcs(world: World, dt: number, player: Player): void {
   activeTrees = world.trees
   activePlayer = player
-  for (const npc of world.npcs) {
+  const animals = [...world.npcs, ...world.squirrels]
+  for (const npc of animals) {
     npc.buryQualityTimer = Math.max(0, npc.buryQualityTimer - dt)
   }
   // Hops near burial sites (by any bird) kick leaves onto them and hide them.
-  trackHops(world, [player, ...world.npcs.map((npc) => npc.bird)])
+  trackHops(world, [player, ...animals.filter((npc) => !npc.bird.hidden).map((npc) => npc.bird)])
   // A bury or dig-up can be noticed from the moment the head reaches the ground (burying) or the
   // acorn enters the beak (digging, only if one came up) until the animation ends; one roll per observer.
-  const actors = [...(player.invisible ? [] : [player]), ...world.npcs.map((npc) => npc.bird)]
-  for (const npc of world.npcs) {
+  const actors = [
+    ...(player.invisible ? [] : [player]),
+    ...animals.filter((npc) => !npc.bird.hidden).map((npc) => npc.bird),
+  ]
+  for (const npc of animals) {
+    if (npc.bird.hidden) {
+      continue
+    }
     for (const actor of actors) {
       const action = actor.action
       if (actor !== npc.bird && action && action.kind !== 'pickup' && action.transferred) {
@@ -1021,8 +1114,17 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
   }
 
-  for (const npc of world.npcs) {
+  for (const npc of animals) {
     const { bird } = npc
+    if (npc.home && npc.treePhase !== 'ground') {
+      // A squirrel on its trunk: only waiting to be hungry (idle), climbing, or hidden.
+      if (npc.state === 'idle' && bird.hunger < idleHunger(npc)) {
+        enterExplore(npc)
+      }
+      updateTreePhase(npc, world, dt)
+      updateHunger(bird, NO_EDGES, world, dt)
+      continue
+    }
     if (bird.held && !bird.action && bird.eatTimer === 0 && npc.state !== 'eat') {
       // On the way to bury an acorn (or burying it) a bird only eats it when starving.
       const burying = npc.state === 'findBurialSpot' || npc.state === 'bury'
@@ -1075,10 +1177,18 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     } else if (!waiting) {
       switch (npc.state) {
         case 'idle':
-          runIdle(npc, world)
+          if (npc.home) {
+            runSquirrelIdle(npc)
+          } else {
+            runIdle(npc, world)
+          }
           break
         case 'explore':
-          runExplore(npc, world, dt)
+          if (npc.home) {
+            runSquirrelExplore(npc, world, dt)
+          } else {
+            runExplore(npc, world, dt)
+          }
           break
         case 'gather':
           runGather(npc, world)
@@ -1107,7 +1217,12 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       }
     }
 
-    updatePlayer(bird, npc.keys, dt, world, NPC_SPEED_SCALE)
+    if (npc.home) {
+      // Squirrels never fly.
+      npc.keys.w = false
+      npc.keys.s = false
+    }
+    updatePlayer(bird, npc.keys, dt, world, npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE)
     updateAction(bird, world, dt)
     // (a burial that just finished may sit on a site noted before)
     dropOwnBurialsFromSites(npc)

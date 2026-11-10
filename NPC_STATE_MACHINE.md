@@ -1,6 +1,6 @@
 # NPC blue jay state machine
 
-Source: `src/game/npc.ts`. Update this chart whenever the AI changes.
+Source: `src/game/npc.ts`. Update this chart whenever the AI changes. Squirrels share this code and have their own state machine document, `SQUIRREL_STATE_MACHINE.md`.
 
 - **Rectangles** are states; **diamonds** are decision points (checks made when entering a state or once per second).
 - Probabilistic transitions are rolled **once per second** per NPC; everything else is checked every frame.
@@ -84,4 +84,4 @@ flowchart TD
 
 ## Acorn supply
 
-Each second every oak has a small chance (`ACORN_DROP_CHANCE_PER_SECOND`) to drop a group of 3-10 acorns from random points in its canopy; they fall under gravity and become ordinary free acorns.
+Each second every oak has a small chance (`ACORN_DROP_CHANCE_PER_SECOND`, times (birds + squirrels) / birds because the squirrels need acorns too) to drop a group of 2-5 acorns from random points in its canopy; they fall under gravity and become ordinary free acorns.

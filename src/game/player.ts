@@ -1,4 +1,5 @@
 import {
+  BEAK_REACH_X,
   HOP_DURATION,
   HOVER_OFFSET_IN_SIZES,
   MOVE_SPEED_IN_SIZES,
@@ -38,6 +39,14 @@ export function createPlayer(world: World, size: number): Player {
     invisible: false,
     hops: 0,
     floating: false,
+    species: 'jay',
+    reach: BEAK_REACH_X,
+    hungerScale: 1,
+    hidden: false,
+    climbH: 0,
+    climbDir: 0,
+    climbSide: 1,
+    sniff: -1,
   }
 }
 

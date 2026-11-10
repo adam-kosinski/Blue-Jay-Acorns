@@ -21,7 +21,7 @@ const treeReaches = new WeakMap<OakTree, number>()
  *
  * @param tree - Oak.
  */
-function acornReach(tree: OakTree): number {
+export function acornReach(tree: OakTree): number {
   let reach = treeReaches.get(tree)
   if (reach === undefined) {
     reach = 0
@@ -47,6 +47,7 @@ function acornReach(tree: OakTree): number {
  * @param burier - The bird looking to bury.
  * @param x - World x of the spot.
  * @param sites - World x of every burial site of another bird the burier remembers (the player's `dugSites` by default).
+ * @param useOaks - False to ignore how near an oak the spot is (squirrels do).
  */
 export function burialQuality(
   world: World,
@@ -54,6 +55,7 @@ export function burialQuality(
   burier: Player,
   x: number,
   sites: readonly number[] = burier.dugSites,
+  useOaks = true,
 ): number {
   const size = burier.size
   const range = BURIAL_QUALITY_RANGE_IN_SIZES * size
@@ -74,7 +76,7 @@ export function burialQuality(
         : BURIAL_QUALITY_UNSEEN_PENALTY
     }
   }
-  for (const tree of world.trees) {
+  for (const tree of useOaks ? world.trees : []) {
     const reach = acornReach(tree)
     const distance = Math.abs(x - (tree.x + tree.trunkWidth / 2))
     if (distance < reach) {

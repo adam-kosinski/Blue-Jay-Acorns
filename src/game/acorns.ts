@@ -4,7 +4,7 @@ import {
   ACORN_GROUP_MAX,
   ACORN_GROUP_MIN,
   ACORN_WORLD_CAP,
-  BEAK_REACH_X,
+  NPC_COUNT,
   BURIAL_CONCEAL_CURVE,
   BURIAL_HOP_RANGE_IN_SIZES,
   BURIAL_HOPS_TO_HIDE,
@@ -77,7 +77,7 @@ function startReach(
     return
   }
   player.facing = x >= player.x + player.size / 2 ? 1 : -1
-  const tipX = player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
+  const tipX = player.x + player.size / 2 + player.facing * player.reach * (player.size / 100)
   const slide = Math.max(-0.5 * player.size, Math.min(0.8 * player.size, x - tipX))
   player.action = {
     kind,
@@ -123,7 +123,7 @@ export function startBury(player: Player): void {
  * @param player - The bird.
  */
 export function beakTipX(player: Player): number {
-  return player.x + player.size / 2 + player.facing * BEAK_REACH_X * (player.size / 100)
+  return player.x + player.size / 2 + player.facing * player.reach * (player.size / 100)
 }
 
 /**
@@ -329,10 +329,16 @@ export function updateTreeDrops(
   rateMultiplier = 1,
 ): void {
   world.acornDropTimer += dt
+  // The squirrels eat too: each needs as many acorns per second as a bird (twice the bar, drained half
+  // as fast, an acorn filling half as much of it), so the supply grows with the number of mouths.
+  const hungry = (1 + NPC_COUNT + world.squirrels.length) / (1 + NPC_COUNT)
   while (world.acornDropTimer >= 1) {
     world.acornDropTimer -= 1
     for (const tree of world.trees) {
-      if (world.acorns.length >= ACORN_WORLD_CAP || Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * rateMultiplier) {
+      if (
+        world.acorns.length >= ACORN_WORLD_CAP * hungry ||
+        Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * hungry * rateMultiplier
+      ) {
         continue
       }
       const baseX = tree.x + tree.trunkWidth / 2

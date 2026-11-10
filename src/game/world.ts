@@ -15,7 +15,7 @@ import {
   playerSizeForView,
   TRUNK_COLOR,
 } from './constants'
-import { createNpcs } from './npc'
+import { createNpcs, createSquirrels } from './npc'
 import { generateOak } from './oak'
 import { buildFineNoise, buildTerrain, CREEK_DRIFT, groundYAt } from './terrain'
 import type {
@@ -899,10 +899,12 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     frontFerns: front.ferns,
     forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight, terrain.creek),
     npcs: [],
+    squirrels: [],
     acornDropTimer: 0,
     kickedLeaves: spawnKickedLeaves(terrain, width, playerSize),
     time: 0,
   }
   world.npcs = createNpcs(world, playerSize)
+  world.squirrels = createSquirrels(world, playerSize)
   return world
 }
