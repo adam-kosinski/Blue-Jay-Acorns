@@ -382,12 +382,11 @@ export type ForestLayer = {
   waterColor: string
 }
 
-/** Finite-state-machine states for an NPC blue jay (follow and hide are not wired up yet). */
+/** Finite-state-machine states for an NPC (follow is not wired up yet, and squirrels never use it). */
 export type NpcState =
   | 'idle'
   | 'explore'
   | 'follow'
-  | 'hide'
   | 'gather'
   | 'eat'
   | 'findBurialSpot'

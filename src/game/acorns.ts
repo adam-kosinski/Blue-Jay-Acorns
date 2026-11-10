@@ -3,6 +3,7 @@ import {
   ACORN_GRAVITY_IN_SIZES,
   ACORN_GROUP_MAX,
   ACORN_GROUP_MIN,
+  ACORN_SPREAD_FACTOR,
   ACORN_WORLD_CAP,
   NPC_COUNT,
   BURIAL_CONCEAL_CURVE,
@@ -352,7 +353,8 @@ export function updateTreeDrops(
         }
         const angle = Math.random() * Math.PI * 2
         const dist = Math.sqrt(Math.random()) * lobe.r * 0.8
-        let x = baseX + lobe.x + Math.cos(angle) * dist
+        // Acorns land only in the middle of the crown's width (`ACORN_SPREAD_FACTOR`).
+        let x = baseX + (lobe.x + Math.cos(angle) * dist) * ACORN_SPREAD_FACTOR
         const { creek } = world.terrain
         if (Math.abs(x - creek.x) < creek.halfWidth) {
           // Acorns that would fall into the creek are washed to the nearest bank.

@@ -8,7 +8,8 @@ import {
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
   SQUIRREL_HUNGER_SCALE,
-  SQUIRREL_IDLE_HUNGER,
+  SQUIRREL_IDLE_ENTER_HUNGER,
+  SQUIRREL_IDLE_LEAVE_HUNGER,
   SQUIRREL_NOSE_REACH_X,
   SQUIRREL_SECRECY,
   SQUIRREL_SIZE_FRACTION,
@@ -82,12 +83,21 @@ function randomDirection(): 1 | -1 {
 }
 
 /**
- * The hunger level above which the animal is full enough to idle.
+ * The hunger level above which the animal is full enough to start idling.
  *
  * @param npc - The animal.
  */
-function idleHunger(npc: Npc): number {
-  return npc.home ? SQUIRREL_IDLE_HUNGER : NPC_IDLE_HUNGER
+function idleEnterHunger(npc: Npc): number {
+  return npc.home ? SQUIRREL_IDLE_ENTER_HUNGER : NPC_IDLE_HUNGER
+}
+
+/**
+ * The hunger level below which an idling animal gets up (a squirrel's is lower than its enter level).
+ *
+ * @param npc - The animal.
+ */
+function idleLeaveHunger(npc: Npc): number {
+  return npc.home ? SQUIRREL_IDLE_LEAVE_HUNGER : NPC_IDLE_HUNGER
 }
 
 /**
@@ -183,7 +193,7 @@ export function createSquirrels(world: World, playerSize: number): Npc[] {
     const reach = acornReach(tree)
     const npc = newNpc(bird, SQUIRREL_SECRECY)
     npc.nosiness = null
-    npc.state = bird.hunger > SQUIRREL_IDLE_HUNGER ? 'idle' : 'explore'
+    npc.state = bird.hunger > SQUIRREL_IDLE_ENTER_HUNGER ? 'idle' : 'explore'
     npc.home = {
       tree,
       trunkX,
@@ -599,8 +609,10 @@ function directionToNearestOak(npc: Npc): 1 | -1 | null {
 function enterExplore(npc: Npc): void {
   npc.state = 'explore'
   if (npc.home) {
-    // A squirrel resting in its tree climbs down first.
+    // A squirrel resting in its tree climbs down first, and starts counting hops to its next sniff.
     startClimbDown(npc)
+    npc.sniffHopsAt = npc.bird.hops
+    npc.sniffHopsLeft = nextSniffHops()
   }
   // Toward a remembered acorn or burial site; with none, toward the nearest foreground oak (where
   // acorns fall), not a random direction.
@@ -621,7 +633,7 @@ function enterExplore(npc: Npc): void {
  * @param npc - NPC to update.
  */
 function enterExploreOrIdle(npc: Npc): void {
-  if (npc.bird.hunger > idleHunger(npc)) {
+  if (npc.bird.hunger > idleEnterHunger(npc)) {
     npc.state = 'idle'
     npc.target = null
     npc.siteTarget = null
@@ -673,7 +685,7 @@ function allBirds(world: World): Player[] {
  */
 function decide(npc: Npc, world: World): void {
   if (npc.state === 'idle') {
-    if (npc.bird.hunger < idleHunger(npc)) {
+    if (npc.bird.hunger < idleLeaveHunger(npc)) {
       enterExplore(npc)
     } else if (npc.idleTargetX === null && Math.random() < IDLE_WANDER_PROBABILITY) {
       const size = npc.bird.size
@@ -1124,7 +1136,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     const { bird } = npc
     if (npc.home && npc.treePhase !== 'ground') {
       // A squirrel on its trunk: only waiting to be hungry (idle), climbing, or hidden.
-      if (npc.state === 'idle' && bird.hunger < idleHunger(npc)) {
+      if (npc.state === 'idle' && bird.hunger < idleLeaveHunger(npc)) {
         enterExplore(npc)
       }
       updateTreePhase(npc, world, dt)
@@ -1218,7 +1230,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
           }
           break
         default:
-          // follow and hide are not implemented yet.
+          // follow is not implemented yet.
           enterExplore(npc)
       }
     }

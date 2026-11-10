@@ -759,12 +759,13 @@ export function drawOakVector(
   tones: string[],
   trunkColor: string,
   leafDetail = 1,
+  crownOnly = false,
 ): void {
   ctx.save()
   ctx.translate(x, y)
 
   ctx.fillStyle = trunkColor
-  for (const seg of shape.segments) {
+  for (const seg of crownOnly ? [] : shape.segments) {
     const dx = seg.x1 - seg.x0
     const dy = seg.y1 - seg.y0
     const len = Math.hypot(dx, dy) || 1
@@ -782,9 +783,11 @@ export function drawOakVector(
     ctx.fill()
   }
 
-  drawFlare(ctx, shape)
-  if (leafDetail >= 0.12) {
-    drawBark(ctx, shape)
+  if (!crownOnly) {
+    drawFlare(ctx, shape)
+    if (leafDetail >= 0.12) {
+      drawBark(ctx, shape)
+    }
   }
   const rand = seededRandom(shape.id * 7919 + 13)
   shape.lobes.forEach((lobe) => {
@@ -800,12 +803,14 @@ export function drawOakVector(
  * @param tones - Leaf fill colors.
  * @param trunkColor - Trunk and branch fill.
  * @param resolution - Bitmap pixels per CSS pixel.
+ * @param crownOnly - Draw only the leaves (same size and position as the whole tree's bitmap).
  */
 function buildSprite(
   shape: TreeShape,
   tones: string[],
   trunkColor: string,
   resolution: number,
+  crownOnly = false,
 ): TreeSprite {
   let minY = 0
   let maxY = 14
@@ -827,7 +832,7 @@ function buildSprite(
   const ctx = canvas.getContext('2d')
   if (ctx) {
     ctx.scale(scale, scale)
-    drawOakVector(ctx, shape, -minX, -minY, tones, trunkColor)
+    drawOakVector(ctx, shape, -minX, -minY, tones, trunkColor, 1, crownOnly)
   }
   return { canvas, offsetX: minX, offsetY: minY, width, height }
 }
@@ -839,19 +844,21 @@ function buildSprite(
  * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
  * @param trunkColor - Trunk and branch fill.
  * @param resolution - Bitmap pixels per CSS pixel.
+ * @param crownOnly - The bitmap of just the leaves.
  */
 export function getOakSprite(
   shape: TreeShape,
   tones: string[],
   trunkColor: string,
   resolution: number,
+  crownOnly = false,
 ): TreeSprite {
-  const key = `${shape.id}|${trunkColor}|${resolution}`
+  const key = `${shape.id}|${trunkColor}|${resolution}${crownOnly ? '|crown' : ''}`
   let sprite = spriteCache.get(key)
   if (sprite) {
     spriteCache.delete(key)
   } else {
-    sprite = buildSprite(shape, tones, trunkColor, resolution)
+    sprite = buildSprite(shape, tones, trunkColor, resolution, crownOnly)
     if (spriteCache.size >= SPRITE_CACHE_LIMIT) {
       const oldest = spriteCache.keys().next().value
       if (oldest !== undefined) {
@@ -882,5 +889,28 @@ export function drawOak(
   trunkColor: string,
 ): void {
   const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a)
+  ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+}
+
+/**
+ * Draws just the leaves of an oak (from their own cached bitmap), over whatever is already there, so
+ * that a climbing squirrel can pass behind them.
+ *
+ * @param ctx - 2D canvas context.
+ * @param shape - Generated tree.
+ * @param x - Base X.
+ * @param y - Base Y.
+ * @param tones - Leaf fill colors from dark to light.
+ * @param trunkColor - Trunk color (only part of the cache key).
+ */
+export function drawOakCrown(
+  ctx: CanvasRenderingContext2D,
+  shape: TreeShape,
+  x: number,
+  y: number,
+  tones: string[],
+  trunkColor: string,
+): void {
+  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, true)
   ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
 }

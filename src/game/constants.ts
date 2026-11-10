@@ -194,7 +194,7 @@ export const EAT_DURATION = 0.7
 export const NPC_COUNT = 3
 
 /** Squirrel size relative to the player's bird. */
-export const SQUIRREL_SIZE_FRACTION = 0.8
+export const SQUIRREL_SIZE_FRACTION = 1
 
 /** Every squirrel's secrecy. */
 export const SQUIRREL_SECRECY = 0.5
@@ -206,18 +206,26 @@ export const SQUIRREL_HUNGER_SCALE = 2
 export const SQUIRREL_SPEED_SCALE = 1
 
 /**
- * A squirrel idles in its tree while its hunger is above this. A jay's is 0.9; an acorn fills only a
- * sixth of a squirrel's bar, so after eating one it sits around 0.83: the level is lowered so that a squirrel
- * that has just eaten does rest for about as long as a jay does.
+ * A squirrel goes up its tree to idle when its hunger is above the first level and comes down again
+ * when it falls below the second (lower) one, so it does not flip between the two. A jay idles
+ * above 0.9 and leaves idle below 0.9. (An acorn fills only a sixth of a squirrel's bar, so it
+ * rarely gets above 0.83: with 0.9 / 0.8 a squirrel idled about 1% of the time, with 0.8 / 0.7 about 20%.)
  */
-export const SQUIRREL_IDLE_HUNGER = 0.78
+export const SQUIRREL_IDLE_ENTER_HUNGER = 0.8
+export const SQUIRREL_IDLE_LEAVE_HUNGER = 0.7
+
+/**
+ * How wide the stretch around an oak's trunk is that its acorns fall in and that counts as its range
+ * (the squirrel's home stretch, the burial-quality penalty near the oak), as a fraction of the width
+ * of its leaf clusters.
+ */
+export const ACORN_SPREAD_FACTOR = 0.5
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
 export const SQUIRREL_NOSE_REACH_X = 44
 
-/** Squirrels climb this many sizes per second, and are out of sight this many sizes up the trunk. */
-export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 2.4
-export const SQUIRREL_HIDE_HEIGHT_IN_SIZES = 5.5
+/** Squirrels climb this many sizes per second (all the way up out of the play area, where they are out of sight). */
+export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 4.8
 
 /** A foraging squirrel sniffs after every this many hops (a random whole number from min to max). */
 export const SQUIRREL_SNIFF_EVERY_HOPS_MIN = 2

@@ -1,7 +1,6 @@
 import {
   HOP_DURATION,
   SQUIRREL_CLIMB_SPEED_IN_SIZES,
-  SQUIRREL_HIDE_HEIGHT_IN_SIZES,
   SQUIRREL_SNIFF_EVERY_HOPS_MAX,
   SQUIRREL_SNIFF_EVERY_HOPS_MIN,
   SQUIRREL_SNIFF_NOTICE_FACTOR,
@@ -38,6 +37,18 @@ function randInt(min: number, max: number): number {
  */
 export function nextSniffHops(): number {
   return randInt(SQUIRREL_SNIFF_EVERY_HOPS_MIN, SQUIRREL_SNIFF_EVERY_HOPS_MAX)
+}
+
+/**
+ * How high up the trunk (pixels) a squirrel must climb to be out of sight: all the way up out of the
+ * play area (its body entirely above the top edge of the world).
+ *
+ * @param npc - A squirrel.
+ * @param world - Terrain.
+ */
+function hideHeight(npc: Npc, world: World): number {
+  const home = npc.home
+  return home ? groundYAt(world.terrain, home.trunkX) : 0
 }
 
 /**
@@ -107,7 +118,7 @@ export function startClimbDown(npc: Npc): void {
 export function placeHidden(npc: Npc, world: World): void {
   const bird = npc.bird
   bird.climbSide = Math.random() < 0.5 ? -1 : 1
-  bird.climbH = SQUIRREL_HIDE_HEIGHT_IN_SIZES * bird.size
+  bird.climbH = hideHeight(npc, world)
   bird.climbDir = 0
   bird.hidden = true
   npc.treePhase = 'hidden'
@@ -131,8 +142,9 @@ export function updateTreePhase(npc: Npc, world: World, dt: number): void {
   const step = SQUIRREL_CLIMB_SPEED_IN_SIZES * bird.size * dt
   if (npc.treePhase === 'up') {
     bird.climbH += step
-    if (bird.climbH >= SQUIRREL_HIDE_HEIGHT_IN_SIZES * bird.size) {
-      bird.climbH = SQUIRREL_HIDE_HEIGHT_IN_SIZES * bird.size
+    const top = hideHeight(npc, world)
+    if (bird.climbH >= top) {
+      bird.climbH = top
       bird.hidden = true
       bird.climbDir = 0
       npc.treePhase = 'hidden'
@@ -230,11 +242,14 @@ export function runSquirrelExplore(npc: Npc, world: World, dt: number): void {
     // Out of its home stretch: no exploring (and no sniffing) until it is back.
     return
   }
+  // Hop on the same way; after 2 or 3 hops let the current hop finish, then stop and sniff.
   squirrelWalk(npc)
-  if (bird.hops - npc.sniffHopsAt >= npc.sniffHopsLeft && bird.hopT >= HOP_DURATION && !bird.action) {
+  if (bird.hops - npc.sniffHopsAt >= npc.sniffHopsLeft) {
     npc.keys.a = false
     npc.keys.d = false
-    startSniff(npc, world)
+    if (bird.hopT >= HOP_DURATION && !bird.action) {
+      startSniff(npc, world)
+    }
   }
 }
 

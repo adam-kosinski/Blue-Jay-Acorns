@@ -1,4 +1,5 @@
 import {
+  ACORN_SPREAD_FACTOR,
   BURIAL_QUALITY_BIRD_PENALTY,
   BURIAL_QUALITY_OAK_PENALTY,
   BURIAL_QUALITY_OTHER_SITE_PENALTY,
@@ -28,7 +29,7 @@ export function acornReach(tree: OakTree): number {
     for (const lobe of tree.shape.lobes) {
       reach = Math.max(reach, Math.abs(lobe.x) + lobe.r * 0.8)
     }
-    reach = Math.max(reach, 1)
+    reach = Math.max(reach * ACORN_SPREAD_FACTOR, 1)
     treeReaches.set(tree, reach)
   }
   return reach

@@ -11,7 +11,7 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { drawLeafyDisk, drawOakVector, getOakSprite, paintBark, seededRandom, drawOak } from './oak'
+import { drawLeafyDisk, drawOakCrown, drawOakVector, getOakSprite, paintBark, seededRandom, drawOak } from './oak'
 import { burialQuality } from './burial'
 import { BACKDROP_FOG, mixColor } from './world'
 import { TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
@@ -92,6 +92,16 @@ export function renderScene(
     const sx = squirrel.bird.x + squirrel.bird.size / 2
     if (!squirrel.bird.hidden && sx > camera.x - squirrel.bird.size * 2 && sx < camera.x + viewWidth + squirrel.bird.size * 2) {
       drawSquirrel(ctx, squirrel.bird)
+      if (squirrel.bird.climbDir !== 0 && squirrel.home) {
+        // The tree's leaves hang in front of a squirrel climbing its trunk.
+        const reach = squirrel.bird.size * 1.2
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(sx - reach, squirrel.bird.y - reach * 0.6, reach * 2, squirrel.bird.size + reach * 1.2)
+        ctx.clip()
+        drawOakCrown(ctx, squirrel.home.tree.shape, squirrel.home.trunkX, groundYAt(world.terrain, squirrel.home.trunkX), OAK_TONES, TRUNK_COLOR)
+        ctx.restore()
+      }
       drawNpcLabel(ctx, squirrel)
     }
   }
