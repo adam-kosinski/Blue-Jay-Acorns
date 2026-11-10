@@ -1478,61 +1478,19 @@ const SQUIRREL_THIGH = [-42, 9, -34, -4, -10, -3, -7, 15, -5, 27, -13, 34, -22, 
 /** A hind foot lying along the ground: heel, long sole, toes. */
 const SQUIRREL_FOOT = [-36, 33, -30, 31, -15, 31, -4, 34, 0, 35.5, 0, 39.5, -5, 40.5, -14, 41.5, -26, 41.5, -35, 40, -39, 39, -39, 34, -36, 33]
 
-/** A squirrel sitting up: the upright body (pear-shaped, wide at the haunch), its pale chest, its haunch. */
-const SQUIRREL_SIT_BODY = [-18, 38, -30, 30, -26, 6, -14, -10, -8, -20, 0, -26, 8, -26, 14, -26, 18, -20, 18, -12, 18, -2, 22, 10, 22, 22, 22, 32, 14, 40, 4, 40, -4, 41, -12, 41, -18, 38]
-const SQUIRREL_SIT_CHEST = [10, -16, 17, -8, 18, 8, 16, 22, 14, 32, 8, 37, 4, 36, 10, 24, 9, 6, 10, -16]
-const SQUIRREL_SIT_HAUNCH = [-24, 22, -26, 8, -12, 4, -6, 14, -2, 24, -6, 36, -14, 38, -22, 40, -26, 32, -24, 22]
-
-/**
- * Draws a squirrel sitting up to eat, as in the photos: sitting on its haunches with its big hind feet
- * out in front, torso upright with a pale chest, both front paws holding the acorn up at its mouth,
- * head tilted down to nibble, the tail curled up behind its back. Called with the context already
- * placed at the squirrel's centre, scaled and facing +x.
- *
- * @param ctx - 2D canvas context (sprite units).
- * @param bird - The squirrel's body (holding the acorn it eats).
- * @param u - Sprite unit in pixels (size / 100), to scale the acorn.
- */
-function drawSquirrelEating(ctx: CanvasRenderingContext2D, bird: Player, u: number): void {
-  const progress = 1 - bird.eatTimer / EAT_DURATION
-  // Nibbling: the head and paws bob a little.
-  const nibble = Math.sin(progress * Math.PI * 12)
-  // Tail: curled up close behind the back.
-  ctx.save()
-  ctx.translate(30, 14)
-  drawSquirrelTail(ctx, 1, 1)
-  ctx.restore()
-
-  // The big hind foot lies out in front of the haunch.
-  ctx.save()
-  ctx.translate(18, 0)
-  bezierShape(ctx, SQUIRREL_FOOT, SQUIRREL_FUR_LIGHT, SQUIRREL_FUR_DARK)
-  ctx.restore()
-
-  // The upright body with its pale chest and the haunch.
-  bezierShape(ctx, SQUIRREL_SIT_BODY, SQUIRREL_FUR)
-  bezierShape(ctx, SQUIRREL_SIT_CHEST, SQUIRREL_BELLY)
-  bezierShape(ctx, SQUIRREL_SIT_HAUNCH, SQUIRREL_FUR_DARK)
-
-  // Far arm up to the mouth, the head, the acorn, then the near arm and paws over it.
-  taperedLimb(ctx, [[10, -8], [20, -10 + nibble * 0.6], [24, -22 + nibble * 0.6]], 6, 4, SQUIRREL_FUR_DARK)
-  ctx.save()
-  ctx.translate(12, -36)
-  ctx.rotate(0.3 + nibble * 0.04)
-  ctx.scale(1.2, 1.2)
-  drawSquirrelHead(ctx)
-  ctx.restore()
-  if (bird.held) {
-    drawAcornShape(ctx, 30, -27 + nibble * 0.6, (bird.held.radius / u) * (1 - progress * 0.85), -Math.PI / 2 + 0.3)
-  }
-  taperedLimb(ctx, [[12, -6], [22, -8 + nibble * 0.6], [28, -24 + nibble * 0.6]], 7, 4.6, SQUIRREL_FUR)
-}
+/** Where the hind legs stay in every pose: the haunch is the hip, and the big foot lies out in front of it. */
+const SQUIRREL_HIP = [-24, 24]
+/** How far the body tips up about the hip when the squirrel sits up to eat. */
+const SQUIRREL_SIT_TILT = -1.15
 
 /**
  * Draws a squirrel: gray fur, a long hunched body (as long as a blue jay) with a big bushy S-curved
- * tail, a pale belly and small round ears. A standing one hops with a little arch, its tail arched over
- * its back; while sniffing, digging or burying its nose goes to the ground; it sits up on its haunches,
- * tail curled behind, to eat; and on its trunk it is turned to climb up or down with its tail trailing.
+ * tail, a pale belly and small round ears. The haunch and the big hind foot are the same in every
+ * pose; what changes is the body (it tips up about the hip to sit upright, as in the photos, when the
+ * squirrel eats, the head tilted down and both front paws holding the acorn at its mouth) and the tail
+ * (arched over the back when moving or standing, curled up behind when sitting, trailing when
+ * climbing). While sniffing, digging or burying its nose goes to the ground, and on its trunk it is
+ * turned to climb up or down.
  *
  * @param ctx - 2D canvas context in world space.
  * @param bird - The squirrel's body.
@@ -1545,7 +1503,10 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
   const hopping = !climbing && bird.hopT < HOP_DURATION
   const hopP = hopping ? bird.hopT / HOP_DURATION : 0
   const lift = hopping ? Math.sin(Math.PI * hopP) * 12 : 0
-  const eating = bird.eatTimer > 0
+  const eating = bird.eatTimer > 0 && !climbing
+  const progress = eating ? 1 - bird.eatTimer / EAT_DURATION : 0
+  // Nibbling: the head and paws bob a little.
+  const nibble = eating ? Math.sin(progress * Math.PI * 12) : 0
   // How far the head is down (0 up, 1 nose on the ground), smoothly in and out so it never jumps.
   const smooth = (x: number): number => {
     const t = Math.max(0, Math.min(1, x))
@@ -1573,7 +1534,15 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
   }
   // The tail is rarely stretched out: arched over the back when moving or standing, curled right up
   // when sitting, trailing when climbing.
-  const curl = climbing ? 0.25 : hopping ? 0.6 : dip > 0 ? 0.55 : 0.75
+  const curl = eating ? 1 : climbing ? 0.25 : hopping ? 0.6 : dip > 0 ? 0.55 : 0.75
+  const [hipX, hipY] = SQUIRREL_HIP as [number, number]
+  const tilt = eating ? SQUIRREL_SIT_TILT : 0
+  /** Turns the context about the hip by the sitting tilt (the body, front legs and head follow it). */
+  const tipUp = (): void => {
+    ctx.translate(hipX, hipY)
+    ctx.rotate(tilt)
+    ctx.translate(-hipX, -hipY)
+  }
 
   ctx.save()
   ctx.translate(cx, cy)
@@ -1587,33 +1556,42 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
   } else {
     ctx.scale(bird.facing, 1)
     ctx.translate(0, 10 - lift)
-    if (eating) {
-      // Sits up on its haunches to eat (its own pose).
-      ctx.lineCap = 'round'
-      ctx.lineJoin = 'round'
-      drawSquirrelEating(ctx, bird, u)
-      ctx.restore()
-      return
-    }
   }
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   // The legs only swing while it really hops (or climbs): a squirrel resting between hops stands still.
   const step = climbing || (hopping && bird.walking) ? Math.sin(bird.animTime * 14) : 0
 
-  drawSquirrelTail(ctx, curl)
-
-  // Body, belly, thigh and the hind foot (it swings a little as the squirrel hops).
-  bezierShape(ctx, SQUIRREL_TORSO, SQUIRREL_FUR)
-  bezierShape(ctx, SQUIRREL_BELLY_SHAPE, SQUIRREL_BELLY)
-  bezierShape(ctx, SQUIRREL_THIGH, SQUIRREL_FUR_DARK)
+  // The tail: arched over the back, or curled up close behind the sitting body.
   ctx.save()
-  ctx.translate(6 * step, -1.5 * Math.max(0, -step))
-  bezierShape(ctx, SQUIRREL_FOOT, SQUIRREL_FUR_DARK)
+  if (eating) {
+    ctx.translate(24, 2)
+  }
+  drawSquirrelTail(ctx, curl, eating ? 1 : 0)
   ctx.restore()
 
-  // Front legs: one reaching forward, or two scratching the ground while digging.
-  if (digging) {
+  // The body (it tips up about the hip when sitting), with its pale underside.
+  ctx.save()
+  tipUp()
+  bezierShape(ctx, SQUIRREL_TORSO, SQUIRREL_FUR)
+  bezierShape(ctx, SQUIRREL_BELLY_SHAPE, SQUIRREL_BELLY)
+  ctx.restore()
+
+  // The haunch and the big hind foot lying out in front of it: the same in every pose.
+  bezierShape(ctx, SQUIRREL_THIGH, SQUIRREL_FUR_DARK)
+  ctx.save()
+  ctx.translate(18, 0)
+  bezierShape(ctx, SQUIRREL_FOOT, SQUIRREL_FUR_DARK, SQUIRREL_FUR)
+  ctx.restore()
+
+  // Front legs and head, on the body (so they tip up with it).
+  ctx.save()
+  tipUp()
+  if (eating) {
+    // Both front paws hold the acorn up at the mouth.
+    taperedLimb(ctx, [[18, 14], [28, 20 + nibble * 0.6], [34, 24 + nibble * 0.6]], 6, 4, SQUIRREL_FUR_DARK)
+  } else if (digging) {
+    // Two front paws scratching the ground under the nose, one back as the other comes forward.
     for (const offset of [0, Math.PI]) {
       const reach = Math.cos(digPhase + offset)
       const lifted = Math.max(0, Math.sin(digPhase + offset)) * 6
@@ -1623,20 +1601,38 @@ function drawSquirrel(ctx: CanvasRenderingContext2D, bird: Player): void {
     taperedLimb(ctx, [[22, 22], [24 - 6 * step, 32], [30 - 6 * step, 39]], 7, 4.2, SQUIRREL_FUR_DARK)
   }
 
-  // Head: dips toward the ground about the neck.
+  // Head: dips toward the ground about the neck; tilted right down toward the food when eating.
   ctx.save()
   ctx.translate(-2 * dip, 22 * dip)
   ctx.translate(30, 6)
   ctx.rotate(0.6 * dip)
   ctx.translate(-30, -6)
+  if (eating) {
+    ctx.translate(26, 4)
+    ctx.rotate(-SQUIRREL_SIT_TILT + 0.35 + nibble * 0.05)
+    ctx.translate(-26, -4)
+  }
   ctx.save()
   ctx.translate(31, 2)
   ctx.scale(1.2, 1.2)
   drawSquirrelHead(ctx)
   ctx.restore()
-  if (bird.held) {
-    // The acorn held in the mouth.
+  ctx.restore()
+
+  if (bird.held && !eating) {
+    // The acorn carried in the mouth.
+    ctx.save()
+    ctx.translate(-2 * dip, 22 * dip)
+    ctx.translate(30, 6)
+    ctx.rotate(0.6 * dip)
+    ctx.translate(-30, -6)
     drawAcornShape(ctx, 44, 12, bird.held.radius / u, -Math.PI / 2)
+    ctx.restore()
+  }
+  if (bird.held && eating) {
+    // It shrinks as it is eaten; the near paw closes over it.
+    drawAcornShape(ctx, 37, 24 + nibble * 0.6, (bird.held.radius / u) * (1 - progress * 0.85), -Math.PI / 2 + 0.3)
+    taperedLimb(ctx, [[20, 12], [30, 18 + nibble * 0.6], [36, 23 + nibble * 0.6]], 7, 4.6, SQUIRREL_FUR)
   }
   ctx.restore()
   ctx.restore()
