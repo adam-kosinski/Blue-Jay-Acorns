@@ -226,6 +226,10 @@ export function runSquirrelExplore(npc: Npc, world: World, dt: number): void {
     }
     return
   }
+  if (returnHome(npc)) {
+    // Out of its home stretch: no exploring (and no sniffing) until it is back.
+    return
+  }
   squirrelWalk(npc)
   if (bird.hops - npc.sniffHopsAt >= npc.sniffHopsLeft && bird.hopT >= HOP_DURATION && !bird.action) {
     npc.keys.a = false
@@ -257,4 +261,33 @@ export function runSquirrelIdle(npc: Npc): void {
   if (bird.hopT >= HOP_DURATION) {
     startClimbUp(npc)
   }
+}
+
+/**
+ * A squirrel outside its home stretch (it went out after an acorn or a burial site it saw) walks back
+ * toward it; it does not explore or look for a burial spot out there.
+ *
+ * @param npc - A squirrel on the ground.
+ * @returns True while it is outside and the keys were set to walk back.
+ */
+export function returnHome(npc: Npc): boolean {
+  const home = npc.home
+  if (!home) {
+    return false
+  }
+  const slack = 0.3 * npc.bird.size
+  const cx = npc.bird.x + npc.bird.size / 2
+  if (cx < home.left - slack) {
+    npc.direction = 1
+    npc.keys.a = false
+    npc.keys.d = true
+    return true
+  }
+  if (cx > home.right + slack) {
+    npc.direction = -1
+    npc.keys.a = true
+    npc.keys.d = false
+    return true
+  }
+  return false
 }

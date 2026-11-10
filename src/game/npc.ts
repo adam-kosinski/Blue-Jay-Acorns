@@ -24,6 +24,7 @@ import {
 import { acornReach } from './burial'
 import {
   inHome,
+  returnHome,
   nextSniffHops,
   placeHidden,
   runSquirrelExplore,
@@ -181,6 +182,7 @@ export function createSquirrels(world: World, playerSize: number): Npc[] {
     const trunkX = tree.x + tree.trunkWidth / 2
     const reach = acornReach(tree)
     const npc = newNpc(bird, SQUIRREL_SECRECY)
+    npc.nosiness = null
     npc.state = bird.hunger > SQUIRREL_IDLE_HUNGER ? 'idle' : 'explore'
     npc.home = {
       tree,
@@ -339,7 +341,7 @@ function nearestNoticedAcorn(npc: Npc): Acorn | null {
   let best: Acorn | null = null
   let bestDist = Infinity
   for (const acorn of npc.noticed.keys()) {
-    if (acorn.state !== 'ground' || !npc.inView.has(acorn) || !inHome(npc, acorn.x)) {
+    if (acorn.state !== 'ground' || !npc.inView.has(acorn)) {
       continue
     }
     const dist = Math.hypot(acorn.x - cx, acorn.y - cy)
@@ -367,7 +369,7 @@ function pickTarget(npc: Npc, world: World): { acorn: Acorn | null; site: Burial
   let siteDist = Infinity
   for (const candidate of npc.sites) {
     const y = groundYAt(world.terrain, candidate.x)
-    if (!inHome(npc, candidate.x) || !inView(npc.bird, { x: candidate.x, y })) {
+    if (!inView(npc.bird, { x: candidate.x, y })) {
       continue
     }
     const dist = Math.hypot(candidate.x - cx, y - cy)
@@ -873,6 +875,10 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   const { bird } = npc
   const cx = bird.x + bird.size / 2
   if (npc.spotX === null) {
+    if (returnHome(npc)) {
+      // A squirrel only buries in its home stretch: walk back to it first.
+      return
+    }
     npc.searchTimer -= dt
     if (npc.searchTimer <= 0) {
       npc.searchTimer = 0.25

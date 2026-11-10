@@ -412,8 +412,8 @@ export type Npc = {
   sniffHopsAt: number
   /** Simulated held keys fed to the shared player movement code. */
   keys: KeyState
-  /** Personality: 0 (aloof) to 1 (nosy). */
-  nosiness: number
+  /** Personality: 0 (aloof) to 1 (nosy); squirrels have none (null). */
+  nosiness: number | null
   /** Personality 0-1: how thoroughly it hides what it buries (hops over the site 1, 2 or 3 times). */
   secrecy: number
   /** Hops still to make over a fresh burial site, and the direction of the next one. */

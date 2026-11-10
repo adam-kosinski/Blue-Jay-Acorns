@@ -3444,11 +3444,11 @@ const labelSprites = new Map<string, { canvas: HTMLCanvasElement; width: number;
  */
 function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
   const dpr = ctx.getTransform().a
-  const bars: [string, number][] = [
-    ['hunger', npc.bird.hunger],
-    ['nosy', npc.nosiness],
-    ['secrecy', npc.secrecy],
-  ]
+  const bars: [string, number][] = [['hunger', npc.bird.hunger]]
+  if (npc.nosiness !== null) {
+    bars.push(['nosy', npc.nosiness])
+  }
+  bars.push(['secrecy', npc.secrecy])
   const showQuality = npc.buryQualityTimer > 0
   const key = [npc.state, ...bars.map(([, v]) => v.toFixed(2)), showQuality ? npc.buryQuality.toFixed(2) : '', Math.round(dpr * 100)].join('|')
   let label = labelSprites.get(key)

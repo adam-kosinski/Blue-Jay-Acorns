@@ -9,7 +9,8 @@ Source: `src/game/squirrel.ts` (tree, sniffing, home stretch) plus the shared an
 
 - **One per oak.** Every oak tree has one squirrel (`createSquirrels`, `world.squirrels`). It is a little smaller than the jay (`SQUIRREL_SIZE_FRACTION` = 0.8 of the player's size), gray with a bushy tail.
 - **Never flies.** All movement is hopping on the ground (`npc.keys.w` is forced off), at `SQUIRREL_SPEED_SCALE` (1.0 of the player's walking speed; jays use 0.75). Anything a jay would fly to (a far acorn, a burial spot) a squirrel hops to.
-- **Stays in its home stretch.** `home = { tree, trunkX, left, right }`: the ground within the reach of its oak's crown (`acornReach`, where the oak's acorns can land) on either side of the trunk. It turns round at the edges, and only free acorns, burial sites and burial spots inside the stretch are considered (`inHome`). Its remembered own burials are always inside it.
+- **A fuzzy home stretch.** `home = { tree, trunkX, left, right }`: the ground within the reach of its oak's crown (`acornReach`, where the oak's acorns can land) on either side of the trunk. It **explores** only inside it (turning round at the edges), and it **buries** only inside it (candidate burial points outside the stretch are never chosen; `inHome`). But it perceives everything in view, also outside the stretch, and **ventures out** to gather any free acorn or other animal's burial site it sees there (gather, retrieve of its own burials, idle's trip to the trunk are not limited). Whenever it is outside the stretch (by more than 0.3 of its size) and is in explore or looking for a burial spot, it walks back toward it (`returnHome`) instead: no exploring, no sniffing and no burial search until it is back inside. On the way back it still notices acorns in view and, at the once-per-second check, can go gather another one (and eats it if hungry); if it picked an acorn up and is not hungry, it walks back before looking for a spot to bury it.
+- **No nosiness.** Squirrels have no nosiness score (`Npc.nosiness` is null, no 'nosy' bar in their label) and no **follow** state is planned for them. `hide` is still a placeholder (unreachable).
 - **Idle = up the tree.** In **idle** a squirrel walks to the foot of its home trunk, climbs up (animation along the side of the trunk, `SQUIRREL_CLIMB_SPEED_IN_SIZES` = 2.4 sizes per second) and is **hidden** (`bird.hidden`) once `SQUIRREL_HIDE_HEIGHT_IN_SIZES` (5.5 sizes) up: not drawn, perceives nothing, not perceived by anyone, not counted for burial quality. It stays up there until it leaves idle (hunger low enough), then climbs down the trunk (animation) and starts exploring. Squirrels that start fed (`hunger > SQUIRREL_IDLE_HUNGER`) begin hidden in their tree.
 - **Hunger.** The bar is twice as large (`SQUIRREL_HUNGER_SCALE` = 2): it drains in 120 s instead of 60 s and an acorn fills 1/6 of it instead of 1/3 (`Player.hungerScale`). The thresholds are still fractions of the bar (eat below 2/3, retrieve below 1/3), except idle: `SQUIRREL_IDLE_HUNGER` = 0.78 instead of 0.9 (an acorn only fills a sixth, so after eating a squirrel sits near 0.83; 0.9 would almost never be reached). Each squirrel needs the same number of acorns per second as a jay, so the acorn drop chance and the world cap are multiplied by (birds + squirrels) / birds in `updateTreeDrops`.
 - **Secrecy is always 0.5** (`SQUIRREL_SECRECY`): it hops over a fresh burial 5 times, and only buries at spots with burial quality above 0.5. **Oaks are ignored in its burial quality** (`burialQuality(..., useOaks = false)`).
@@ -19,7 +20,7 @@ Source: `src/game/squirrel.ts` (tree, sniffing, home stretch) plus the shared an
 
 ## States
 
-Same states as the jay: idle, explore, gather, eat, retrieve, find burial spot, bury, cover (follow and hide are placeholders). Differences:
+Same states as the jay: idle, explore, gather, eat, retrieve, find burial spot, bury, cover (no follow; hide is a placeholder). Differences:
 
 ```mermaid
 flowchart TD
@@ -35,8 +36,8 @@ flowchart TD
     down --> explore
     hungry -- "no" --> idle
 
-    explore["<b>explore</b><br/>hop around the home stretch, turning at its edges;<br/>after every 2-3 hops: <b>sniff</b> 0.9 s, rolling to notice<br/>buried acorns within 1 squirrel width of the nose (double chance)"]
-    explore --> sees{"Each second: a remembered acorn<br/>or site in the home stretch currently in view?"}
+    explore["<b>explore</b><br/>outside the home stretch: walk back to it (no sniffing);<br/>inside: hop around it, turning at its edges;<br/>after every 2-3 hops: <b>sniff</b> 0.9 s, rolling to notice<br/>buried acorns within 1 squirrel width of the nose (double chance)"]
+    explore --> sees{"Each second: a remembered acorn<br/>or site currently in view (also outside the home stretch)?"}
     sees -- "yes" --> gather
     sees -- "no" --> starving{"Hunger below 1/3<br/>and remembers a burial spot?"}
     starving -- "yes" --> retrieve
@@ -45,7 +46,7 @@ flowchart TD
     retrieve["<b>retrieve</b><br/>hop to the remembered burial spot (nose exactly on it) and dig"]
     gather["<b>gather</b><br/>hop to the acorn or burial site and peck it up or dig there<br/>(never bringing up its own acorn)"]
     eat["<b>eat</b><br/>sit up and eat, acorn consumed, hunger +1/6"]
-    find["<b>find burial spot</b><br/>walk in a random direction inside the home stretch,<br/>judging every spot it can see (burial quality without oaks)<br/>until one is above 0.5; walk there with the nose on it, judge again, bury or keep looking"]
+    find["<b>find burial spot</b><br/>outside the home stretch: walk back to it first;<br/>then walk in a random direction inside it,<br/>judging every spot it can see inside it (burial quality without oaks)<br/>until one is above 0.5; walk there with the nose on it, judge again, bury or keep looking"]
     bury["<b>bury</b><br/>nose to the ground, bury the acorn (animation); remember the spot"]
     cover["<b>cover</b><br/>hop over the fresh burial 5 times (secrecy 0.5)"]
 
