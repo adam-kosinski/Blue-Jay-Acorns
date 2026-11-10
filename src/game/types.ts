@@ -409,6 +409,9 @@ export type Npc = {
   sniffHopsLeft: number
   /** Squirrels only: `bird.hops` when the last sniff finished. */
   sniffHopsAt: number
+  /** Squirrels only: seconds left in the pause after a hop, and whether it was mid-hop last frame. */
+  hopPause: number
+  wasHopping: boolean
   /** Simulated held keys fed to the shared player movement code. */
   keys: KeyState
   /** Personality: 0 (aloof) to 1 (nosy); squirrels have none (null). */

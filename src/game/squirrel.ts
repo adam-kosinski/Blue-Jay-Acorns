@@ -242,11 +242,15 @@ export function runSquirrelExplore(npc: Npc, world: World, dt: number): void {
     // Out of its home stretch: no exploring (and no sniffing) until it is back.
     return
   }
-  // Hop on the same way; after 2 or 3 hops let the current hop finish, then stop and sniff.
+  // Hop on the same way; the hop that makes it 2 or 3 still travels as usual, and once it has
+  // landed the squirrel stops and sniffs.
   squirrelWalk(npc)
   if (bird.hops - npc.sniffHopsAt >= npc.sniffHopsLeft) {
-    npc.keys.a = false
-    npc.keys.d = false
+    if (bird.hopT >= HOP_DURATION - dt * 1.5) {
+      // About to land: let go of the key, so no further hop starts.
+      npc.keys.a = false
+      npc.keys.d = false
+    }
     if (bird.hopT >= HOP_DURATION && !bird.action) {
       startSniff(npc, world)
     }

@@ -7,6 +7,7 @@ import {
   HUNGER_THRESHOLD,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
+  SQUIRREL_HOP_PAUSE_SECONDS,
   SQUIRREL_HUNGER_SCALE,
   SQUIRREL_IDLE_ENTER_HUNGER,
   SQUIRREL_IDLE_LEAVE_HUNGER,
@@ -126,6 +127,8 @@ function newNpc(bird: Player, secrecy: number): Npc {
     sniffTimer: 0,
     sniffHopsLeft: nextSniffHops(),
     sniffHopsAt: 0,
+  hopPause: 0,
+  wasHopping: false,
       decisionTimer: Math.random(),
       direction: bird.facing,
       targetAltitude: randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE),
@@ -1008,7 +1011,7 @@ function runBury(npc: Npc, world: World): void {
  */
 function runCover(npc: Npc, dt: number): void {
   const { bird } = npc
-  if (bird.action) {
+  if (bird.action || (npc.home && npc.hopPause > 0)) {
     return
   }
   if (bird.hopT < HOP_DURATION) {
@@ -1241,9 +1244,19 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     }
 
     if (npc.home) {
-      // Squirrels never fly.
+      // Squirrels never fly, and stand still for a moment after every hop.
       npc.keys.w = false
       npc.keys.s = false
+      const landed = bird.hopT >= HOP_DURATION
+      if (npc.wasHopping && landed) {
+        npc.hopPause = SQUIRREL_HOP_PAUSE_SECONDS
+      }
+      npc.wasHopping = !landed
+      if (landed && npc.hopPause > 0) {
+        npc.hopPause -= dt
+        npc.keys.a = false
+        npc.keys.d = false
+      }
     }
     updatePlayer(bird, npc.keys, dt, world, npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE)
     updateAction(bird, world, dt)

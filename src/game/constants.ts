@@ -227,6 +227,9 @@ export const SQUIRREL_NOSE_REACH_X = 43
 /** Squirrels climb this many sizes per second (all the way up out of the play area, where they are out of sight). */
 export const SQUIRREL_CLIMB_SPEED_IN_SIZES = 4.8
 
+/** A squirrel stands still this long (seconds) after every hop before it hops again. */
+export const SQUIRREL_HOP_PAUSE_SECONDS = 0.5
+
 /** A foraging squirrel sniffs after every this many hops (a random whole number from min to max). */
 export const SQUIRREL_SNIFF_EVERY_HOPS_MIN = 2
 export const SQUIRREL_SNIFF_EVERY_HOPS_MAX = 3
