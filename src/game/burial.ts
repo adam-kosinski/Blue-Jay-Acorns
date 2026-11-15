@@ -8,7 +8,7 @@ import {
   DIG_RESPONSE_IN_SIZES,
   TYPICAL_VIEW_WIDTH_IN_SIZES,
 } from './constants'
-import { groundYAt, nearCreek } from './terrain'
+import { groundYAt, inWater } from './terrain'
 import { inView } from './vision'
 import type { OakTree, Player, World } from './types'
 
@@ -36,12 +36,37 @@ export function acornReach(tree: OakTree): number {
 }
 
 /**
+ * The facings (1 right, -1 left) a bird can stand with to bury an acorn exactly at `x` (where its beak
+ * tip lands): the spot itself must not be in the creek's water, and the place the bird has to stand
+ * (its centre, one beak reach behind the spot) must not be either, since a bird over the water floats
+ * and cannot bury. Empty when there is no way to bury there.
+ *
+ * @param world - Terrain.
+ * @param burier - The bird that would bury (its size and beak reach set where it stands).
+ * @param x - World x of the burial point.
+ */
+export function buryingFacings(world: World, burier: Player, x: number): (1 | -1)[] {
+  if (inWater(world.terrain, x)) {
+    return []
+  }
+  const offset = burier.reach * (burier.size / 100)
+  const facings: (1 | -1)[] = []
+  for (const facing of [1, -1] as const) {
+    if (!inWater(world.terrain, x - facing * offset)) {
+      facings.push(facing)
+    }
+  }
+  return facings
+}
+
+/**
  * How good a spot is for `burier` to bury an acorn, from 0 (terrible) to 1 (ideal). Starting at 1:
  * every other bird (the player included) within half a screen width of the spot, wherever the burier
  * is, lowers it by 0.8 if that bird can see the spot (its view reaches farther ahead than behind) and
  * by 0.4 if it cannot; an oak lowers it by up to 0.5
- * (at its trunk's center, easing off linearly to 0 at the farthest an acorn can fall); a place the burier remembers burying an acorn at lowers it by 0.2, easing to 0 two dig tolerances away; the creek
- * and its edge score 0; nothing goes below 0.
+ * (at its trunk's center, easing off linearly to 0 at the farthest an acorn can fall); a place the burier remembers burying an acorn at lowers it by 0.2, easing to 0 two dig tolerances away; a spot
+ * where no standing position allows burying (in the creek, or where the bird could only stand in the
+ * water) scores 0; nothing goes below 0.
  *
  * @param world - Trees and terrain.
  * @param birds - Every bird (the player and the NPCs).
@@ -60,7 +85,7 @@ export function burialQuality(
 ): number {
   const size = burier.size
   const range = BURIAL_QUALITY_RANGE_IN_SIZES * size
-  if (nearCreek(world.terrain.creek, x, size * 1.5)) {
+  if (buryingFacings(world, burier, x).length === 0) {
     return 0
   }
   let q = 1

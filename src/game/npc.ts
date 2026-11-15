@@ -38,7 +38,7 @@ import {
   updateTreePhase,
 } from './squirrel'
 import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction } from './acorns'
-import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality } from './burial'
+import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, buryingFacings } from './burial'
 import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
 import { groundYAt, nearCreek } from './terrain'
@@ -513,13 +513,21 @@ const BEAK_FACING_SLACK_IN_SIZES = 0.2
  * @param world - Play space.
  * @returns True once the beak is on the spot, the bird is standing, still, and facing the right way.
  */
-function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
+function moveBeakTo(npc: Npc, targetX: number, world: World, forBury = false): boolean {
   const { bird } = npc
   const cx = bird.x + bird.size / 2
   const offset = bird.reach * (bird.size / 100)
   if (npc.reachX === null || Math.abs(npc.reachX - targetX) > 1) {
     npc.reachX = targetX
     npc.reachDir = targetX >= cx ? 1 : -1
+    if (forBury) {
+      // Burying needs a dry place to stand: when the usual way (facing the spot as it comes) would put
+      // the bird over the creek, stand on the other side of the spot facing the way that works.
+      const facings = buryingFacings(world, bird, targetX)
+      if (facings.length > 0 && !facings.includes(npc.reachDir)) {
+        npc.reachDir = facings[0] as 1 | -1
+      }
+    }
   }
   const dir = npc.reachDir
   // Where the bird's centre must be for its beak to be on the target.
@@ -1010,7 +1018,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   }
   // Put the beak tip exactly on the chosen spot, then judge it once more (the birds around may have
   // moved) and bury there, or take off and keep looking the same way.
-  if (!moveBeakTo(npc, npc.spotX, world)) {
+  if (!moveBeakTo(npc, npc.spotX, world, true)) {
     return
   }
   releaseKeys(npc.keys)
@@ -1043,7 +1051,7 @@ function runBury(npc: Npc, world: World): void {
     return
   }
   if (bird.held) {
-    startBury(bird)
+    startBury(bird, world)
     // startBury sets the action, which the earlier check had narrowed away.
     const started = bird.action as PlayerAction | null
     if (!started) {

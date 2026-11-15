@@ -97,11 +97,14 @@ function startReach(
  * Starts the bury animation: the bird pecks the ground ahead of it and the acorn goes underground at
  * the halfway point.
  *
+ * Nothing happens when the beak tip is over the creek's water: nothing is buried in the water.
+ *
  * @param player - Bird holding an acorn.
+ * @param world - Terrain (the water).
  */
-export function startBury(player: Player): void {
+export function startBury(player: Player, world: World): void {
   const acorn = player.held
-  if (!acorn || player.floating) {
+  if (!acorn || player.floating || inWater(world.terrain, beakTipX(player))) {
     return
   }
   player.action = {
@@ -306,7 +309,7 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
 
   if (edges.bury && !player.action) {
     if (player.held) {
-      startBury(player)
+      startBury(player, world)
     } else {
       // Dig where the beak is: the closest buried acorn in range of the beak tip comes up.
       startDig(player, world)
