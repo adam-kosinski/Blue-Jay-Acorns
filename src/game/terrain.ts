@@ -50,6 +50,14 @@ export function hillBump(x: number, center: number, halfWidth: number, height: n
 const CREEK_FRONT_SHRINK = 0.78
 
 /**
+ * The imaginary layer in front of the foreground moves with the camera like a parallax layer nearer than
+ * the foreground (a factor above 1: it is as much bigger as its creek is wider), and its water surface sits
+ * this fraction of the view's height lower on the screen than the foreground's when the camera is at its lowest.
+ */
+export const CREEK_FRONT_PARALLAX = 1 / CREEK_FRONT_SHRINK
+export const CREEK_FRONT_DROP_IN_VIEWS = 0.12
+
+/**
  * Standard normal sample (Box-Muller).
  */
 function randNormal(): number {

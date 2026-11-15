@@ -14,7 +14,7 @@ import {
 import { drawLeafyDisk, drawOakCrown, drawOakVector, getOakSprite, paintBark, seededRandom, drawOak } from './oak'
 import { burialQuality } from './burial'
 import { BACKDROP_FOG, mixColor } from './world'
-import { TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
+import { CREEK_FRONT_DROP_IN_VIEWS, CREEK_FRONT_PARALLAX, TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
 import type {
   Acorn,
   Bush,
@@ -1137,7 +1137,18 @@ function drawCreek(
   const { creek, step } = world.terrain
   const left = Math.max(creek.x - creek.halfWidth, cameraX - step)
   const right = Math.min(creek.x + creek.halfWidth, cameraX + viewWidth + step)
-  if (Math.abs(creek.x - (cameraX + viewWidth / 2)) > viewWidth / 2 + creek.frontHalfWidth + creek.halfWidth + creek.bank) {
+  // The creek flows on toward the viewer into an imaginary layer in front of the foreground, placed by
+  // the same parallax math as the layers behind it (see `drawForest`): its position moves with the
+  // camera by `CREEK_FRONT_PARALLAX` times as much as the foreground does, horizontally and vertically,
+  // so the water does not seem tied to the bottom of the screen when the bird flies up or down.
+  const refWidth = world.viewHeight * TYPICAL_ASPECT_RATIO
+  const refCamera = creek.x - refWidth / 2
+  const maxCamY = Math.max(0, world.height - world.viewHeight)
+  const frontX = cameraX + refWidth / 2 + creek.frontOffset + CREEK_FRONT_PARALLAX * (refCamera - cameraX)
+  const frontY = creek.waterY + (CREEK_FRONT_PARALLAX - 1) * (maxCamY - camera.y) + CREEK_FRONT_DROP_IN_VIEWS * world.viewHeight
+  const farLeft = Math.min(creek.x - creek.halfWidth, frontX - creek.frontHalfWidth)
+  const farRight = Math.max(creek.x + creek.halfWidth, frontX + creek.frontHalfWidth)
+  if (farRight < cameraX - step || farLeft > cameraX + viewWidth + step) {
     return
   }
   const water = ctx.createLinearGradient(0, creek.waterY, 0, creek.waterY + creek.depth)
@@ -1154,13 +1165,11 @@ function drawCreek(
   ctx.closePath()
   ctx.fill()
 
-  // The creek flows on toward the viewer (an imaginary layer in front of the foreground): from the
-  // water's edges it widens to the bottom of the screen, so the water's top is seen rather than
-  // the cross section of the channel.
-  const bottom = camera.y + viewHeight + 4
+  // From the water's edges the creek widens to the front layer's creek (above), then runs straight down
+  // that layer's banks to the bottom of the screen.
+  const bottom = Math.max(camera.y + viewHeight + 4, frontY + 4)
   if (bottom > creek.waterY) {
-    const mid = (creek.waterY + bottom) / 2
-    const frontX = creek.x + creek.frontOffset
+    const mid = (creek.waterY + frontY) / 2
     const front = ctx.createLinearGradient(0, creek.waterY, 0, bottom)
     front.addColorStop(0, '#6aa3c4')
     front.addColorStop(1, '#5f9bbd')
@@ -1168,8 +1177,10 @@ function drawCreek(
     ctx.beginPath()
     ctx.moveTo(creek.x - creek.halfWidth, creek.waterY)
     ctx.lineTo(creek.x + creek.halfWidth, creek.waterY)
-    ctx.bezierCurveTo(creek.x + creek.halfWidth, mid, frontX + creek.frontHalfWidth, mid, frontX + creek.frontHalfWidth, bottom)
+    ctx.bezierCurveTo(creek.x + creek.halfWidth, mid, frontX + creek.frontHalfWidth, mid, frontX + creek.frontHalfWidth, frontY)
+    ctx.lineTo(frontX + creek.frontHalfWidth, bottom)
     ctx.lineTo(frontX - creek.frontHalfWidth, bottom)
+    ctx.lineTo(frontX - creek.frontHalfWidth, frontY)
     ctx.bezierCurveTo(frontX - creek.frontHalfWidth, mid, creek.x - creek.halfWidth, mid, creek.x - creek.halfWidth, creek.waterY)
     ctx.closePath()
     ctx.fill()
