@@ -477,6 +477,8 @@ export type Npc = {
   followHi: number
   followStill: number
   followNextRoll: number
+  /** The burial sites it already remembered when it started following (only a newly noticed one makes it leave). */
+  followKnownSites: Set<BurialSite>
   /** Birds this NPC may not follow again yet (until the world time given). */
   followBlock: { bird: Player; until: number }[]
   /** The birds in its perception region last frame (a roll to follow happens when one enters it). */

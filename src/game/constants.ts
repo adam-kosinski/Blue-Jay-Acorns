@@ -65,7 +65,7 @@ export const BURY_DURATION = 0.9
  */
 export const PATIENCE_INTERVAL_SECONDS = 5
 export const PATIENCE_WINDOW_IN_SIZES = 1
-export const FOLLOW_DISTANCE_IN_SIZES = 1
+export const FOLLOW_DISTANCE_IN_SIZES = 2
 export const FOLLOW_COOLDOWN_SECONDS = 10
 
 /** Seconds an NPC pauses after picking up an acorn, after landing to bury, and before exploring. */
