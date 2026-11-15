@@ -749,19 +749,6 @@ function drawGround(
   ctx.lineTo(endX, bottom)
   ctx.closePath()
   ctx.fill()
-
-  ctx.strokeStyle = '#5e3d22'
-  ctx.lineWidth = 3
-  ctx.beginPath()
-  for (let x = startX; x <= endX; x += terrain.step) {
-    const y = groundYAt(terrain, x)
-    if (x === startX) {
-      ctx.moveTo(x, y)
-    } else {
-      ctx.lineTo(x, y)
-    }
-  }
-  ctx.stroke()
 }
 
 /** Width of a cached leaf-litter tile, in world pixels. */
