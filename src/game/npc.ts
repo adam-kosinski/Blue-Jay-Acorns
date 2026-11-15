@@ -933,7 +933,8 @@ function considerFollow(npc: Npc, world: World): void {
     bird.eatTimer === 0 &&
     !isBeingFollowed(world, bird)
   // On becoming eligible it rolls for every bird already in view; after that, for each bird that enters
-  // its view. One roll at a time, birds carrying an acorn first, until one succeeds.
+  // its view. One roll per bird, one at a time, birds carrying an acorn first; the first success starts the
+  // following and stops the rolls (it is possible that none succeeds).
   const justEligible = eligible && !npc.followEligible
   npc.followEligible = eligible
   if (eligible) {
