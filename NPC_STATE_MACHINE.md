@@ -24,7 +24,7 @@ flowchart TD
     hungry -- "no" --> idle
 
     explore["<b>explore</b><br/>pick the direction toward the nearest remembered free acorn or<br/>other-bird burial site (toward the nearest foreground oak if none); pause 1 s looking both ways<br/>(away from, then toward, that direction); fly that way, vary altitude,<br/>bounce off world edges; anything newly in view can distract it (see below)"]
-    explore --> sees{"Each second: a remembered acorn<br/>or site currently in view?"}
+    explore --> sees{"Each second (every frame while it remembers anything):<br/>a remembered acorn or site currently in view?"}
     sees -- "yes (nearest free acorn or<br/>other bird's burial site, whichever is closer)" --> gather
     sees -- "no" --> starving{"Hunger below 1/3<br/>and remembers a burial spot?"}
     starving -- "yes" --> retrieve

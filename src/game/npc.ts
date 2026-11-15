@@ -1691,7 +1691,10 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     // Having just noticed something it decides at once what to do about it (the once-per-second
     // decision would let it wander off before it looked).
     const known = npc.sites.length + npc.noticed.size
-    if (known > npc.knownCount) {
+    if (known > npc.knownCount || (known > 0 && npc.state === 'explore')) {
+      // (Also every frame while exploring toward something it remembers: at a once-a-second check a fast
+      // bird overshoots a remembered spot between checks, finds it behind it (out of view), turns
+      // around, overshoots again and goes back and forth.)
       npc.decisionTimer = Math.max(npc.decisionTimer, 1)
     }
     npc.knownCount = known
