@@ -895,7 +895,9 @@ function glideTo(npc: Npc, targetX: number, world: World): void {
   }
   // Along the line: the bird only moves across while it is not above the line, so a line steeper than
   // the bird can descend becomes a steeper straight run instead of a drop at the end.
-  const aboveLine = straight && height > wanted + 0.1
+  // (Not while the bird is already down at the ground: the target's ground may fall away faster than the
+  // line, and standing still there would wait for a descent that cannot happen.)
+  const aboveLine = straight && height > wanted + 0.1 && altitude > 0.1
   npc.keys.a = dx < -reach && !aboveLine
   npc.keys.d = dx > reach && !aboveLine
   const target = Math.max(0, wanted - rel)
