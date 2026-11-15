@@ -164,6 +164,8 @@ function hopOnGround(
  * @param speedScale - Multiplier on flying, climbing and hopping speed (NPCs are slower).
  * @param restAfterHop - Longest time a standing bird stands still after each hop (squirrels; 0 for none).
  * @param restAfterHopMin - Shortest such time.
+ * @param moveScaleX - Extra multiplier on horizontal flying speed (NPCs flying a straight steep line move sideways slowly, smoothly).
+ * @param moveScaleY - Extra multiplier on vertical flying speed.
  */
 export function updatePlayer(
   player: Player,
@@ -173,6 +175,8 @@ export function updatePlayer(
   speedScale = 1,
   restAfterHop = 0,
   restAfterHopMin = 0,
+  moveScaleX = 1,
+  moveScaleY = 1,
 ): void {
   // While a pick-up, bury or dig-up animation plays the bird stays put.
   const busy = player.action !== null
@@ -188,7 +192,7 @@ export function updatePlayer(
   } else if (player.state === 'standing') {
     hopOnGround(player, dir, dt, speedScale, restAfterHop, restAfterHopMin)
   } else {
-    player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * player.size * dt
+    player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * moveScaleX * player.size * dt
     player.hopT = HOP_DURATION
   }
   player.animTime += dt
@@ -208,7 +212,7 @@ export function updatePlayer(
   player.walking = player.state === 'standing' && dir !== 0
   player.floating = player.state === 'standing' && inWater(world.terrain, player.x + player.size / 2)
 
-  const dy = VERTICAL_SPEED_IN_SIZES * speedScale * player.size * dt
+  const dy = VERTICAL_SPEED_IN_SIZES * speedScale * (player.state === 'flying' ? moveScaleY : 1) * player.size * dt
   const hoverY = hoverTopY(groundY, player.size)
 
   if (player.state === 'standing') {

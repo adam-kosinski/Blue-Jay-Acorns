@@ -6,6 +6,8 @@ import {
   FOLLOW_COOLDOWN_SECONDS,
   FOLLOW_DISTANCE_IN_SIZES,
   HOP_DURATION,
+  MOVE_SPEED_IN_SIZES,
+  VERTICAL_SPEED_IN_SIZES,
   PATIENCE_INTERVAL_SECONDS,
   PATIENCE_WINDOW_IN_SIZES,
   HUNGER_THRESHOLD,
@@ -61,6 +63,15 @@ const GLIDE_SLOPE = 0.45
 
 /** Ground targets nearer than this (player sizes) are reached by hopping, not flying: a flight needs room to climb and to come down diagonally. */
 const FLY_MIN_DISTANCE_IN_SIZES = 4.5
+
+/** Steepest line a bird can fly with both axes at full speed (vertical speed over sideways speed). */
+const FLIGHT_MAX_SLOPE = VERTICAL_SPEED_IN_SIZES / MOVE_SPEED_IN_SIZES
+
+/**
+ * How far (player sizes) a flying bird may be off its glide line before it corrects: about a frame of
+ * movement, so the keys switch every few frames and the path looks like a smooth line, not a staircase.
+ */
+const GLIDE_TOLERANCE = 0.015
 
 /** How close (player sizes) a flying bird gets to its target before it lands on it. */
 const LAND_IN_SIZES = 0.15
@@ -159,6 +170,8 @@ function newNpc(bird: Player, secrecy: number): Npc {
       knownCount: 0,
       noticed: new Map(),
       seenActions: new WeakSet(),
+      scaleX: 1,
+      scaleY: 1,
       followTarget: null,
       followLo: 0,
       followHi: 0,
@@ -1158,6 +1171,28 @@ function glideTo(npc: Npc, targetX: number, world: World): void {
     // cruising height and the descent diagonal.
     wanted = Math.min(startAltitude + GLIDE_SLOPE * travelled + 0.3, cruise, GLIDE_SLOPE * distance)
   }
+  if (straight && height > 0.02) {
+    // A straight line to the target, steeper than the gentle diagonal: aim at the target every frame and
+    // fly sideways and down at once, each at the fraction of its speed that makes the path a straight
+    // line (a bird cannot descend faster than half its sideways speed along a line this steep without
+    // the slower axis being throttled), instead of alternating between moving across and dropping.
+    const slope = height / Math.max(distance, 0.001)
+    const landAt = Math.max(0.02, LAND_IN_SIZES * 0.5 * Math.min(1, FLIGHT_MAX_SLOPE / slope))
+    if (distance <= landAt) {
+      npc.keys.a = false
+      npc.keys.d = false
+      npc.keys.w = false
+      npc.keys.s = true
+      return
+    }
+    npc.keys.a = dx < 0
+    npc.keys.d = dx > 0
+    npc.keys.w = false
+    npc.keys.s = true
+    npc.scaleX = slope > FLIGHT_MAX_SLOPE ? FLIGHT_MAX_SLOPE / slope : 1
+    npc.scaleY = slope > FLIGHT_MAX_SLOPE ? 1 : slope / FLIGHT_MAX_SLOPE
+    return
+  }
   // Over the target: land.
   if (distance <= LAND_IN_SIZES) {
     npc.keys.a = false
@@ -1170,12 +1205,12 @@ function glideTo(npc: Npc, targetX: number, world: World): void {
   // the bird can descend becomes a steeper straight run instead of a drop at the end.
   // (Not while the bird is already down at the ground: the target's ground may fall away faster than the
   // line, and standing still there would wait for a descent that cannot happen.)
-  const aboveLine = straight && height > wanted + 0.1 && altitude > 0.1
+  const aboveLine = straight && height > wanted + GLIDE_TOLERANCE && altitude > 0.1
   npc.keys.a = dx < -reach && !aboveLine
   npc.keys.d = dx > reach && !aboveLine
   const target = Math.max(0, wanted - rel)
-  npc.keys.w = altitude < target - 0.05
-  npc.keys.s = altitude > target + 0.05
+  npc.keys.w = altitude < target - GLIDE_TOLERANCE
+  npc.keys.s = altitude > target + GLIDE_TOLERANCE
 }
 
 /**
@@ -1635,6 +1670,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
 
     watchGoal(npc, world, dt)
     releaseKeys(npc.keys)
+    npc.scaleX = 1
+    npc.scaleY = 1
     let startEating = false
     if (bird.floating && !bird.action && npc.state !== 'eat') {
       // A bird floating on the creek can do nothing but hop out toward the nearest bank.
@@ -1707,6 +1744,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE,
       rests ? SQUIRREL_HOP_PAUSE_MAX_SECONDS : 0,
       rests ? SQUIRREL_HOP_PAUSE_MIN_SECONDS : 0,
+      npc.scaleX,
+      npc.scaleY,
     )
     updateAction(bird, world, dt)
     // (a burial that just finished may sit on a site noted before)

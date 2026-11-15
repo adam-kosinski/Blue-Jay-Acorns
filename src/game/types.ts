@@ -467,6 +467,9 @@ export type Npc = {
   /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */
   /** Bury / dig actions this NPC has already had its one chance to notice (each is rolled once). */
   seenActions: WeakSet<PlayerAction>
+  /** Extra horizontal / vertical flying speed multipliers for this frame (1 normally; set by glides to fly a steep straight line smoothly). */
+  scaleX: number
+  scaleY: number
   /** The bird being followed in the follow state. */
   followTarget: Player | null
   /** The horizontal window (world x) the followed bird has stayed in, and for how long (s); the time of the next patience roll. */
