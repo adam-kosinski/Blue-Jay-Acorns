@@ -56,6 +56,18 @@ export const PICKUP_DURATION = 0.3
 /** Seconds the bury and dig-up animations last (the acorn changes hands halfway). */
 export const BURY_DURATION = 0.9
 
+/**
+ * The follow state: a followed bird that stays inside a horizontal window `PATIENCE_WINDOW_IN_SIZES` bird
+ * widths wide for `PATIENCE_INTERVAL_SECONDS` makes the follower roll (probability 1 - nosiness) to lose
+ * interest, and again every interval it stays there. A follower tries to stay within
+ * `FOLLOW_DISTANCE_IN_SIZES` bird widths of its target, and does not follow the same bird again for
+ * `FOLLOW_COOLDOWN_SECONDS` after losing interest or losing it.
+ */
+export const PATIENCE_INTERVAL_SECONDS = 5
+export const PATIENCE_WINDOW_IN_SIZES = 1
+export const FOLLOW_DISTANCE_IN_SIZES = 1
+export const FOLLOW_COOLDOWN_SECONDS = 10
+
 /** Seconds an NPC pauses after picking up an acorn, after landing to bury, and before exploring. */
 export const NPC_WAIT_SECONDS = 1
 

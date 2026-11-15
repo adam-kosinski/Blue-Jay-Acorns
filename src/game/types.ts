@@ -384,7 +384,7 @@ export type ForestLayer = {
   waterColor: string
 }
 
-/** Finite-state-machine states for an NPC (follow is not wired up yet, and squirrels never use it). */
+/** Finite-state-machine states for an NPC (squirrels never follow). */
 export type NpcState =
   | 'idle'
   | 'explore'
@@ -467,6 +467,17 @@ export type Npc = {
   /** Free acorns the bird noticed, with where it last saw each (kept even when out of view). */
   /** Bury / dig actions this NPC has already had its one chance to notice (each is rolled once). */
   seenActions: WeakSet<PlayerAction>
+  /** The bird being followed in the follow state. */
+  followTarget: Player | null
+  /** The horizontal window (world x) the followed bird has stayed in, and for how long (s); the time of the next patience roll. */
+  followLo: number
+  followHi: number
+  followStill: number
+  followNextRoll: number
+  /** Birds this NPC may not follow again yet (until the world time given). */
+  followBlock: { bird: Player; until: number }[]
+  /** The birds in its perception region last frame (a roll to follow happens when one enters it). */
+  seenBirds: Set<Player>
   /** Actions a flying NPC already failed its notice roll for; it notices them on landing. */
   missedActions: WeakSet<PlayerAction>
   noticed: Map<Acorn, { x: number; y: number }>

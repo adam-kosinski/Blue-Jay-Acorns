@@ -111,6 +111,9 @@ export function renderScene(
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
   drawFrontProps(ctx, world, camera.x, viewWidth)
   drawNoticeLines(ctx, world)
+  if (showMinimap) {
+    drawFollowArrows(ctx, world)
+  }
 
   ctx.restore()
 
@@ -3651,6 +3654,56 @@ function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
       ctx.lineTo(toX - (dx / length) * padEnd, toY - (dy / length) * padEnd)
       ctx.stroke()
     }
+  }
+  ctx.restore()
+}
+
+/**
+ * Debug: draws a pink arrow from every jay in the follow state to the bird it follows, stopping short of
+ * both birds so that it does not overlap them.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - NPCs.
+ */
+function drawFollowArrows(ctx: CanvasRenderingContext2D, world: World): void {
+  ctx.save()
+  ctx.strokeStyle = '#ff5fb4'
+  ctx.fillStyle = '#ff5fb4'
+  ctx.lineWidth = 4
+  ctx.lineCap = 'round'
+  for (const npc of world.npcs) {
+    const target = npc.followTarget
+    if (npc.state !== 'follow' || !target) {
+      continue
+    }
+    const size = npc.bird.size
+    const fromX = npc.bird.x + size / 2
+    const fromY = npc.bird.y + size / 2
+    const dx = target.x + target.size / 2 - fromX
+    const dy = target.y + target.size / 2 - fromY
+    const length = Math.hypot(dx, dy)
+    const padStart = size * 0.7
+    const padEnd = size * 0.7
+    if (length <= padStart + padEnd + 12) {
+      continue
+    }
+    const ux = dx / length
+    const uy = dy / length
+    const startX = fromX + ux * padStart
+    const startY = fromY + uy * padStart
+    const tipX = fromX + dx - ux * padEnd
+    const tipY = fromY + dy - uy * padEnd
+    const head = 16
+    ctx.beginPath()
+    ctx.moveTo(startX, startY)
+    ctx.lineTo(tipX - ux * head * 0.6, tipY - uy * head * 0.6)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.moveTo(tipX, tipY)
+    ctx.lineTo(tipX - ux * head - uy * head * 0.5, tipY - uy * head + ux * head * 0.5)
+    ctx.lineTo(tipX - ux * head + uy * head * 0.5, tipY - uy * head - ux * head * 0.5)
+    ctx.closePath()
+    ctx.fill()
   }
   ctx.restore()
 }

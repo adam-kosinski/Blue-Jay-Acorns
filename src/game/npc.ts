@@ -3,7 +3,11 @@ import {
   BURIAL_QUALITY_DISPLAY_SECONDS,
   NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
   DIG_RESPONSE_IN_SIZES,
+  FOLLOW_COOLDOWN_SECONDS,
+  FOLLOW_DISTANCE_IN_SIZES,
   HOP_DURATION,
+  PATIENCE_INTERVAL_SECONDS,
+  PATIENCE_WINDOW_IN_SIZES,
   HUNGER_THRESHOLD,
   NPC_COUNT,
   NPC_NOTICE_PROBABILITY,
@@ -155,6 +159,13 @@ function newNpc(bird: Player, secrecy: number): Npc {
       knownCount: 0,
       noticed: new Map(),
       seenActions: new WeakSet(),
+      followTarget: null,
+      followLo: 0,
+      followHi: 0,
+      followStill: 0,
+      followNextRoll: 0,
+      followBlock: [],
+      seenBirds: new Set(),
       missedActions: new WeakSet(),
       sites: [],
       siteTarget: null,
@@ -796,6 +807,10 @@ function decide(npc: Npc, world: World): void {
     }
     return
   }
+  if (npc.state === 'follow') {
+    decideFollow(npc, world)
+    return
+  }
   if (npc.state !== 'explore') {
     return
   }
@@ -816,6 +831,264 @@ function decide(npc: Npc, world: World): void {
   const heading = directionToRemembered(npc)
   if (heading !== null) {
     npc.direction = heading
+  }
+}
+
+/**
+ * The birds a jay may follow: the player (unless invisible in debug mode) and the other jays.
+ *
+ * @param world - Play space.
+ */
+function followCandidates(world: World): Player[] {
+  const jays = world.npcs.filter((other) => !other.bird.hidden).map((other) => other.bird)
+  return activePlayer && !activePlayer.invisible ? [activePlayer, ...jays] : jays
+}
+
+/**
+ * Whether a bird is a jay in the follow state.
+ *
+ * @param world - Play space.
+ * @param bird - Bird to check.
+ */
+function isFollowing(world: World, bird: Player): boolean {
+  return world.npcs.some((other) => other.bird === bird && other.state === 'follow')
+}
+
+/**
+ * Whether some jay is following this bird.
+ *
+ * @param world - Play space.
+ * @param bird - Bird to check.
+ */
+function isBeingFollowed(world: World, bird: Player): boolean {
+  return world.npcs.some((other) => other.state === 'follow' && other.followTarget === bird)
+}
+
+/**
+ * Whether this bird may be followed now: not itself in the follow state, and not on this NPC's cooldown.
+ *
+ * @param npc - The would-be follower.
+ * @param world - Play space.
+ * @param other - Bird to follow.
+ */
+function mayFollow(npc: Npc, world: World, other: Player): boolean {
+  return (
+    other !== npc.bird &&
+    !isFollowing(world, other) &&
+    !npc.followBlock.some((block) => block.bird === other && block.until > world.time)
+  )
+}
+
+/**
+ * Nosy jays: updates which other birds are in this jay's perception region, and when one has just
+ * entered it while the jay is idle (or exploring with nowhere to go), rolls to start following it:
+ * `0.5 x nosiness`, or `nosiness` when that bird is carrying an acorn. A bird that is being followed
+ * does not start following anyone itself.
+ *
+ * @param npc - The jay.
+ * @param world - Play space.
+ */
+function considerFollow(npc: Npc, world: World): void {
+  const bird = npc.bird
+  if (npc.home || npc.nosiness === null) {
+    return
+  }
+  const visible = new Set<Player>()
+  for (const other of followCandidates(world)) {
+    if (other !== bird && inView(bird, { x: other.x + other.size / 2, y: other.y + other.size / 2 })) {
+      visible.add(other)
+    }
+  }
+  const noDestination =
+    npc.state === 'idle' ||
+    (npc.state === 'explore' && !hasPick(pickTarget(npc, world)) && directionToRemembered(npc) === null)
+  if (noDestination && !bird.floating && !bird.action && !bird.held && bird.eatTimer === 0 && !isBeingFollowed(world, bird)) {
+    for (const other of visible) {
+      if (npc.seenBirds.has(other) || !mayFollow(npc, world, other)) {
+        continue
+      }
+      if (Math.random() < npc.nosiness * (other.held ? 1 : 0.5)) {
+        enterFollow(npc, other)
+        break
+      }
+    }
+  }
+  npc.seenBirds = visible
+}
+
+/**
+ * Whether a pick found anything (without setting the NPC's targets).
+ *
+ * @param pick - Result of `pickTarget`.
+ */
+function hasPick(pick: { acorn: Acorn | null; site: BurialSite | null }): boolean {
+  return pick.acorn !== null || pick.site !== null
+}
+
+/**
+ * Starts following a bird.
+ *
+ * @param npc - The jay.
+ * @param other - Bird to follow.
+ */
+function enterFollow(npc: Npc, other: Player): void {
+  npc.state = 'follow'
+  setFollowTarget(npc, other)
+  npc.target = null
+  npc.siteTarget = null
+  npc.idleTargetX = null
+  npc.glide = null
+  npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
+  npc.altitudeTimer = randRange(1, 3)
+}
+
+/**
+ * Points a follower at a bird and restarts its patience clock.
+ *
+ * @param npc - The follower.
+ * @param other - Bird to follow.
+ */
+function setFollowTarget(npc: Npc, other: Player): void {
+  const x = other.x + other.size / 2
+  npc.followTarget = other
+  npc.followLo = x
+  npc.followHi = x
+  npc.followStill = 0
+  npc.followNextRoll = PATIENCE_INTERVAL_SECONDS
+}
+
+/**
+ * Stops following (the bird keeps its distance from that one for a while) and goes back to idling or
+ * exploring according to hunger.
+ *
+ * @param npc - The follower.
+ * @param world - Play space.
+ */
+function leaveFollow(npc: Npc, world: World): void {
+  if (npc.followTarget) {
+    npc.followBlock.push({ bird: npc.followTarget, until: world.time + FOLLOW_COOLDOWN_SECONDS })
+  }
+  npc.followTarget = null
+  npc.glide = null
+  enterExploreOrIdle(npc)
+}
+
+/**
+ * Once-per-second follow decisions. The bird stops following when the followed bird is more than half a
+ * screen away (back to idle or explore by hunger), when it is hungry enough to go and dig up an acorn of
+ * its own, or when an acorn or another bird's burial site comes into view (it goes to gather it); and
+ * it switches to a bird carrying an acorn when it is following one that is not.
+ *
+ * @param npc - The follower.
+ * @param world - Play space.
+ */
+function decideFollow(npc: Npc, world: World): void {
+  const target = npc.followTarget
+  const range = BURIAL_QUALITY_RANGE_IN_SIZES * npc.bird.size
+  if (!target || Math.abs(target.x + target.size / 2 - (npc.bird.x + npc.bird.size / 2)) > range) {
+    leaveFollow(npc, world)
+    return
+  }
+  if (applyPick(npc, pickTarget(npc, world))) {
+    npc.followTarget = null
+    npc.glide = null
+    npc.state = 'gather'
+    return
+  }
+  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.bird.burials.some((spot) => canGoTo(npc, spot))) {
+    npc.followTarget = null
+    npc.glide = null
+    npc.state = 'retrieve'
+    npc.digSpot = null
+    return
+  }
+  if (!target.held) {
+    for (const other of npc.seenBirds) {
+      if (other.held && mayFollow(npc, world, other)) {
+        setFollowTarget(npc, other)
+        return
+      }
+    }
+  }
+}
+
+/**
+ * Follow: stay within a bird width of the followed bird, facing it. Fly along when it flies (changing
+ * altitude now and then while moving sideways, hovering otherwise), land when it lands (flying to it
+ * first if it is far, which is quicker than hopping). Loses interest with probability 1 - nosiness every
+ * patience interval while the followed bird stays inside a one-bird-wide window.
+ *
+ * @param npc - Following NPC.
+ * @param world - Play space.
+ * @param dt - Elapsed seconds.
+ */
+function runFollow(npc: Npc, world: World, dt: number): void {
+  const { bird } = npc
+  const target = npc.followTarget
+  if (!target) {
+    enterExploreOrIdle(npc)
+    return
+  }
+  const size = bird.size
+  const cx = bird.x + size / 2
+  const tx = target.x + target.size / 2
+  // Patience: a roll for every interval the followed bird has stayed inside the window.
+  const lo = Math.min(npc.followLo, tx)
+  const hi = Math.max(npc.followHi, tx)
+  if (hi - lo > PATIENCE_WINDOW_IN_SIZES * size) {
+    npc.followLo = tx
+    npc.followHi = tx
+    npc.followStill = 0
+    npc.followNextRoll = PATIENCE_INTERVAL_SECONDS
+  } else {
+    npc.followLo = lo
+    npc.followHi = hi
+    npc.followStill += dt
+    if (npc.followStill >= npc.followNextRoll) {
+      npc.followNextRoll += PATIENCE_INTERVAL_SECONDS
+      if (Math.random() < 1 - (npc.nosiness ?? 0)) {
+        leaveFollow(npc, world)
+        return
+      }
+    }
+  }
+  const dx = tx - cx
+  const near = Math.abs(dx) <= FOLLOW_DISTANCE_IN_SIZES * size
+  const toward: 1 | -1 = dx >= 0 ? 1 : -1
+  if (target.state === 'flying') {
+    // Fly along (taking off first).
+    npc.keys.w = bird.state === 'standing'
+    if (!near) {
+      npc.keys.a = toward === -1
+      npc.keys.d = toward === 1
+      if (bird.state === 'flying') {
+        npc.altitudeTimer -= dt
+        if (npc.altitudeTimer <= 0) {
+          npc.altitudeTimer = randRange(1, 3)
+          npc.targetAltitude = randRange(MIN_EXPLORE_ALTITUDE, MAX_EXPLORE_ALTITUDE)
+        }
+        steerAltitude(npc, npc.targetAltitude, world)
+      }
+    }
+  } else if (!near) {
+    // Land beside it: far away is flown to (and landed at), near is hopped to.
+    const point = tx + (cx >= tx ? 1 : -1) * size * 0.8
+    if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * size) {
+      glideTo(npc, point, world)
+    } else {
+      npc.keys.a = toward === -1
+      npc.keys.d = toward === 1
+    }
+  } else if (bird.state === 'flying') {
+    npc.keys.s = true
+  }
+  // Facing it: a one-frame tap turns a bird that is near but looking away.
+  if (near && bird.facing !== toward && (bird.state === 'flying' || bird.hopT >= HOP_DURATION)) {
+    if (toward === 1) {
+      npc.keys.d = true
+    } else {
+      npc.keys.a = true
+    }
   }
 }
 
@@ -1312,7 +1585,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
         npc.siteTarget = null
         npc.digSpot = null
         npc.idleTargetX = null
-      } else if (npc.state === 'explore' || npc.state === 'idle') {
+      } else if (npc.state === 'explore' || npc.state === 'idle' || npc.state === 'follow') {
+        npc.followTarget = null
         enterFindBurialSpot(npc, world)
       }
     }
@@ -1323,6 +1597,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       bird.sniff = -1
     }
     updatePerception(npc, world)
+    considerFollow(npc, world)
     dropOwnBurialsFromSites(npc)
     // Having just noticed something it decides at once what to do about it (the once-per-second
     // decision would let it wander off before it looked).
@@ -1399,6 +1674,9 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
         case 'retrieve':
           runRetrieve(npc, world)
           break
+        case 'follow':
+          runFollow(npc, world, dt)
+          break
         case 'eat':
           if (!npc.eatAttempted) {
             npc.eatAttempted = true
@@ -1406,8 +1684,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
           }
           break
         default:
-          // follow is not implemented yet.
-          enterExplore(npc)
+          break
       }
     }
 
