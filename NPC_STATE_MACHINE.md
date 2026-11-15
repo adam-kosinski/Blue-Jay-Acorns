@@ -3,7 +3,7 @@
 Source: `src/game/npc.ts`. Update this chart whenever the AI changes. Squirrels share this code and have their own state machine document, `SQUIRREL_STATE_MACHINE.md`.
 
 - **Rectangles** are states; **diamonds** are decision points (checks made when entering a state or once per second).
-- Probabilistic transitions are rolled **once per second** per NPC; everything else is checked every frame.
+- Most probabilistic transitions are rolled **once per second** per NPC; the follow rolls happen when an NPC becomes eligible or a bird enters its view, and the patience roll every `PATIENCE_INTERVAL_SECONDS` (see `follow`); everything else is checked every frame.
 - **Noticing:** a standing bird always notices every free acorn in view (so on landing everything in view counts as seen). A flying bird gets one roll (`NPC_NOTICE_PROBABILITY` = 0.75) for each acorn that newly enters its view. Once noticed, an acorn is **remembered even after it leaves view** and never rolls again; the bird remembers the spot where it last saw it. When that spot comes back into view and the acorn is no longer there, it is forgotten immediately (the bird does not have to land). Until then a taken acorn is still remembered and still draws the bird's explore direction. An acorn that failed its roll can roll again when it re-enters view. What is in view depends on the direction the bird faces.
 - Acorn perception: a third of a typical (16:9) screen width ahead and about one bird-width behind (`NPC_PERCEIVE_AHEAD_IN_SIZES` / `NPC_PERCEIVE_BEHIND_IN_SIZES`, measured in player sizes so it never depends on the window). Hunger thresholds: eat below 2/3 (`HUNGER_THRESHOLD`), idle above 0.9 (`NPC_IDLE_HUNGER`).
 - Pauses (`NPC_WAIT_SECONDS` = 1 s, no movement or action): after picking up an acorn, after landing to bury, and when entering explore.
@@ -74,12 +74,15 @@ flowchart TD
     cover["<b>cover</b><br/>hop over the fresh burial site back and forth:<br/>as many hops as its secrecy rounded up to the next tenth<br/>(at least 1; each hop fades the mound a bit more, 10 hide it completely)"]
     cover --> rest
 
-    explore -- "it remembers no acorn and is not starving:<br/>roll for each bird in view (acorn carriers first),<br/>then for each bird entering view: 0.5 x nosiness<br/>(nosiness if it carries an acorn)" --> follow
-    idle -- "a bird enters its view:<br/>the same roll" --> follow
-    follow["<b>follow</b><br/>stay within a bird width of the bird,<br/>facing it; fly along when it flies, land when it lands;<br/>switch to a bird carrying an acorn"]
-    follow -- "target more than half a screen away,<br/>or the target stayed in a 1-bird-wide window for 5 s<br/>and the roll (1 - nosiness) succeeds" --> rest
-    follow -- "a free acorn in view, or noticing<br/>an other-bird burial site" --> gather
-    follow -- "hunger below 1/3 and remembers a burial spot" --> retrieve
+    followEntry{"Idle or exploring, remembers no free acorn,<br/>hunger at least 1/3, not holding or doing anything<br/>(it may remember other birds' burial sites)"}
+    explore --> followEntry
+    idle --> followEntry
+    followEntry -- "roll for each bird in view (acorn carriers first) the moment<br/>it becomes eligible, then for each bird entering its view:<br/>0.5 x nosiness (nosiness if that bird carries an acorn);<br/>not for a bird that is itself following, or on its 10 s cooldown;<br/>the first success follows, all may fail" --> follow
+    follow["<b>follow</b><br/>stay a random 2-4 bird widths (drawn when starting) from the bird, facing it;<br/>target flies: take off, fly along, vary altitude while moving sideways, hover otherwise;<br/>target stands: land beside it (fly there if far, hop if near);<br/>switch to a bird carrying an acorn if the one followed has none"]
+    follow -- "target more than half a screen away" --> rest
+    follow -- "target stayed inside a 1-bird-wide window for 5 s:<br/>roll 1 - nosiness, repeated every 5 s while it stays" --> rest
+    follow -- "a free acorn in view, or noticing a burial site<br/>(a new one, a known one coming back into view, or a burying;<br/>not a dig-up, not a site already in view when it began)" --> gather
+    follow -- "hunger below 1/3 and remembers a burial of its own" --> retrieve
     follow -- "hunger below 1/3, no burial remembered" --> rest
 ```
 
