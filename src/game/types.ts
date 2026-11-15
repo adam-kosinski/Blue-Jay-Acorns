@@ -475,7 +475,7 @@ export type Npc = {
   /** The burial site being gathered by digging, or null. */
   siteTarget: BurialSite | null
   /** Straight-line descent into the current ground target: where the trip started. */
-  glide: { targetX: number; startAltitude: number; startDistance: number; cruise: number } | null
+  glide: { targetX: number; startAltitude: number; startDistance: number; cruise: number; straight: boolean } | null
 }
 
 /** Generated play space: bounds plus scenery. */
