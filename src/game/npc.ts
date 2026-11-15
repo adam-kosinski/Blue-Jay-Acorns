@@ -232,12 +232,18 @@ export function createSquirrels(world: World, playerSize: number): Npc[] {
     const npc = newNpc(bird, SQUIRREL_SECRECY)
     npc.nosiness = null
     npc.state = bird.hunger > SQUIRREL_IDLE_ENTER_HUNGER ? 'idle' : 'explore'
-    npc.home = {
-      tree,
-      trunkX,
-      left: Math.max(size, trunkX - reach),
-      right: Math.min(world.width - size, trunkX + reach),
+    // The home stretch stops short of the creek (a squirrel cannot swim: it would float and be pushed
+    // out again and again).
+    const creek = world.terrain.creek
+    const shore = creek.halfWidth + size
+    let left = Math.max(size, trunkX - reach)
+    let right = Math.min(world.width - size, trunkX + reach)
+    if (trunkX > creek.x) {
+      left = Math.max(left, creek.x + shore)
+    } else {
+      right = Math.min(right, creek.x - shore)
     }
+    npc.home = { tree, trunkX, left, right }
     if (npc.state === 'idle') {
       placeHidden(npc, world)
     } else {
@@ -533,9 +539,9 @@ function steerHorizontal(npc: Npc, x: number): void {
   npc.keys.d = dx > arrive
 }
 
-/** Horizontal gap (player sizes) within which a bird walking up to a beak target stops, and the looser one allowed once it faces the right way. */
-const BEAK_ARRIVE_IN_SIZES = 0.1
-const BEAK_FACING_SLACK_IN_SIZES = 0.2
+/** Horizontal gap (player sizes) within which a bird walking up to a beak target counts as there, and the gap below which it slows down to creep onto the spot. */
+const BEAK_ARRIVE_IN_SIZES = 0.02
+const BEAK_CREEP_IN_SIZES = 0.15
 
 /**
  * Moves the NPC so that its beak tip is exactly on a ground spot, facing the way it came (so a bury or
@@ -572,19 +578,24 @@ function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
     glideTo(npc, centerTarget, world)
     return false
   }
-  const close = Math.abs(dx) <= (bird.facing === dir ? BEAK_FACING_SLACK_IN_SIZES : BEAK_ARRIVE_IN_SIZES) * bird.size
-  if (!close) {
+  // The last stretch is walked at a speed proportional to what is left (never more than one frame's
+  // step), so the bird comes to rest exactly on the spot without overshooting; correcting a small miss at
+  // full speed would swing it past the spot and turn it left and right every frame, over and over.
+  const gap = Math.abs(dx)
+  if (gap > BEAK_ARRIVE_IN_SIZES * bird.size) {
     npc.keys.a = dx < 0
     npc.keys.d = dx > 0
+    npc.scaleX = Math.min(1, gap / (BEAK_CREEP_IN_SIZES * bird.size))
     return false
   }
   if (bird.facing !== dir) {
-    // In place but facing the wrong way: a one-frame tap turns it.
+    // On the spot but facing the wrong way: a key tap that does not move the bird turns it.
     if (dir === 1) {
       npc.keys.d = true
     } else {
       npc.keys.a = true
     }
+    npc.scaleX = 0
     return false
   }
   return bird.hopT >= HOP_DURATION
@@ -657,6 +668,10 @@ function canGoTo(npc: Npc, x: number): boolean {
     return true
   }
   if (inWater(world.terrain, x) || standingFacings(world, npc.bird, x).length === 0) {
+    return false
+  }
+  // A bird that cannot fly (a squirrel) cannot get across the creek: anything on the other side is out.
+  if (npc.home && (x - world.terrain.creek.x) * (npc.bird.x + npc.bird.size / 2 - world.terrain.creek.x) < 0) {
     return false
   }
   return !npc.blocked.some((block) => block.until > world.time && Math.abs(block.x - x) <= npc.bird.size * 0.25)
@@ -1150,7 +1165,9 @@ function runFollow(npc: Npc, world: World, dt: number): void {
     npc.keys.s = true
   }
   // Facing it: a one-frame tap turns a bird that is near but looking away.
-  if (near && bird.facing !== toward && (bird.state === 'flying' || bird.hopT >= HOP_DURATION)) {
+  // (Not when it is nearly on top of the bird, where "toward" flips with every tiny shift and the tap
+  // would turn it left and right again and again.)
+  if (near && Math.abs(dx) > 0.3 * size && bird.facing !== toward && (bird.state === 'flying' || bird.hopT >= HOP_DURATION)) {
     if (toward === 1) {
       npc.keys.d = true
     } else {

@@ -108,6 +108,7 @@ export function syncPlayerToWorld(player: Player, world: World, size: number): v
  * @param speedScale - Speed multiplier (NPCs are slower).
  * @param restAfterHop - Longest time (seconds) the bird stands still after a hop before it can hop again (squirrels).
  * @param restAfterHopMin - Shortest such time; the rest is random in between.
+ * @param moveScale - Extra multiplier on the ground speed (NPCs use a small one to creep onto an exact spot, 0 to turn on the spot).
  */
 function hopOnGround(
   player: Player,
@@ -116,8 +117,9 @@ function hopOnGround(
   speedScale: number,
   restAfterHop: number,
   restAfterHopMin: number,
+  moveScale = 1,
 ): void {
-  const average = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size
+  const average = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * moveScale * player.size
   let left = dt
   // Standing still after a hop (counts down whether or not a key is held).
   const rest = (): void => {
@@ -190,7 +192,7 @@ export function updatePlayer(
     player.x += dir * MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * speedScale * player.size * dt
     player.hopT = HOP_DURATION
   } else if (player.state === 'standing') {
-    hopOnGround(player, dir, dt, speedScale, restAfterHop, restAfterHopMin)
+    hopOnGround(player, dir, dt, speedScale, restAfterHop, restAfterHopMin, moveScaleX)
   } else {
     player.x += dir * MOVE_SPEED_IN_SIZES * speedScale * moveScaleX * player.size * dt
     player.hopT = HOP_DURATION
