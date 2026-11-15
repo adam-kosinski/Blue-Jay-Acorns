@@ -93,16 +93,11 @@ export function renderScene(
   for (const squirrel of world.squirrels) {
     const sx = squirrel.bird.x + squirrel.bird.size / 2
     if (!squirrel.bird.hidden && sx > camera.x - squirrel.bird.size * 2 && sx < camera.x + viewWidth + squirrel.bird.size * 2) {
-      drawSquirrel(ctx, squirrel.bird)
       if (squirrel.bird.climbDir !== 0 && squirrel.home) {
         // The tree's leaves hang in front of a squirrel climbing its trunk.
-        const reach = squirrel.bird.size * 1.2
-        ctx.save()
-        ctx.beginPath()
-        ctx.rect(sx - reach, squirrel.bird.y - reach * 0.6, reach * 2, squirrel.bird.size + reach * 1.2)
-        ctx.clip()
-        drawOakCrown(ctx, squirrel.home.tree.shape, squirrel.home.trunkX, groundYAt(world.terrain, squirrel.home.trunkX), OAK_TONES, TRUNK_COLOR)
-        ctx.restore()
+        drawClimbingSquirrel(ctx, squirrel, world)
+      } else {
+        drawSquirrel(ctx, squirrel.bird)
       }
       if (showMinimap) {
         drawNpcLabel(ctx, squirrel)
@@ -3660,6 +3655,53 @@ function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
     }
   }
   ctx.restore()
+}
+
+/** Scratch bitmap for drawing a climbing squirrel behind its tree's leaves. */
+let climbCanvas: HTMLCanvasElement | null = null
+
+/**
+ * Draws a squirrel climbing its trunk so that the tree's leaves hang in front of it: the squirrel is
+ * painted on a scratch bitmap, the oak's leaf bitmap is cut out of it (destination-out, so a leaf's soft
+ * edge hides the squirrel just as much as it covers it) and the result goes onto the scene. Nothing of
+ * the tree is painted over again, so no leaf is drawn twice and no patch of leaves seems to move with
+ * the squirrel.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param squirrel - The climbing squirrel (with its home tree).
+ * @param world - Terrain for the ground height at the trunk.
+ */
+function drawClimbingSquirrel(ctx: CanvasRenderingContext2D, squirrel: Npc, world: World): void {
+  const home = squirrel.home
+  const bird = squirrel.bird
+  if (!home) {
+    drawSquirrel(ctx, bird)
+    return
+  }
+  const scale = ctx.getTransform().a
+  const pad = bird.size * 1.6
+  const ox = bird.x - pad
+  const oy = bird.y - pad
+  const span = bird.size + pad * 2
+  climbCanvas ??= document.createElement('canvas')
+  const width = Math.ceil(span * scale)
+  if (climbCanvas.width !== width || climbCanvas.height !== width) {
+    climbCanvas.width = width
+    climbCanvas.height = width
+  }
+  const off = climbCanvas.getContext('2d')
+  if (!off) {
+    drawSquirrel(ctx, bird)
+    return
+  }
+  off.setTransform(1, 0, 0, 1, 0, 0)
+  off.clearRect(0, 0, width, width)
+  off.setTransform(scale, 0, 0, scale, -ox * scale, -oy * scale)
+  drawSquirrel(off, bird)
+  off.globalCompositeOperation = 'destination-out'
+  drawOakCrown(off, home.tree.shape, home.trunkX, groundYAt(world.terrain, home.trunkX), OAK_TONES, TRUNK_COLOR)
+  off.globalCompositeOperation = 'source-over'
+  ctx.drawImage(climbCanvas, ox, oy, span, span)
 }
 
 /**
