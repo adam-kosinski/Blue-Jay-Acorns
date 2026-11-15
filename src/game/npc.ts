@@ -55,8 +55,11 @@ const MIN_CRUISE_ALTITUDE = 1
 /** Steepest glide into a ground target (altitude per horizontal distance); the climb/descend speed is half the flying speed. */
 const GLIDE_SLOPE = 0.45
 
-/** Ground targets nearer than this (player sizes) are reached by hopping, not flying. */
-const FLY_MIN_DISTANCE_IN_SIZES = 2
+/** Ground targets nearer than this (player sizes) are reached by hopping, not flying: a flight needs room to climb and to come down diagonally. */
+const FLY_MIN_DISTANCE_IN_SIZES = 4.5
+
+/** How close (player sizes) a flying bird gets to its target before it lands on it. */
+const LAND_IN_SIZES = 0.15
 
 /** Horizontal gap (player sizes) at which an NPC counts as having reached its target. */
 const ARRIVE_IN_SIZES = 0.5
@@ -747,10 +750,13 @@ function squirrelRests(npc: Npc): boolean {
 }
 
 /**
- * Moves toward a ground target x along a straight line: the bird starts a trip at its current altitude
- * (taking off only to the lowest cruising height when the target is far) and descends steadily so
- * that it arrives at ground level, never climbing more than necessary. A bird already on the ground
- * with a near target just hops.
+ * Flies to a ground target x on a diagonal path: climbing diagonally from where the trip starts, level
+ * at a cruising height for as long as the distance leaves room, then descending diagonally so that it
+ * touches down on the target itself, never dropping straight down on it. The cruising height is a bird
+ * size (less on a short trip, which has no room for more); a bird that starts high keeps its altitude
+ * until the descent line reaches it. A bird that is already too high to come down onto the target
+ * diagonally (it would end up directly above it) flies away from it, descending, until it has the room.
+ * A bird already on the ground with a near target just hops.
  *
  * @param npc - Travelling NPC.
  * @param targetX - World x of the ground target.
@@ -758,29 +764,49 @@ function squirrelRests(npc: Npc): boolean {
  */
 function glideTo(npc: Npc, targetX: number, world: World): void {
   const { bird } = npc
-  const distance = Math.abs(targetX - (bird.x + bird.size / 2)) / bird.size
+  const dx = targetX - (bird.x + bird.size / 2)
+  const distance = Math.abs(dx) / bird.size
+  // Heights are measured above the target's ground level, so a sloping hillside does not fool the
+  // glide: `rel` is how much lower the target's ground is than the ground under the bird.
+  const rel = (groundYAt(world.terrain, targetX) - groundUnder(bird, world)) / bird.size
   const altitude = altitudeOf(bird, world)
+  const height = Math.max(0, altitude + rel)
   if (!npc.glide || Math.abs(npc.glide.targetX - targetX) > 1) {
     npc.glide = {
       targetX,
-      startAltitude: Math.max(altitude, distance > FLY_MIN_DISTANCE_IN_SIZES ? MIN_CRUISE_ALTITUDE : 0),
+      startAltitude: height,
       startDistance: Math.max(distance, 0.001),
+      cruise: Math.max(height, Math.min(MIN_CRUISE_ALTITUDE, (GLIDE_SLOPE * distance) / 2)),
     }
   }
-  const { startAltitude, startDistance } = npc.glide
-  // Follow the direct line from the start of the trip when it is shallow enough; otherwise stay level
-  // until the steepest glide cone is reached and then follow that.
-  const desired =
-    startAltitude / startDistance <= GLIDE_SLOPE
-      ? (startAltitude * distance) / startDistance
-      : Math.min(startAltitude, GLIDE_SLOPE * distance)
-  steerHorizontal(npc, targetX)
-  // Once over the target (horizontally), just land.
-  if (desired < 0.1 || distance <= ARRIVE_IN_SIZES) {
+  const { startAltitude, startDistance, cruise } = npc.glide
+  const travelled = Math.max(0, startDistance - distance)
+  // The height to be at: the lowest of the climb line (diagonally up from the trip's start, a little
+  // ahead of the bird so that it lifts off at once), the cruising height and the descent line.
+  const descent = GLIDE_SLOPE * distance
+  const desiredHeight = Math.min(startAltitude + GLIDE_SLOPE * travelled + 0.3, cruise, descent)
+  if (bird.state === 'flying' && height > descent + 0.3) {
+    // Too high to come down onto the target diagonally (even right above it): fly away from it,
+    // descending, until there is room for a diagonal approach.
+    const away = Math.abs(dx) < LAND_IN_SIZES * bird.size ? bird.facing : dx > 0 ? -1 : 1
+    npc.keys.a = away === -1
+    npc.keys.d = away === 1
+    npc.keys.w = false
+    npc.keys.s = true
+    return
+  }
+  const reach = LAND_IN_SIZES * bird.size
+  npc.keys.a = dx < -reach
+  npc.keys.d = dx > reach
+  // Over the target (horizontally): land.
+  if (distance <= LAND_IN_SIZES) {
     npc.keys.w = false
     npc.keys.s = true
   } else {
-    steerAltitude(npc, desired, world)
+    // (closely: the path is a line, not a wobble around it)
+    const wanted = Math.max(0, desiredHeight - rel)
+    npc.keys.w = altitude < wanted - 0.05
+    npc.keys.s = altitude > wanted + 0.05
   }
 }
 
