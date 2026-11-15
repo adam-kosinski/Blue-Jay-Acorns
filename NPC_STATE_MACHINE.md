@@ -83,3 +83,12 @@ flowchart TD
 ## Acorn supply
 
 Each second every oak has a small chance (`ACORN_DROP_CHANCE_PER_SECOND`, times (birds + squirrels) / birds because the squirrels need acorns too) to drop a group of 2-5 acorns from random points in its canopy, in the middle half of its width (`ACORN_SPREAD_FACTOR` = 0.5); they fall under gravity and become ordinary free acorns.
+
+## Impossible goals
+
+NPCs (jays and squirrels) never choose a goal they cannot carry out, and do not stay stuck on one that fails anyway:
+
+- **Feasibility filter** (`canGoTo` in `npc.ts`): a place needing the beak (a free acorn to pick up, another bird's burial site to dig, a remembered burial to retrieve, a spot to bury at) is a possible goal only if it is dry land, the bird has a dry place to stand to reach it (`standingFacings`, `burial.ts`), and it is not a place the NPC recently gave up on. The filter applies to noticed acorns, noticed sites, retrieval (the very-hungry trip only starts if a feasible burial exists), the explore heading toward remembered places, and burial spot selection. Idle trips never end in the creek.
+- **Standing side** (`moveBeakTo`): whatever the beak target, the NPC stands where its body is dry, facing the way that works (toward the target as it arrives, or the other way if that would put it over water).
+- **Watchdog** (`watchGoal`): the same goal (state and target place) pursued for `GOAL_GIVE_UP_SECONDS` (40) is dropped, the place is ignored for `GOAL_BLOCKED_SECONDS` (90) (`Npc.blocked`), and the NPC goes back to exploring or idling (or, when looking for a burial spot, looks for another one). A change of goal restarts the clock.
+

@@ -41,7 +41,7 @@ import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction
 import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, standingFacings } from './burial'
 import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
-import { groundYAt, nearCreek } from './terrain'
+import { groundYAt, inWater, nearCreek } from './terrain'
 import { createPlayer, groundUnder, updatePlayer } from './player'
 import type { Acorn, BurialSite, KeyEdges, KeyState, Npc, Player, PlayerAction, World } from './types'
 
@@ -146,6 +146,9 @@ function newNpc(bird: Player, secrecy: number): Npc {
       idleTargetX: null,
       idleFly: false,
       digSpot: null,
+      blocked: [],
+      goalKey: '',
+      goalTime: 0,
       reachX: null,
       reachDir: 1,
       inView: new Set(),
@@ -358,7 +361,7 @@ function nearestNoticedAcorn(npc: Npc): Acorn | null {
   let best: Acorn | null = null
   let bestDist = Infinity
   for (const acorn of npc.noticed.keys()) {
-    if (acorn.state !== 'ground' || !npc.inView.has(acorn)) {
+    if (acorn.state !== 'ground' || !npc.inView.has(acorn) || !canGoTo(npc, acorn.x)) {
       continue
     }
     const dist = Math.hypot(acorn.x - cx, acorn.y - cy)
@@ -386,7 +389,7 @@ function pickTarget(npc: Npc, world: World): { acorn: Acorn | null; site: Burial
   let siteDist = Infinity
   for (const candidate of npc.sites) {
     const y = groundYAt(world.terrain, candidate.x)
-    if (!inView(npc.bird, { x: candidate.x, y })) {
+    if (!canGoTo(npc, candidate.x) || !inView(npc.bird, { x: candidate.x, y })) {
       continue
     }
     const dist = Math.hypot(candidate.x - cx, y - cy)
@@ -584,15 +587,93 @@ function directionToRemembered(npc: Npc): 1 | -1 | null {
     }
   }
   for (const spot of npc.noticed.values()) {
-    consider(spot.x)
+    if (canGoTo(npc, spot.x)) {
+      consider(spot.x)
+    }
   }
   for (const site of npc.sites) {
-    consider(site.x)
+    if (canGoTo(npc, site.x)) {
+      consider(site.x)
+    }
   }
   if (nearestX === null) {
     return null
   }
   return nearestX >= cx ? 1 : -1
+}
+
+/** The world, refreshed every update (so goal checks need no extra parameter). */
+let activeWorld: World | null = null
+
+/** Seconds an NPC works on one goal before it gives up on it, and how long it then ignores that place. */
+const GOAL_GIVE_UP_SECONDS = 40
+const GOAL_BLOCKED_SECONDS = 90
+
+/**
+ * Whether an NPC may pick a place (world x) as the goal for something that needs its beak there (an
+ * acorn to pick up, a site to dig, a spot to bury at): it must be dry land with somewhere dry to stand
+ * to reach it, and not a place the NPC recently gave up on. Goals failing this are never chosen, so an
+ * NPC does not set out for something it cannot do.
+ *
+ * @param npc - The NPC choosing.
+ * @param x - World x of the goal.
+ */
+function canGoTo(npc: Npc, x: number): boolean {
+  const world = activeWorld
+  if (!world) {
+    return true
+  }
+  if (inWater(world.terrain, x) || standingFacings(world, npc.bird, x).length === 0) {
+    return false
+  }
+  return !npc.blocked.some((block) => block.until > world.time && Math.abs(block.x - x) <= npc.bird.size * 0.25)
+}
+
+/**
+ * Gives up on a goal that has been pursued for too long without success (whatever stopped it): the
+ * place is ignored for a while and the NPC goes back to exploring (or idling) or looks for another spot.
+ * A change of goal restarts the clock.
+ *
+ * @param npc - The NPC.
+ * @param world - Play space.
+ * @param dt - Elapsed seconds.
+ */
+function watchGoal(npc: Npc, world: World, dt: number): void {
+  let goal: number | null = null
+  if (npc.state === 'gather') {
+    goal = npc.siteTarget?.x ?? npc.target?.x ?? null
+  } else if (npc.state === 'retrieve') {
+    goal = npc.digSpot
+  } else if (npc.state === 'findBurialSpot') {
+    goal = npc.spotX
+  }
+  const key = goal === null ? '' : `${npc.state}:${Math.round(goal)}`
+  if (key !== npc.goalKey) {
+    npc.goalKey = key
+    npc.goalTime = 0
+    return
+  }
+  if (goal === null) {
+    return
+  }
+  npc.goalTime += dt
+  if (npc.goalTime < GOAL_GIVE_UP_SECONDS) {
+    return
+  }
+  npc.blocked.push({ x: goal, until: world.time + GOAL_BLOCKED_SECONDS })
+  npc.goalKey = ''
+  npc.goalTime = 0
+  npc.reachX = null
+  npc.glide = null
+  npc.target = null
+  npc.siteTarget = null
+  npc.digSpot = null
+  if (npc.state === 'findBurialSpot') {
+    npc.spotX = null
+    npc.searchTimer = 0
+  } else {
+    enterExploreOrIdle(npc)
+  }
 }
 
 /** The world's oaks, refreshed every update (so `enterExplore` can head for the nearest one). */
@@ -708,7 +789,9 @@ function decide(npc: Npc, world: World): void {
       const size = npc.bird.size
       const cx = npc.bird.x + size / 2
       const trip = (Math.random() < 0.5 ? -1 : 1) * randRange(1.5, 5) * size
-      npc.idleTargetX = Math.max(size, Math.min(world.width - size, cx + trip))
+      const target = Math.max(size, Math.min(world.width - size, cx + trip))
+      // Not a trip into the creek.
+      npc.idleTargetX = inWater(world.terrain, target) ? null : target
       npc.idleFly = Math.abs(trip) >= FLY_MIN_DISTANCE_IN_SIZES * size && Math.random() < IDLE_FLY_PROBABILITY
     }
     return
@@ -723,7 +806,7 @@ function decide(npc: Npc, world: World): void {
     return
   }
   // Very hungry and nothing in view: go and dig up an acorn this bird remembers burying.
-  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.bird.burials.length > 0) {
+  if (npc.bird.hunger < NPC_RETRIEVE_HUNGER && npc.bird.burials.some((spot) => canGoTo(npc, spot))) {
     npc.state = 'retrieve'
     npc.digSpot = null
     return
@@ -978,7 +1061,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
         // The burial point (where the beak will be) is somewhere in the bird's perception region.
         const x = cx + bird.facing * f * bird.size
         if (x > bird.size && x < world.width - bird.size && inHome(npc, x) &&
-          burialQuality(world, birds, bird, x, siteXs(npc), !npc.home) > npc.secrecy) {
+          canGoTo(npc, x) && burialQuality(world, birds, bird, x, siteXs(npc), !npc.home) > npc.secrecy) {
           npc.spotX = x
           npc.glide = null
           break
@@ -1143,6 +1226,9 @@ function runRetrieve(npc: Npc, world: World): void {
   if (npc.digSpot === null) {
     let nearest: number | null = null
     for (const spot of npc.bird.burials) {
+      if (!canGoTo(npc, spot)) {
+        continue
+      }
       if (nearest === null || Math.abs(spot - cx) < Math.abs(nearest - cx)) {
         nearest = spot
       }
@@ -1178,6 +1264,7 @@ function runRetrieve(npc: Npc, world: World): void {
 export function updateNpcs(world: World, dt: number, player: Player): void {
   activeTrees = world.trees
   activePlayer = player
+  activeWorld = world
   const animals = [...world.npcs, ...world.squirrels]
   for (const npc of animals) {
     npc.buryQualityTimer = Math.max(0, npc.buryQualityTimer - dt)
@@ -1269,6 +1356,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
       npc.glide = null
     }
 
+    watchGoal(npc, world, dt)
     releaseKeys(npc.keys)
     let startEating = false
     if (bird.floating && !bird.action && npc.state !== 'eat') {

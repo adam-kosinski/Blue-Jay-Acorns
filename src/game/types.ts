@@ -452,6 +452,11 @@ export type Npc = {
   idleFly: boolean
   /** The remembered spot currently being visited while retrieving, or null. */
   digSpot: number | null
+  /** Places (world x) this NPC gave up on after failing to reach them, and until when (world time) it ignores them. */
+  blocked: { x: number; until: number }[]
+  /** The goal being worked on (state and target) and how long, in seconds, it has been the same one. */
+  goalKey: string
+  goalTime: number
   /** The beak target an NPC is currently moving to, and the way it faces on arrival (fixed per target). */
   reachX: number | null
   reachDir: 1 | -1
