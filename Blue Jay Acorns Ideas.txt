@@ -4,12 +4,20 @@ Blue Jay Acorns ideas
 - Read a research paper, learn more about caching sites
 - Add seasons and varying acorn dropping rates throughout
   - find data on acorn abundance phenology
+  - early fall: some color
+  - mid fall: more color than not, some leaves gone
+  - late fall: all color, many leaves gone
+  - early winter: all leaves gone
+  - mid winter: full snow
+  - late winter: most snow melted
 - Add other types of trees to fill in the gaps
 - Allow the bird to carry multiple acorns
+  - It's possible this will be too complicated, and might lead to an acorn drop event getting cleaned out too quickly
 - Maybe the "noticing" notification should only apply to your burials, not other birds? Other birds are not your business
   - since other birds could reveal quite hidden burial sites for you, which is not intended
   - maybe only if they decide to go for the acorn immediately should they indicate the white dashed line
 - Assess burial quality algorithm by watching birds bury acorns while invisible
+- Consider visiting NPCs that come when acorn abundance is high, or when the player is doing a bit too well (auto difficulty scaling?)
 
 Strategies
 - Why don't blue jays always cache acorns near where they find them?
