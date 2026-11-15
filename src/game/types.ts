@@ -64,6 +64,8 @@ export type BurialSite = {
   owner: Player
   /** World time (seconds) the NPC noticed it; the line to it fades from this moment. */
   noticedAt: number
+  /** True when it was noted from seeing another bird dig an acorn up (a guess that more may lie nearby), not from seeing a burial or a mound. */
+  fromDig?: boolean
 }
 
 /** A timed acorn action: the acorn changes hands at the halfway point of the animation. */

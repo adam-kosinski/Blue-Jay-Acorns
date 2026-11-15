@@ -493,7 +493,7 @@ function perceiveDigging(npc: Npc, world: World, action: PlayerAction, owner: Pl
   if (known) {
     known.noticedAt = world.time
   } else {
-    npc.sites.push({ x, owner, noticedAt: world.time })
+    npc.sites.push({ x, owner, noticedAt: world.time, fromDig: action.kind === 'dig' })
   }
 }
 
@@ -959,7 +959,8 @@ function considerFollow(npc: Npc, world: World): void {
 function visibleSites(npc: Npc, world: World): Set<BurialSite> {
   const seen = new Set<BurialSite>()
   for (const site of npc.sites) {
-    if (canGoTo(npc, site.x) && inView(npc.bird, { x: site.x, y: groundYAt(world.terrain, site.x) })) {
+    // (A spot noted from seeing a dig-up is only a guess; seeing one never makes a follower leave.)
+    if (!site.fromDig && canGoTo(npc, site.x) && inView(npc.bird, { x: site.x, y: groundYAt(world.terrain, site.x) })) {
       seen.add(site)
     }
   }
