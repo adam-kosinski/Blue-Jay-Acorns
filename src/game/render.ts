@@ -85,7 +85,9 @@ export function renderScene(
     const bx = npc.bird.x + npc.bird.size / 2
     if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
       drawBirdOnWater(ctx, npc.bird, world)
-      drawNpcLabel(ctx, npc)
+      if (showMinimap) {
+        drawNpcLabel(ctx, npc)
+      }
     }
   }
   for (const squirrel of world.squirrels) {
@@ -102,7 +104,9 @@ export function renderScene(
         drawOakCrown(ctx, squirrel.home.tree.shape, squirrel.home.trunkX, groundYAt(world.terrain, squirrel.home.trunkX), OAK_TONES, TRUNK_COLOR)
         ctx.restore()
       }
-      drawNpcLabel(ctx, squirrel)
+      if (showMinimap) {
+        drawNpcLabel(ctx, squirrel)
+      }
     }
   }
   drawBirdOnWater(ctx, player, world)
@@ -914,7 +918,7 @@ function buildLeafTile(leaves: LeafLitter[], index: number, top: number, height:
   return { canvas, res }
 }
 
-/** Whether the minimap is drawn (it is part of the debug display and goes away with it). */
+/** Whether the debug display is on: the minimap, the NPC labels above the birds and the follow arrows are drawn only then. */
 let showMinimap = true
 
 /**

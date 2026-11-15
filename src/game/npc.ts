@@ -4,7 +4,8 @@ import {
   NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
   DIG_RESPONSE_IN_SIZES,
   FOLLOW_COOLDOWN_SECONDS,
-  FOLLOW_DISTANCE_IN_SIZES,
+  FOLLOW_DISTANCE_MAX_IN_SIZES,
+  FOLLOW_DISTANCE_MIN_IN_SIZES,
   HOP_DURATION,
   MOVE_SPEED_IN_SIZES,
   VERTICAL_SPEED_IN_SIZES,
@@ -178,7 +179,9 @@ function newNpc(bird: Player, secrecy: number): Npc {
       followStill: 0,
       followNextRoll: 0,
       followBlock: [],
-      followKnownSites: new Set(),
+      followSeenSites: new Set(),
+      followDistance: FOLLOW_DISTANCE_MIN_IN_SIZES,
+      followEligible: false,
       seenBirds: new Set(),
       missedActions: new WeakSet(),
       sites: [],
@@ -918,19 +921,27 @@ function considerFollow(npc: Npc, world: World): void {
       visible.add(other)
     }
   }
-  // Eligible when idle or exploring, not starving, and it remembers no acorn (it may remember other
-  // birds' burial sites).
+  // Eligible when idle or exploring, not starving, and it remembers no free acorn (it may remember other
+  // birds' burial sites), and not busy.
   const eligible =
     (npc.state === 'idle' || npc.state === 'explore') &&
     npc.noticed.size === 0 &&
-    bird.hunger >= NPC_RETRIEVE_HUNGER
-  if (eligible && !bird.floating && !bird.action && !bird.held && bird.eatTimer === 0 && !isBeingFollowed(world, bird)) {
-    for (const other of visible) {
-      if (npc.seenBirds.has(other) || !mayFollow(npc, world, other)) {
-        continue
-      }
+    bird.hunger >= NPC_RETRIEVE_HUNGER &&
+    !bird.floating &&
+    !bird.action &&
+    !bird.held &&
+    bird.eatTimer === 0 &&
+    !isBeingFollowed(world, bird)
+  // On becoming eligible it rolls for every bird already in view; after that, for each bird that enters
+  // its view. One roll at a time, birds carrying an acorn first, until one succeeds.
+  const justEligible = eligible && !npc.followEligible
+  npc.followEligible = eligible
+  if (eligible) {
+    const rolls = [...visible].filter((other) => (justEligible || !npc.seenBirds.has(other)) && mayFollow(npc, world, other))
+    rolls.sort((p, q) => Number(q.held !== null) - Number(p.held !== null))
+    for (const other of rolls) {
       if (Math.random() < npc.nosiness * (other.held ? 1 : 0.5)) {
-        enterFollow(npc, other)
+        enterFollow(npc, other, world)
         break
       }
     }
@@ -939,14 +950,32 @@ function considerFollow(npc: Npc, world: World): void {
 }
 
 /**
+ * The remembered burial sites of other birds that are in this NPC's view right now.
+ *
+ * @param npc - The NPC.
+ * @param world - Terrain for the ground height at a site.
+ */
+function visibleSites(npc: Npc, world: World): Set<BurialSite> {
+  const seen = new Set<BurialSite>()
+  for (const site of npc.sites) {
+    if (canGoTo(npc, site.x) && inView(npc.bird, { x: site.x, y: groundYAt(world.terrain, site.x) })) {
+      seen.add(site)
+    }
+  }
+  return seen
+}
+
+/**
  * Starts following a bird.
  *
  * @param npc - The jay.
  * @param other - Bird to follow.
+ * @param world - Play space.
  */
-function enterFollow(npc: Npc, other: Player): void {
+function enterFollow(npc: Npc, other: Player, world: World): void {
   npc.state = 'follow'
-  npc.followKnownSites = new Set(npc.sites)
+  npc.followSeenSites = visibleSites(npc, world)
+  npc.followDistance = randRange(FOLLOW_DISTANCE_MIN_IN_SIZES, FOLLOW_DISTANCE_MAX_IN_SIZES)
   setFollowTarget(npc, other)
   npc.target = null
   npc.siteTarget = null
@@ -1003,8 +1032,8 @@ function decideFollow(npc: Npc, world: World): void {
     leaveFollow(npc, world)
     return
   }
-  // Noticing a free acorn, or a burial site it did not already remember, ends the following.
-  if (applyPick(npc, pickTarget(npc, world, npc.followKnownSites))) {
+  // Noticing a free acorn ends the following (a burial site does too: see `runFollow`).
+  if (applyPick(npc, pickTarget(npc, world, new Set(npc.sites)))) {
     npc.followTarget = null
     npc.glide = null
     npc.state = 'gather'
@@ -1049,6 +1078,22 @@ function runFollow(npc: Npc, world: World, dt: number): void {
     enterExploreOrIdle(npc)
     return
   }
+  // Noticing a burial site, a new one or one it knew that comes back into view, sends it to dig there.
+  const sites = visibleSites(npc, world)
+  let noticed: BurialSite | null = null
+  for (const site of sites) {
+    if (!npc.followSeenSites.has(site) && (noticed === null || Math.abs(site.x - bird.x) < Math.abs(noticed.x - bird.x))) {
+      noticed = site
+    }
+  }
+  npc.followSeenSites = sites
+  if (noticed) {
+    npc.followTarget = null
+    npc.glide = null
+    applyPick(npc, { acorn: null, site: noticed })
+    npc.state = 'gather'
+    return
+  }
   const size = bird.size
   const cx = bird.x + size / 2
   const tx = target.x + target.size / 2
@@ -1073,7 +1118,7 @@ function runFollow(npc: Npc, world: World, dt: number): void {
     }
   }
   const dx = tx - cx
-  const near = Math.abs(dx) <= FOLLOW_DISTANCE_IN_SIZES * size
+  const near = Math.abs(dx) <= npc.followDistance * size
   const toward: 1 | -1 = dx >= 0 ? 1 : -1
   if (target.state === 'flying') {
     // Fly along (taking off first).
@@ -1092,7 +1137,7 @@ function runFollow(npc: Npc, world: World, dt: number): void {
     }
   } else if (!near) {
     // Land beside it: far away is flown to (and landed at), near is hopped to.
-    const point = tx + (cx >= tx ? 1 : -1) * size * FOLLOW_DISTANCE_IN_SIZES * 0.8
+    const point = tx + (cx >= tx ? 1 : -1) * size * npc.followDistance * 0.8
     if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * size) {
       glideTo(npc, point, world)
     } else {
