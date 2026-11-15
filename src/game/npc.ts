@@ -38,7 +38,7 @@ import {
   updateTreePhase,
 } from './squirrel'
 import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction } from './acorns'
-import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, buryingFacings } from './burial'
+import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, standingFacings } from './burial'
 import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
 import { groundYAt, nearCreek } from './terrain'
@@ -513,20 +513,19 @@ const BEAK_FACING_SLACK_IN_SIZES = 0.2
  * @param world - Play space.
  * @returns True once the beak is on the spot, the bird is standing, still, and facing the right way.
  */
-function moveBeakTo(npc: Npc, targetX: number, world: World, forBury = false): boolean {
+function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
   const { bird } = npc
   const cx = bird.x + bird.size / 2
   const offset = bird.reach * (bird.size / 100)
   if (npc.reachX === null || Math.abs(npc.reachX - targetX) > 1) {
     npc.reachX = targetX
     npc.reachDir = targetX >= cx ? 1 : -1
-    if (forBury) {
-      // Burying needs a dry place to stand: when the usual way (facing the spot as it comes) would put
-      // the bird over the creek, stand on the other side of the spot facing the way that works.
-      const facings = buryingFacings(world, bird, targetX)
-      if (facings.length > 0 && !facings.includes(npc.reachDir)) {
-        npc.reachDir = facings[0] as 1 | -1
-      }
+    // The bird needs a dry place to stand (over the water it floats and cannot bury or dig): when the
+    // usual way (facing the spot as it arrives) would put it over the creek, it stands on the other
+    // side of the spot and faces the other way.
+    const facings = standingFacings(world, bird, targetX)
+    if (facings.length > 0 && !facings.includes(npc.reachDir)) {
+      npc.reachDir = facings[0] as 1 | -1
     }
   }
   const dir = npc.reachDir
@@ -1018,7 +1017,7 @@ function runFindBurialSpot(npc: Npc, world: World, dt: number): void {
   }
   // Put the beak tip exactly on the chosen spot, then judge it once more (the birds around may have
   // moved) and bury there, or take off and keep looking the same way.
-  if (!moveBeakTo(npc, npc.spotX, world, true)) {
+  if (!moveBeakTo(npc, npc.spotX, world)) {
     return
   }
   releaseKeys(npc.keys)

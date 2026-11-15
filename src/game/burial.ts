@@ -46,10 +46,20 @@ export function acornReach(tree: OakTree): number {
  * @param x - World x of the burial point.
  */
 export function buryingFacings(world: World, burier: Player, x: number): (1 | -1)[] {
-  if (inWater(world.terrain, x)) {
-    return []
-  }
-  const offset = burier.reach * (burier.size / 100)
+  return inWater(world.terrain, x) ? [] : standingFacings(world, burier, x)
+}
+
+/**
+ * The facings (1 right, -1 left) a bird can stand with so that its beak tip lands on `x` while the bird
+ * itself (its centre, one beak reach behind the spot) is on dry ground: a bird over the water floats and
+ * can neither bury nor dig. Used for digging too.
+ *
+ * @param world - Terrain.
+ * @param bird - The bird (its size and beak reach set where it stands).
+ * @param x - World x the beak tip should land on.
+ */
+export function standingFacings(world: World, bird: Player, x: number): (1 | -1)[] {
+  const offset = bird.reach * (bird.size / 100)
   const facings: (1 | -1)[] = []
   for (const facing of [1, -1] as const) {
     if (!inWater(world.terrain, x - facing * offset)) {
