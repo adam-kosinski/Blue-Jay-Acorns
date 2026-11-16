@@ -320,7 +320,7 @@ export function GameCanvas() {
             </fieldset>
           )}
         </div>
-        {debugOpen && <Timeline worldRef={worldRef} />}
+        {debugOpen && <Timeline worldRef={worldRef} multiplierRef={dropMultiplierRef} />}
       </div>
       <div className="hud-right">
         <button type="button" className="restart-button" onClick={onRestart}>

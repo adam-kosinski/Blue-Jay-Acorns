@@ -72,18 +72,6 @@ export const FOLLOW_COOLDOWN_SECONDS = 10
 /** Seconds an NPC pauses after picking up an acorn, after landing to bury, and before exploring. */
 export const NPC_WAIT_SECONDS = 1
 
-/**
- * Chance per second that each oak drops a group of acorns (hard-coded). The original target matched
- * real nutrition: all four birds lose 4/60 of a bar per second and an acorn refills 1/3 of a bar,
- * so (4/60) / (1/3) = 0.2 acorns per second, which with 5 oaks and 6.5 acorns per group was 0.00615.
- * Groups were then halved (2-5 acorns, average 3.5) and the chance doubled to 0.0123 (5 oaks).
- * With 3 oaks the chance is 0.0205 so the total stays 3 x 0.0205 x 3.5 = about 0.215 acorns per
- * second in expectation. Every squirrel is one more mouth (it needs as many acorns per second as a bird:
- * its bar is twice as big and drains half as fast, an acorn fills half as much of it), so
- * `updateTreeDrops` multiplies the chance and the world cap by (birds + squirrels) / birds.
- */
-export const ACORN_DROP_CHANCE_PER_SECOND = 0.0205
-
 /** Debug setting for the acorn drop rate: none spawns nothing, deficit is 25% less, surplus 25% more than the default. */
 export const ACORN_DROP_MODES = {
   none: 0,
@@ -233,6 +221,19 @@ export const SQUIRREL_IDLE_LEAVE_HUNGER = 0.7
  * of its leaf clusters.
  */
 export const ACORN_SPREAD_FACTOR = 0.5
+
+/**
+ * Chance per second that each oak drops a group of acorns, derived so that the default rate (1) exactly
+ * matches the nutrition needs of every bird and squirrel. A bird needs 1 / (`HUNGER_DRAIN_SECONDS` x
+ * `ACORN_NUTRITION`) = 0.05 acorns per second, and so does a squirrel (its bar is twice as big, drains half
+ * as fast, and an acorn fills half as much of it). Each squirrel adds a mouth, so `updateTreeDrops`
+ * multiplies the chance (and the world cap) by (birds + squirrels) / birds, with one squirrel per oak.
+ * The player and the NPC jays are `1 + NPC_COUNT` birds; groups average (`ACORN_GROUP_MIN` + `ACORN_GROUP_MAX`) / 2.
+ * With 3 oaks, 3 jays + the player and 3 squirrels: 3 x 0.019 x 1.75 x 3.5 = 0.35 acorns per second = 7 x 0.05.
+ */
+export const ACORN_DROP_CHANCE_PER_SECOND =
+  ((1 + NPC_COUNT) / (HUNGER_DRAIN_SECONDS * ACORN_NUTRITION)) /
+  (OAK_TREE_COUNT * ((ACORN_GROUP_MIN + ACORN_GROUP_MAX) / 2))
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
 export const SQUIRREL_NOSE_REACH_X = 45

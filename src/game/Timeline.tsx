@@ -80,13 +80,21 @@ function drawGraph(canvas: HTMLCanvasElement, clock: SeasonClock): void {
  * the current time, and below them the season rectangles with the current one outlined.
  *
  * @param props.worldRef - The running game's world (replaced on restart).
+ * @param props.multiplierRef - The debug drop-rate choice (0 for none, 1 by default) that scales the seasonal rate.
  */
-export function Timeline({ worldRef }: { worldRef: MutableRefObject<World | null> }) {
+export function Timeline({
+  worldRef,
+  multiplierRef,
+}: {
+  worldRef: MutableRefObject<World | null>
+  multiplierRef: MutableRefObject<number>
+}) {
   const areaRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<HTMLCanvasElement>(null)
   const thumbRef = useRef<HTMLDivElement>(null)
   const markerRef = useRef<HTMLDivElement>(null)
   const nowRef = useRef<HTMLSpanElement>(null)
+  const rateRef = useRef<HTMLSpanElement>(null)
   const segmentRefs = useRef<(HTMLDivElement | null)[]>([])
   const draggingRef = useRef<boolean>(false)
 
@@ -117,6 +125,12 @@ export function Timeline({ worldRef }: { worldRef: MutableRefObject<World | null
           lastIndex = index
           segmentRefs.current.forEach((el, i) => el?.classList.toggle('timeline-current', i === index))
         }
+        if (rateRef.current) {
+          const rate = (baseDropRate(world.season, world.season.time) * multiplierRef.current).toFixed(2)
+          if (rateRef.current.textContent !== rate) {
+            rateRef.current.textContent = rate
+          }
+        }
         if (nowRef.current) {
           const seconds = Math.floor(world.season.time)
           const text = `${SEASON_SEGMENTS[index]?.name ?? ''}  ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`
@@ -129,7 +143,7 @@ export function Timeline({ worldRef }: { worldRef: MutableRefObject<World | null
     }
     id = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(id)
-  }, [worldRef])
+  }, [worldRef, multiplierRef])
 
   /**
    * Sets the time from a pointer position over the timeline.
@@ -148,7 +162,9 @@ export function Timeline({ worldRef }: { worldRef: MutableRefObject<World | null
   return (
     <div className="timeline" aria-label="Timeline">
       <div className="timeline-title">
-        <span>Acorn rate</span>
+        <span>
+          Acorn rate <span ref={rateRef} className="timeline-rate" />
+        </span>
         <span ref={nowRef} className="timeline-now" />
       </div>
       <div

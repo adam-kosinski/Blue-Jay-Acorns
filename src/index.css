@@ -173,6 +173,18 @@ body,
   color: var(--ink-soft);
 }
 
+.timeline-rate {
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: rgba(214, 122, 28, 0.2);
+  color: #7a3f06;
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
 .timeline-now {
   color: var(--ink);
   font-weight: bold;
