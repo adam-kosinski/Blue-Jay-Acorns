@@ -250,79 +250,83 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
+      <div className="hud-left">
+        <div className="debug-column">
+          <button
+            type="button"
+            className="debug-button"
+            aria-pressed={debugOpen}
+            onClick={(event) => {
+              const next = !debugOpen
+              setDebugOpen(next)
+              try {
+                window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
+              } catch {
+                // Not being able to save is fine; the choice still applies for this session.
+              }
+              event.currentTarget.blur()
+            }}
+          >
+            Debug {debugOpen ? 'on' : 'off'}
+          </button>
+          {debugOpen && (
+            <fieldset className="debug-panel">
+              <legend>Debug</legend>
+              <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
+              {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
+                <label key={mode}>
+                  <input
+                    type="radio"
+                    name="acorn-drop-mode"
+                    value={mode}
+                    checked={dropMode === mode}
+                    onChange={onDropModeChange}
+                  />
+                  {mode === 'none'
+                    ? 'No acorns'
+                    : mode === 'deficit'
+                      ? 'Deficit (-25%)'
+                      : mode === 'surplus'
+                        ? 'Surplus (+25%)'
+                        : 'Default'}
+                </label>
+              ))}
+              <label className="debug-toggle">
+                <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
+                Pause my hunger
+              </label>
+              <label className="debug-toggle">
+                <input
+                  type="checkbox"
+                  checked={showBurialQuality}
+                  onChange={(event) => {
+                    setShowBurialQuality(event.target.checked)
+                    event.currentTarget.blur()
+                  }}
+                />
+                Burial quality heatmap
+              </label>
+              <label className="debug-toggle">
+                <input
+                  type="checkbox"
+                  checked={invisible}
+                  onChange={(event) => {
+                    setInvisible(event.target.checked)
+                    event.currentTarget.blur()
+                  }}
+                />
+                Turn invisible
+              </label>
+            </fieldset>
+          )}
+        </div>
+        {debugOpen && <Timeline worldRef={worldRef} />}
+      </div>
       <div className="hud-right">
         <button type="button" className="restart-button" onClick={onRestart}>
           Restart
         </button>
-        <button
-          type="button"
-          className="debug-button"
-          aria-pressed={debugOpen}
-          onClick={(event) => {
-            const next = !debugOpen
-            setDebugOpen(next)
-            try {
-              window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
-            } catch {
-              // Not being able to save is fine; the choice still applies for this session.
-            }
-            event.currentTarget.blur()
-          }}
-        >
-          Debug {debugOpen ? 'on' : 'off'}
-        </button>
-        {debugOpen && (
-          <fieldset className="debug-panel">
-            <legend>Debug</legend>
-            <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
-            {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
-              <label key={mode}>
-                <input
-                  type="radio"
-                  name="acorn-drop-mode"
-                  value={mode}
-                  checked={dropMode === mode}
-                  onChange={onDropModeChange}
-                />
-                {mode === 'none'
-                  ? 'No acorns'
-                  : mode === 'deficit'
-                    ? 'Deficit (-25%)'
-                    : mode === 'surplus'
-                      ? 'Surplus (+25%)'
-                      : 'Default'}
-              </label>
-            ))}
-            <label className="debug-toggle">
-              <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
-              Pause my hunger
-            </label>
-            <label className="debug-toggle">
-              <input
-                type="checkbox"
-                checked={showBurialQuality}
-                onChange={(event) => {
-                  setShowBurialQuality(event.target.checked)
-                  event.currentTarget.blur()
-                }}
-              />
-              Burial quality heatmap
-            </label>
-            <label className="debug-toggle">
-              <input
-                type="checkbox"
-                checked={invisible}
-                onChange={(event) => {
-                  setInvisible(event.target.checked)
-                  event.currentTarget.blur()
-                }}
-              />
-              Turn invisible
-            </label>
-          </fieldset>
-        )}
       </div>
-      {debugOpen && <Timeline worldRef={worldRef} />}
     </div>
   )
 }

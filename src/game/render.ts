@@ -3443,11 +3443,12 @@ function drawMinimap(
   viewHeight: number,
   player: Player,
 ): void {
-  const mapW = Math.min(360, viewWidth * 0.4)
+  const mapW = Math.min(320, viewWidth * 0.3)
   const scale = mapW / world.width
   const mapH = Math.max(36, world.height * scale)
-  const mx = (viewWidth - mapW) / 2
-  const my = 12
+  // Top right, under the Restart button.
+  const mx = viewWidth - mapW - 12
+  const my = 84
   if (!(mapW >= 1) || !(mapH >= 1)) {
     return
   }
