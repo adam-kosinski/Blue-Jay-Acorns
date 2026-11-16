@@ -12,6 +12,8 @@ import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
 import { renderScene, setBurialHeatmap, setShowMinimap, warmUpScene } from './render'
+import { advanceSeason, baseDropRate } from './seasons'
+import { Timeline } from './Timeline'
 import type { Player, World } from './types'
 import { createWorld } from './world'
 
@@ -63,6 +65,7 @@ function loadDropMode(): AcornDropMode {
 export function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const restartRef = useRef<() => void>(() => {})
+  const worldRef = useRef<World | null>(null)
   const [dropMode, setDropMode] = useState<AcornDropMode>(loadDropMode)
   const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
   const dropMultiplierRef = useRef<number>(ACORN_DROP_MODES[dropMode])
@@ -112,6 +115,7 @@ export function GameCanvas() {
     let scale = window.innerHeight / LOGICAL_VIEW_HEIGHT
     const logicalWidth = (): number => window.innerWidth / scale
     let world: World = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+    worldRef.current = world
     let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
     let gameOver = false
@@ -128,6 +132,7 @@ export function GameCanvas() {
      */
     function regenerate(): void {
       world = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+      worldRef.current = world
       player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
       warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
       gameOver = false
@@ -168,7 +173,14 @@ export function GameCanvas() {
         updateHunger(player, edges, world, dt, !pauseHungerRef.current)
         world.time += dt
         updateNpcs(world, dt, player)
-        updateTreeDrops(world, player.size, dt, dropMultiplierRef.current)
+        // The season sets the base drop rate; the debug mode scales it.
+        advanceSeason(world.season, dt)
+        updateTreeDrops(
+          world,
+          player.size,
+          dt,
+          dropMultiplierRef.current * baseDropRate(world.season, world.season.time),
+        )
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
@@ -238,76 +250,79 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      <button
-        type="button"
-        className="debug-button"
-        aria-pressed={debugOpen}
-        onClick={(event) => {
-          const next = !debugOpen
-          setDebugOpen(next)
-          try {
-            window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
-          } catch {
-            // Not being able to save is fine; the choice still applies for this session.
-          }
-          event.currentTarget.blur()
-        }}
-      >
-        Debug {debugOpen ? 'on' : 'off'}
-      </button>
-      {debugOpen && (
-        <fieldset className="debug-panel">
-          <legend>Debug</legend>
-          <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
-          {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
-            <label key={mode}>
-              <input
-                type="radio"
-                name="acorn-drop-mode"
-                value={mode}
-                checked={dropMode === mode}
-                onChange={onDropModeChange}
-              />
-              {mode === 'none'
-                ? 'No acorns'
-                : mode === 'deficit'
-                  ? 'Deficit (-25%)'
-                  : mode === 'surplus'
-                    ? 'Surplus (+25%)'
-                    : 'Default'}
+      <div className="hud-right">
+        <button type="button" className="restart-button" onClick={onRestart}>
+          Restart
+        </button>
+        <button
+          type="button"
+          className="debug-button"
+          aria-pressed={debugOpen}
+          onClick={(event) => {
+            const next = !debugOpen
+            setDebugOpen(next)
+            try {
+              window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
+            } catch {
+              // Not being able to save is fine; the choice still applies for this session.
+            }
+            event.currentTarget.blur()
+          }}
+        >
+          Debug {debugOpen ? 'on' : 'off'}
+        </button>
+        {debugOpen && (
+          <fieldset className="debug-panel">
+            <legend>Debug</legend>
+            <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
+            {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
+              <label key={mode}>
+                <input
+                  type="radio"
+                  name="acorn-drop-mode"
+                  value={mode}
+                  checked={dropMode === mode}
+                  onChange={onDropModeChange}
+                />
+                {mode === 'none'
+                  ? 'No acorns'
+                  : mode === 'deficit'
+                    ? 'Deficit (-25%)'
+                    : mode === 'surplus'
+                      ? 'Surplus (+25%)'
+                      : 'Default'}
+              </label>
+            ))}
+            <label className="debug-toggle">
+              <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
+              Pause my hunger
             </label>
-          ))}
-          <label className="debug-toggle">
-            <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
-            Pause my hunger
-          </label>
-          <label className="debug-toggle">
-            <input
-              type="checkbox"
-              checked={showBurialQuality}
-              onChange={(event) => {
-                setShowBurialQuality(event.target.checked)
-                event.currentTarget.blur()
-              }}
-            />
-            Burial quality heatmap
-          </label>
-          <label className="debug-toggle">
-            <input
-              type="checkbox"
-              checked={invisible}
-              onChange={(event) => {
-                setInvisible(event.target.checked)
-                event.currentTarget.blur()
-              }}
-            />
-            Turn invisible
-          </label>
-        </fieldset>
-      )}
-      <button type="button" className="restart-button" onClick={onRestart}>
-        Restart
-      </button>
+            <label className="debug-toggle">
+              <input
+                type="checkbox"
+                checked={showBurialQuality}
+                onChange={(event) => {
+                  setShowBurialQuality(event.target.checked)
+                  event.currentTarget.blur()
+                }}
+              />
+              Burial quality heatmap
+            </label>
+            <label className="debug-toggle">
+              <input
+                type="checkbox"
+                checked={invisible}
+                onChange={(event) => {
+                  setInvisible(event.target.checked)
+                  event.currentTarget.blur()
+                }}
+              />
+              Turn invisible
+            </label>
+          </fieldset>
+        )}
+      </div>
+      {debugOpen && <Timeline worldRef={worldRef} />}
     </div>
   )
 }

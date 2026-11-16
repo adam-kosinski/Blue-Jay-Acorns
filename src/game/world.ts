@@ -1,3 +1,4 @@
+import { createSeasonClock } from './seasons'
 import {
   ACORN_COUNT,
   LEAF_COLORS,
@@ -900,6 +901,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     forest: spawnForest(width, Math.max(viewWidth, viewHeight * 3), viewHeight, terrain.creek),
     npcs: [],
     squirrels: [],
+    season: createSeasonClock(),
     acornDropTimer: 0,
     kickedLeaves: spawnKickedLeaves(terrain, width, playerSize),
     time: 0,

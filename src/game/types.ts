@@ -1,3 +1,4 @@
+import type { SeasonClock } from './seasons'
 /** Locomotion states for the player sprite. */
 export type LocomotionState = 'standing' | 'flying'
 
@@ -529,6 +530,8 @@ export type World = {
   npcs: Npc[]
   /** One squirrel per oak. */
   squirrels: Npc[]
+  /** The seasonal clock (timeline position and the wobble of the drop rate). */
+  season: SeasonClock
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
   acornDropTimer: number
   /** Leaves kicked onto burial mounds by hopping birds (oldest are dropped past a limit). */
