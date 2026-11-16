@@ -3,6 +3,7 @@ import { handleAcornActions, updateAcorns, updateAction, updateTreeDrops } from 
 import { cameraForPlayer } from './camera'
 import {
   ACORN_DROP_MODES,
+  ACORN_DROP_MODE_ORDER,
   LOGICAL_VIEW_HEIGHT,
   playerSizeForView,
   type AcornDropMode,
@@ -55,7 +56,7 @@ function loadDropMode(): AcornDropMode {
   } catch {
     // Storage can be unavailable; fall back to the default.
   }
-  return 'default'
+  return 'timeline'
 }
 
 /**
@@ -68,7 +69,7 @@ export function GameCanvas() {
   const worldRef = useRef<World | null>(null)
   const [dropMode, setDropMode] = useState<AcornDropMode>(loadDropMode)
   const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
-  const dropMultiplierRef = useRef<number>(ACORN_DROP_MODES[dropMode])
+  const rateOverrideRef = useRef<number | null>(ACORN_DROP_MODES[dropMode])
   const pauseHungerRef = useRef<boolean>(pauseHunger)
   const [showBurialQuality, setShowBurialQuality] = useState<boolean>(false)
   const [invisible, setInvisible] = useState<boolean>(false)
@@ -77,7 +78,7 @@ export function GameCanvas() {
   const invisibleRef = useRef<boolean>(false)
 
   useEffect(() => {
-    dropMultiplierRef.current = ACORN_DROP_MODES[dropMode]
+    rateOverrideRef.current = ACORN_DROP_MODES[dropMode]
   }, [dropMode])
 
   useEffect(() => {
@@ -173,13 +174,13 @@ export function GameCanvas() {
         updateHunger(player, edges, world, dt, !pauseHungerRef.current)
         world.time += dt
         updateNpcs(world, dt, player)
-        // The season sets the base drop rate; the debug mode scales it.
+        // The season sets the acorn rate unless the debug panel fixes it.
         advanceSeason(world.season, dt)
         updateTreeDrops(
           world,
           player.size,
           dt,
-          dropMultiplierRef.current * baseDropRate(world.season, world.season.time),
+          rateOverrideRef.current ?? baseDropRate(world.season, world.season.time),
         )
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
@@ -273,7 +274,7 @@ export function GameCanvas() {
             <fieldset className="debug-panel">
               <legend>Debug</legend>
               <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
-              {(Object.keys(ACORN_DROP_MODES) as AcornDropMode[]).map((mode) => (
+              {ACORN_DROP_MODE_ORDER.map((mode) => (
                 <label key={mode}>
                   <input
                     type="radio"
@@ -282,13 +283,7 @@ export function GameCanvas() {
                     checked={dropMode === mode}
                     onChange={onDropModeChange}
                   />
-                  {mode === 'none'
-                    ? 'No acorns'
-                    : mode === 'deficit'
-                      ? 'Deficit (-25%)'
-                      : mode === 'surplus'
-                        ? 'Surplus (+25%)'
-                        : 'Default'}
+                  {mode === 'timeline' ? 'Timeline value' : mode}
                 </label>
               ))}
               <label className="debug-toggle">
@@ -320,7 +315,7 @@ export function GameCanvas() {
             </fieldset>
           )}
         </div>
-        {debugOpen && <Timeline worldRef={worldRef} multiplierRef={dropMultiplierRef} />}
+        {debugOpen && <Timeline worldRef={worldRef} overrideRef={rateOverrideRef} />}
       </div>
       <div className="hud-right">
         <button type="button" className="restart-button" onClick={onRestart}>

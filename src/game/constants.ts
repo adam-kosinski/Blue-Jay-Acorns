@@ -72,13 +72,20 @@ export const FOLLOW_COOLDOWN_SECONDS = 10
 /** Seconds an NPC pauses after picking up an acorn, after landing to bury, and before exploring. */
 export const NPC_WAIT_SECONDS = 1
 
-/** Debug setting for the acorn drop rate: none spawns nothing, deficit is 25% less, surplus 25% more than the default. */
+/**
+ * Debug setting for the acorn rate: a fixed rate (1 is the baseline that exactly matches the nutrition
+ * needs, 0 spawns nothing) or the value the season timeline gives (null, the default).
+ */
 export const ACORN_DROP_MODES = {
-  none: 0,
-  deficit: 0.75,
-  default: 1,
-  surplus: 1.25,
+  '0': 0,
+  '0.75': 0.75,
+  '1': 1,
+  '1.25': 1.25,
+  timeline: null,
 } as const
+
+/** The order the debug radio buttons list them in (object keys that look like numbers would be sorted numerically). */
+export const ACORN_DROP_MODE_ORDER = ['0', '0.75', '1', '1.25', 'timeline'] as const
 
 /** Which acorn drop rate the debug toggle selects. */
 export type AcornDropMode = keyof typeof ACORN_DROP_MODES

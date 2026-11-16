@@ -80,14 +80,14 @@ function drawGraph(canvas: HTMLCanvasElement, clock: SeasonClock): void {
  * the current time, and below them the season rectangles with the current one outlined.
  *
  * @param props.worldRef - The running game's world (replaced on restart).
- * @param props.multiplierRef - The debug drop-rate choice (0 for none, 1 by default) that scales the seasonal rate.
+ * @param props.overrideRef - The debug acorn rate that replaces the timeline's value, or null to use the timeline's.
  */
 export function Timeline({
   worldRef,
-  multiplierRef,
+  overrideRef,
 }: {
   worldRef: MutableRefObject<World | null>
-  multiplierRef: MutableRefObject<number>
+  overrideRef: MutableRefObject<number | null>
 }) {
   const areaRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<HTMLCanvasElement>(null)
@@ -126,7 +126,7 @@ export function Timeline({
           segmentRefs.current.forEach((el, i) => el?.classList.toggle('timeline-current', i === index))
         }
         if (rateRef.current) {
-          const rate = (baseDropRate(world.season, world.season.time) * multiplierRef.current).toFixed(2)
+          const rate = (overrideRef.current ?? baseDropRate(world.season, world.season.time)).toFixed(2)
           if (rateRef.current.textContent !== rate) {
             rateRef.current.textContent = rate
           }
@@ -143,7 +143,7 @@ export function Timeline({
     }
     id = window.requestAnimationFrame(tick)
     return () => window.cancelAnimationFrame(id)
-  }, [worldRef, multiplierRef])
+  }, [worldRef, overrideRef])
 
   /**
    * Sets the time from a pointer position over the timeline.
