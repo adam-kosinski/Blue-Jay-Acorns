@@ -1,8 +1,8 @@
 import {
   ACORN_DROP_CHANCE_PER_SECOND,
   ACORN_GRAVITY_IN_SIZES,
-  ACORN_GROUP_MAX,
-  ACORN_GROUP_MIN,
+  ACORN_GROUP_MEAN,
+  ACORN_GROUP_SPREAD,
   ACORN_SPREAD_FACTOR,
   ACORN_WORLD_CAP,
   NPC_COUNT,
@@ -343,14 +343,17 @@ export function updateTreeDrops(
     for (const tree of world.trees) {
       if (
         loose >= ACORN_WORLD_CAP * hungry ||
-        Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * hungry * rateMultiplier
+        Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * hungry * Math.sqrt(rateMultiplier)
       ) {
         continue
       }
       const baseX = tree.x + tree.trunkWidth / 2
       const baseY = groundYAt(world.terrain, baseX)
       const radius = acornRadiusForPlayer(playerSize)
-      const count = ACORN_GROUP_MIN + Math.floor(Math.random() * (ACORN_GROUP_MAX - ACORN_GROUP_MIN + 1))
+      // Half of the acorn rate is in how often groups drop (above), half in how big they are: the mean
+      // size is 3 x sqrt(rate), always plus or minus up to 1, rounded at random so the mean stays exact.
+      const size = ACORN_GROUP_MEAN * Math.sqrt(rateMultiplier) + (Math.floor(Math.random() * 3) - 1) * ACORN_GROUP_SPREAD
+      const count = Math.max(0, Math.floor(size) + (Math.random() < size - Math.floor(size) ? 1 : 0))
       loose += count
       for (let i = 0; i < count; i += 1) {
         const lobe = tree.shape.lobes[Math.floor(Math.random() * tree.shape.lobes.length)]

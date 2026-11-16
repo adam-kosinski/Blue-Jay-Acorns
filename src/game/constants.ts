@@ -90,9 +90,14 @@ export const ACORN_DROP_MODE_ORDER = ['0', '0.75', '1', '1.25', 'timeline'] as c
 /** Which acorn drop rate the debug toggle selects. */
 export type AcornDropMode = keyof typeof ACORN_DROP_MODES
 
-/** Acorns per dropped group. */
-export const ACORN_GROUP_MIN = 2
-export const ACORN_GROUP_MAX = 5
+/**
+ * Acorns per dropped group: `ACORN_GROUP_MEAN` plus or minus up to `ACORN_GROUP_SPREAD` at the baseline acorn
+ * rate of 1. The acorn rate acts half on how often groups drop and half on how big they are: both are
+ * multiplied by the square root of the rate (so acorns per second are multiplied by the rate itself); the
+ * plus or minus never changes.
+ */
+export const ACORN_GROUP_MEAN = 3
+export const ACORN_GROUP_SPREAD = 1
 
 /** No new acorns drop while the world already holds this many that are not buried (buried ones do not count). */
 export const ACORN_WORLD_CAP = 160
@@ -235,12 +240,12 @@ export const ACORN_SPREAD_FACTOR = 0.5
  * `ACORN_NUTRITION`) = 0.05 acorns per second, and so does a squirrel (its bar is twice as big, drains half
  * as fast, and an acorn fills half as much of it). Each squirrel adds a mouth, so `updateTreeDrops`
  * multiplies the chance (and the world cap) by (birds + squirrels) / birds, with one squirrel per oak.
- * The player and the NPC jays are `1 + NPC_COUNT` birds; groups average (`ACORN_GROUP_MIN` + `ACORN_GROUP_MAX`) / 2.
- * With 3 oaks, 3 jays + the player and 3 squirrels: 3 x 0.019 x 1.75 x 3.5 = 0.35 acorns per second = 7 x 0.05.
+ * The player and the NPC jays are `1 + NPC_COUNT` birds; groups average `ACORN_GROUP_MEAN` at the baseline rate.
+ * With 3 oaks, 3 jays + the player and 3 squirrels: 3 x 0.0222 x 1.75 x 3 = 0.35 acorns per second = 7 x 0.05.
  */
 export const ACORN_DROP_CHANCE_PER_SECOND =
   ((1 + NPC_COUNT) / (HUNGER_DRAIN_SECONDS * ACORN_NUTRITION)) /
-  (OAK_TREE_COUNT * ((ACORN_GROUP_MIN + ACORN_GROUP_MAX) / 2))
+  (OAK_TREE_COUNT * ACORN_GROUP_MEAN)
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
 export const SQUIRREL_NOSE_REACH_X = 45
