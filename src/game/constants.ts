@@ -99,7 +99,7 @@ export type AcornDropMode = keyof typeof ACORN_DROP_MODES
 export const ACORN_GROUP_MIN = 2
 export const ACORN_GROUP_MAX = 5
 
-/** No new acorns drop while the world already holds this many. */
+/** No new acorns drop while the world already holds this many that are not buried (buried ones do not count). */
 export const ACORN_WORLD_CAP = 160
 
 /** Walking speed as a fraction of flying speed (the average hopping speed). */

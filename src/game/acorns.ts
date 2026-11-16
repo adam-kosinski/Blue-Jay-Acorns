@@ -338,9 +338,11 @@ export function updateTreeDrops(
   const hungry = (1 + NPC_COUNT + world.squirrels.length) / (1 + NPC_COUNT)
   while (world.acornDropTimer >= 1) {
     world.acornDropTimer -= 1
+    // Buried acorns do not count toward the cap: the ones nobody retrieves must not stop the supply.
+    let loose = world.acorns.filter((acorn) => acorn.state !== 'buried').length
     for (const tree of world.trees) {
       if (
-        world.acorns.length >= ACORN_WORLD_CAP * hungry ||
+        loose >= ACORN_WORLD_CAP * hungry ||
         Math.random() >= ACORN_DROP_CHANCE_PER_SECOND * hungry * rateMultiplier
       ) {
         continue
@@ -349,6 +351,7 @@ export function updateTreeDrops(
       const baseY = groundYAt(world.terrain, baseX)
       const radius = acornRadiusForPlayer(playerSize)
       const count = ACORN_GROUP_MIN + Math.floor(Math.random() * (ACORN_GROUP_MAX - ACORN_GROUP_MIN + 1))
+      loose += count
       for (let i = 0; i < count; i += 1) {
         const lobe = tree.shape.lobes[Math.floor(Math.random() * tree.shape.lobes.length)]
         if (!lobe) {
