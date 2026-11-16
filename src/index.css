@@ -132,6 +132,14 @@ body,
   line-height: 1.5;
 }
 
+.debug-group-label {
+  margin: 0 0 2px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
 .debug-panel label {
   display: block;
   padding: 1px 4px;

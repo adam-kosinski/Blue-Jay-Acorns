@@ -274,18 +274,23 @@ export function GameCanvas() {
             <fieldset className="debug-panel">
               <legend>Debug</legend>
               <div className="debug-readout">Acorns I buried, still buried: {buriedCount}</div>
-              {ACORN_DROP_MODE_ORDER.map((mode) => (
-                <label key={mode}>
-                  <input
-                    type="radio"
-                    name="acorn-drop-mode"
-                    value={mode}
-                    checked={dropMode === mode}
-                    onChange={onDropModeChange}
-                  />
-                  {mode === 'timeline' ? 'Timeline value' : mode}
-                </label>
-              ))}
+              <div className="debug-group" role="radiogroup" aria-labelledby="acorn-rate-label">
+                <div id="acorn-rate-label" className="debug-group-label">
+                  Acorn rate
+                </div>
+                {ACORN_DROP_MODE_ORDER.map((mode) => (
+                  <label key={mode}>
+                    <input
+                      type="radio"
+                      name="acorn-drop-mode"
+                      value={mode}
+                      checked={dropMode === mode}
+                      onChange={onDropModeChange}
+                    />
+                    {mode === 'timeline' ? 'Timeline value' : mode}
+                  </label>
+                ))}
+              </div>
               <label className="debug-toggle">
                 <input type="checkbox" checked={pauseHunger} onChange={onPauseHungerChange} />
                 Pause my hunger
