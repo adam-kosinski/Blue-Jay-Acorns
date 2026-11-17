@@ -191,8 +191,11 @@ const WAVES: [number, number][] = [
   [7, 0.2],
 ]
 
+/** The trend's peak, in the middle of mid fall (sized so the acorns that fall roughly match what the animals need). */
+const PEAK_RATE = 2.4
+
 /** Highest base drop rate the trend and wobble can reach (the graph's scale). */
-export const MAX_BASE_DROP_RATE = 1.25 * (1 + WOBBLE)
+export const MAX_BASE_DROP_RATE = PEAK_RATE * (1 + WOBBLE)
 
 /**
  * A new clock at the start of summer with its own random wobble.
@@ -227,7 +230,8 @@ export function seasonIndexAt(time: number): number {
 
 /**
  * The general trend of the base drop rate, without the wobble: the default (1) all summer, rising
- * to a 25% surplus in the middle of mid fall, falling to 0 in the middle of mid winter, and 0 after that.
+ * to a big surplus in the middle of mid fall (the animals must stock up for winter), falling fairly
+ * quickly to 0 at the start of mid winter, and 0 after that.
  *
  * @param time - Seconds along the timeline.
  */
@@ -237,10 +241,10 @@ export function trendDropRate(time: number): number {
     return 1
   }
   if (u <= 2.5) {
-    return 1 + (0.25 * (u - 1)) / 1.5
+    return 1 + ((PEAK_RATE - 1) * (u - 1)) / 1.5
   }
-  if (u <= 5.5) {
-    return 1.25 * (1 - (u - 2.5) / 3)
+  if (u <= 5) {
+    return PEAK_RATE * (1 - (u - 2.5) / 2.5)
   }
   return 0
 }
