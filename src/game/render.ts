@@ -3801,23 +3801,36 @@ function snowGeometry(
   ry: number,
   phase: number,
   amount: number,
-): { top: number; depth: number; dustDepth: number; edgeY: (x: number) => number; dustY: (x: number) => number } {
+): {
+  top: number
+  depth: number
+  dustDepth: number
+  thick: (x: number) => number
+  edgeY: (x: number) => number
+  dustY: (x: number) => number
+} {
   // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
-  // (As it melts down to nothing it also gets thinner, so that the last of it shrinks away, not just disappears.)
-  const thinning = Math.min(1, amount / 0.3)
-  const depth = (rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)) * thinning
+  const depth = rx > 120 ? ry * 0.75 : ry * 1.05
   const lumps = (x: number): number => ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
   const dustDepth = ry * 0.6
-  // While it melts the snow also draws in from the sides, into a patch over the top of the rock (like the
-  // ground's patches shrink): it only reaches `reach` either side of the middle, and is thinner toward its ends.
-  const reach = rx * (0.02 + 1.5 * amount)
-  const squash = (x: number): number => Math.max(0, 1 - (Math.abs(x - cx) / reach) ** 8)
+  // While it melts, the snow thins away in patches, from the bottom up: each place along the rock has its own
+  // point of the melt (a smooth pattern across the rock) and loses its thickness toward it, the last of it
+  // shrinking to nothing; at a size of 1 all of it is as thick as it was.
+  const pattern = (x: number): number => {
+    const u = (x - cx) / rx
+    return Math.max(0, Math.min(1, 0.5 + 0.28 * Math.sin(u * 4.3 + phase) + 0.17 * Math.sin(u * 10.7 + phase * 2.1) + 0.1 * Math.sin(u * 23 + phase * 3.3)))
+  }
+  const thick = (x: number): number => {
+    const t = Math.max(0, Math.min(1, (amount - 0.5 * pattern(x)) / 0.5))
+    return t * t * (3 - 2 * t)
+  }
   return {
     top: baseY - ry * 1.2,
     depth,
     dustDepth,
-    edgeY: (x) => baseY - ry * 1.15 + (depth + lumps(x)) * squash(x),
-    dustY: (x) => baseY - ry * 1.15 + (dustDepth + lumps(x) * 0.6) * squash(x),
+    thick,
+    edgeY: (x) => baseY - ry * 1.15 + (depth + lumps(x)) * thick(x),
+    dustY: (x) => baseY - ry * 1.15 + (dustDepth + lumps(x) * 0.6) * thick(x),
   }
 }
 
@@ -3962,23 +3975,34 @@ function snowHeapPath(
   full: number,
 ): Path2D {
   const g = snowGeometry(cx, baseY, rx, ry, phase, amount)
-  const lift = (Math.max(1.5, ry * 0.14) * full) * 0.25
-  const path = new Path2D()
-  let pen = false
-  for (const [px, py] of outline) {
-    const x = px + offX
-    const y = py + offY
-    if (y < g.edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
-      if (pen) {
-        path.lineTo(x, y - lift)
-      } else {
-        path.moveTo(x, y - lift)
-        pen = true
+  const base = Math.max(1.5, ry * 0.14) * full
+  // The contour, smoothed over its neighbours (its pixels are stepped), then a ribbon along it whose width
+  // follows how much snow is left there (so the heap thins away smoothly and in patches with the cap).
+  const upper: [number, number][] = []
+  const lower: [number, number][] = []
+  for (let i = 0; i < outline.length; i += 1) {
+    let sum = 0
+    let count = 0
+    for (let d = -5; d <= 5; d += 1) {
+      const other = outline[i + d]
+      if (other) {
+        sum += other[1]
+        count += 1
       }
-    } else {
-      pen = false
     }
+    const x = (outline[i]?.[0] ?? 0) + offX
+    const y = sum / Math.max(1, count) + offY
+    const side = Math.max(0, Math.min(1, (baseY - ry * 0.05 - y) / (ry * 0.2)))
+    const half = base * 0.5 * g.thick(x) * side
+    upper.push([x, y - half * 1.5])
+    lower.push([x, y + half * 0.5])
   }
+  const path = new Path2D()
+  upper.forEach(([x, y], i) => (i === 0 ? path.moveTo(x, y) : path.lineTo(x, y)))
+  for (let i = lower.length - 1; i >= 0; i -= 1) {
+    path.lineTo(lower[i]?.[0] ?? 0, lower[i]?.[1] ?? 0)
+  }
+  path.closePath()
   return path
 }
 
@@ -3991,13 +4015,10 @@ function snowHeapPath(
  * @param full - How far the full cap has come in, 0-1.
  * @param fog - The rock's distance haze.
  */
-function strokeSnowHeap(ctx: CanvasRenderingContext2D, path: Path2D, ry: number, full: number, fog: number): void {
+function strokeSnowHeap(ctx: CanvasRenderingContext2D, path: Path2D, _ry: number, _full: number, fog: number): void {
   ctx.save()
-  ctx.strokeStyle = snowColors(fog).top
-  ctx.lineWidth = Math.max(1.5, ry * 0.14) * full
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.stroke(path)
+  ctx.fillStyle = snowColors(fog).top
+  ctx.fill(path)
   ctx.restore()
 }
 
