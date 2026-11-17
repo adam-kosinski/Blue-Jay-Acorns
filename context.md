@@ -509,3 +509,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Boulder snow melts slower and later: from between 5.9 and 6.1 to between 6.7 and 7.05 (the ground's cover is then 0.5 to 0.25), and the patch pattern is gentler (`pattern` has two slow waves, `thick` a wider range 0.4/0.6) so the edges are less steep.
 
 - Boulder snow now melts over about the ground patches' timeline: from 5.95-6.05 to 7.0-7.2 (the patches finish at 7.4; the last boulders about 15 s before).
+
+- Boulder snow patch pattern a little less flat (amplitudes 0.22 / 0.095, range 0.42 / 0.58): edges about 25% steeper than the flat version, far gentler than the first one.
