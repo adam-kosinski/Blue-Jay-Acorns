@@ -273,7 +273,7 @@ export function renderScene(
   ctx.restore()
 
   // Falling snow, in front of the scene (screen space; the background layers have none).
-  drawSnowfall(ctx, world.season.time, camera.x, viewWidth, viewHeight)
+  drawSnowfall(ctx, world.season.time, camera.x, camera.y, viewWidth, viewHeight)
 
   if (showMinimap) {
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
@@ -1720,8 +1720,11 @@ function drawGround(
   ctx.fillStyle = dirt
   ctx.beginPath()
   ctx.moveTo(startX, bottom)
+  // While snow covers all of the ground the dirt's top edge sits a little lower than the snow's, so that its
+  // brownish edge never shows as a line along the surface through snow that is not opaque yet.
+  const sink = snowThickness(world.season.time) > 0 && snowCover(world.season.time) >= 0.999 ? 4 : 0
   for (let x = startX; x <= endX; x += terrain.step) {
-    ctx.lineTo(x, groundYAt(terrain, x))
+    ctx.lineTo(x, groundYAt(terrain, x) + sink)
   }
   ctx.lineTo(endX, bottom)
   ctx.closePath()
@@ -1756,7 +1759,7 @@ function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, 
   if (cover >= 0.999) {
     ctx.moveTo(startX, bottom)
     for (let x = startX; x <= endX; x += terrain.step) {
-      ctx.lineTo(x, groundYAt(terrain, x) - 1)
+      ctx.lineTo(x, groundYAt(terrain, x) - 2)
     }
     ctx.lineTo(endX, bottom)
     ctx.closePath()

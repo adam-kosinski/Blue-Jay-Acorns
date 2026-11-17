@@ -60,11 +60,19 @@ let clock = 0
  *
  * @param ctx - 2D canvas context in screen space.
  * @param time - Seconds along the timeline.
- * @param cameraX - View left edge in the world (the flakes drift a little against it).
+ * @param cameraX - View left edge in the world (the flakes drift against it, by their depth).
+ * @param cameraY - View top edge in the world (the same: the snow stays with the world, not with the screen).
  * @param viewWidth - Viewport width.
  * @param viewHeight - Viewport height.
  */
-export function drawSnowfall(ctx: CanvasRenderingContext2D, time: number, cameraX: number, viewWidth: number, viewHeight: number): void {
+export function drawSnowfall(
+  ctx: CanvasRenderingContext2D,
+  time: number,
+  cameraX: number,
+  cameraY: number,
+  viewWidth: number,
+  viewHeight: number,
+): void {
   const intensity = snowfallAt(time)
   const now = performance.now()
   const dt = Math.min(0.05, Math.max(0, (now - lastMs) / 1000))
@@ -82,6 +90,7 @@ export function drawSnowfall(ctx: CanvasRenderingContext2D, time: number, camera
     seeded = true
   }
   clock += dt
+  const period = viewHeight + 12
   const active = Math.ceil(MAX_FLAKES * intensity)
   ctx.fillStyle = '#ffffff'
   for (let c = 0; c < CLASSES.length; c += 1) {
@@ -93,12 +102,12 @@ export function drawSnowfall(ctx: CanvasRenderingContext2D, time: number, camera
     ctx.beginPath()
     // Flake i is of class i % 3, so every class is thinned out evenly as it eases off.
     for (let i = c; i < active; i += CLASSES.length) {
-      let y = (flakeY[i] ?? 0) + kind.speed * (flakeRate[i] ?? 1) * dt
-      if (y > viewHeight + 6) {
-        y = -6
-        flakeX[i] = Math.random() * viewWidth
-      }
-      flakeY[i] = y
+      // A flake falls through the world at its own speed; where it shows on the screen is where it is against
+      // the camera (shifted by its depth), wrapping around the screen, so flying up or down changes how fast
+      // the snow seems to fall just like it does for everything else.
+      const fallen = (((flakeY[i] ?? 0) + kind.speed * (flakeRate[i] ?? 1) * dt) % period + period) % period
+      flakeY[i] = fallen
+      const y = ((((fallen - cameraY * kind.depth) % period) + period) % period) - 6
       const wrapped = (((flakeX[i] ?? 0) - cameraX * kind.depth) % viewWidth + viewWidth) % viewWidth
       const x = wrapped + Math.sin(clock * (flakeRate[i] ?? 1) + (flakePhase[i] ?? 0)) * kind.sway
       ctx.moveTo(x + kind.radius, y)

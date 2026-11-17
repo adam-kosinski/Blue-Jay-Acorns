@@ -488,3 +488,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - **Blue outline on far ridges in early winter:** `makeMask` drew the ground's shape five times (once and a pixel left, right, up, down) to widen it, which also multiplied the opacity of the soft edge pixels, so the haze (blue) and snow (white) masks showed as an outline along each ridge against the sky. The masks (haze, snow, frozen) are now made from a single draw (`grow` 0).
 
 - Boulder dusting is fully opaque along the rock's top (gradient: opaque to 30%, 0.45 at 70%, 0 at the end, starting at 1.08 ry above the base) so the heap line that starts to grow over it does not stand out as a brighter line.
+
+- **Brown line along the snow surface while the snow is translucent:** the dirt polygon's top edge (brownish) showed through the thin snow as a line; while snow covers all the ground the dirt's top edge is 4 px lower than before (`drawGround` `sink`) and the snow's is 2 px above the surface.
+- **Snowfall stays with the world:** flakes now fall through the world and are placed against the camera in y as well as x (shifted by `camera.y * depth`, wrapping the screen), so flying up or down changes how fast the snow seems to fall just as it does for the rest of the scene (`drawSnowfall(..., cameraX, cameraY, ...)`).
