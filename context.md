@@ -405,3 +405,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Lower-detail background, finer sampling
 - Far forest layers draw their vegetation images at lower resolution (`vegRes`: 0.3 under parallax 0.15, 0.4 under 0.3, 0.5 under 0.4, 0.75 for the nearest, which are unchanged in detail), and the props image only covers rows down to the lowest prop (`VegPlan.frontBottom`). `layerImageReport(world)` lists per layer the images' megapixels (debug).
 - `SAMPLE_COUNT` is now 25 (`SAMPLE_STEP` 1/8 segment) so each step between sample images is half as big and the colour change looks smoother; images are still kept for moments k-3..k+4 (half the time span as before).
+
+- Bush twigs: the wood limit is now 0.55 of a lobe radius (was 0.68) and at most 0.3 radius above a lobe's center (was 0.45); a piece must have both its end and its midpoint inside, and a fork only starts from a point inside.

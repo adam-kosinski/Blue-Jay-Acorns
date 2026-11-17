@@ -2288,11 +2288,11 @@ function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string):
   ctx.strokeStyle = color
   ctx.lineCap = 'round'
   // A bare bush: many stems rise from one spot, fan out like a vase and fork again and again into fine
-  // twigs that fill the bush's outline. The wood stays well inside the leaves (a tip may not pass 0.68 of a
-  // lobe's radius from its center, nor rise more than 0.45 above it: the leaf clumps are thin on top), so none shows past the leaf edge in summer.
+  // twigs that fill the bush's outline. The wood stays well inside the leaves (a tip may not pass 0.55 of a
+  // lobe's radius from its center, nor rise more than 0.3 above it: the leaf clumps are thin on top), so none shows past the leaf edge in summer.
   const inside = (x: number, y: number): boolean =>
     bush.lobes.some(
-      (lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.68 && y > lobe.dy - lobe.radius * 0.45,
+      (lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.55 && y > lobe.dy - lobe.radius * 0.3,
     )
   let radiusSum = 0
   let reach = 0
@@ -2315,7 +2315,7 @@ function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string):
       const nx = px + Math.sin(h) * pieceLength
       const ny = py - Math.cos(h) * pieceLength
       // The first pieces rise from the ground and may be below the leaves.
-      if (i >= 2 && !inside(nx, ny)) {
+      if (i >= 2 && !(inside(nx, ny) && inside((px + nx) / 2, (py + ny) / 2))) {
         break
       }
       ctx.lineWidth = Math.max(0.7, width * (1 - i * 0.05))
@@ -2325,7 +2325,7 @@ function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string):
       ctx.stroke()
       px = nx
       py = ny
-      if (depth > 0 && i >= 1 && rand() < 0.34) {
+      if (depth > 0 && i >= 1 && rand() < 0.34 && inside(px, py)) {
         const side = rand() < 0.5 ? -1 : 1
         grow(px, py, h + side * (0.35 + rand() * 0.55), width * 0.62, depth - 1, pieceLength * 0.82)
       }
