@@ -1,4 +1,4 @@
-import { fallTones, newLeafSeason } from './leafColors'
+import { fallTones, newLeafSeason, parseRgb } from './leafColors'
 import { enqueueJob } from './work'
 import { STAGE_LOOKS } from './seasons'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
@@ -9,6 +9,19 @@ import type { TreeLobe, TreeSegment, TreeShape } from './types'
  * distant trees.
  */
 export type TreeLook = { presence: number; fall: number; haze?: { color: string; amount: number } }
+
+/**
+ * A color between two others.
+ *
+ * @param a - First color (`#rrggbb` or `rgb()`).
+ * @param b - Second color.
+ * @param t - 0 is the first, 1 the second.
+ */
+function lerpColor(a: string, b: string, t: number): string {
+  const [ar, ag, ab] = parseRgb(a)
+  const [br, bg, bb] = parseRgb(b)
+  return `rgb(${Math.round(ar + (br - ar) * t)},${Math.round(ag + (bg - ag) * t)},${Math.round(ab + (bb - ab) * t)})`
+}
 
 /** How some leaves of a clump differ from the green ones: which are missing and which are in fall color. */
 export type LeafMix = { tonesB: string[]; fall: number; presence: number; seed: number }
@@ -377,6 +390,22 @@ export function drawLeafyDisk(
 ): void {
   const toneIn = (set: string[], i: number): string =>
     set[Math.max(0, Math.min(set.length - 1, Math.round(i)))] ?? '#2f7a3a'
+  // How far into its fall color a piece (a leaf or a blob) is: the same for the whole plant to begin with,
+  // so the first sign of the change is the greens turning a little toward the fall color all together;
+  // then each lobe, and each piece within it, gets its own small offset, strongest in the middle of the
+  // change, so a greener piece sometimes stands next to a fully colored one.
+  const amountOf = (piece: number): number => {
+    if (!mix || mix.fall <= 0) {
+      return 0
+    }
+    const base = Math.max(0, (mix.fall - 0.1) * 1.25)
+    const spread = 4 * mix.fall * (1 - mix.fall)
+    const lobe = hash01(mix.seed, 5000) - 0.5
+    const own = hash01(mix.seed + 7, piece) - 0.5
+    return Math.max(0, Math.min(1, base + (lobe * 0.35 + own * 0.35) * spread))
+  }
+  const colorOf = (set: string[], shade: number, amount: number): string =>
+    amount <= 0 ? toneIn(set, shade) : lerpColor(toneIn(set, shade), toneIn(mix?.tonesB ?? set, shade), amount)
   // The solid mass under the leaves thins out before the leaves do, so a half-bare crown shows branches.
   const blobShare = mix ? Math.max(0, Math.min(1, (mix.presence - 0.15) / 0.55)) : 1
   const blobColor = (j: number): string | null => {
@@ -386,19 +415,21 @@ export function drawLeafyDisk(
     if (hash01(mix.seed, 100 + j) >= blobShare) {
       return null
     }
-    return toneIn(hash01(mix.seed, 200 + j) < mix.fall ? mix.tonesB : tones, baseTone)
+    return colorOf(tones, baseTone, amountOf(200 + j))
   }
-  // Each leaf is there or not, and green or in fall color, by its own fixed draw.
+  // Each leaf is there or not, by its own fixed draw nudged by its lobe's (so a lobe loses its leaves a
+  // little before or after another one), and has its own amount of fall color.
   let leafCount = 0
-  const leafSet = (): string[] | null => {
+  const lobeShed = mix ? (hash01(mix.seed, 5001) - 0.5) * 0.4 * (4 * mix.presence * (1 - mix.presence)) : 0
+  const leafLook = (): { set: string[]; amount: number } | null => {
     leafCount += 1
     if (!mix) {
-      return tones
+      return { set: tones, amount: 0 }
     }
-    if (hash01(mix.seed, leafCount) >= mix.presence) {
+    if (hash01(mix.seed, leafCount) >= mix.presence + lobeShed) {
       return null
     }
-    return hash01(mix.seed + 7, leafCount) < mix.fall ? mix.tonesB : tones
+    return { set: tones, amount: amountOf(1000 + leafCount) }
   }
 
   if (detail < 0.12) {
@@ -444,9 +475,9 @@ export function drawLeafyDisk(
       const len = leafLen * (0.8 + rand() * 0.5)
       const angle = Math.PI + (rand() - 0.5) * 1.5
       const shade = baseTone + light * 1.5 + (rand() - 0.5) * 1.4
-      const set = leafSet()
-      if (set) {
-        drawLeaf(ctx, lx, ly, len, angle, toneIn(set, shade), detail >= 0.6)
+      const look = leafLook()
+      if (look) {
+        drawLeaf(ctx, lx, ly, len, angle, colorOf(look.set, shade, look.amount), detail >= 0.6)
       }
     }
 
@@ -462,9 +493,9 @@ export function drawLeafyDisk(
       const len = leafLen * (0.9 + rand() * 0.4)
       const angle = Math.PI + (rand() - 0.5) * 2 + (ex - blob.cx > 0 ? 0.4 : -0.4)
       const shade = baseTone + light * 1.1 + (rand() - 0.5) * 1.2
-      const set = leafSet()
-      if (set) {
-        drawLeaf(ctx, ex, ey, len, angle, toneIn(set, shade), detail >= 0.6)
+      const look = leafLook()
+      if (look) {
+        drawLeaf(ctx, ex, ey, len, angle, colorOf(look.set, shade, look.amount), detail >= 0.6)
       }
     }
   }
