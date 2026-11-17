@@ -11,6 +11,9 @@ Blue Jay Acorns ideas
   - mid winter: full snow
   - late winter: most snow melted
 - Add other types of trees to fill in the gaps
+- Jay bobbing up and down in midflight should correspond with wing beats
+- Have blue jays bob subtly when floating
+- Fix squirrel animations and appearance
 - Allow the bird to carry multiple acorns
   - It's possible this will be too complicated, and might lead to an acorn drop event getting cleaned out too quickly
 - Maybe the "noticing" notification should only apply to your burials, not other birds? Other birds are not your business
