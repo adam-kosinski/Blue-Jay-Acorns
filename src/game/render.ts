@@ -223,14 +223,9 @@ export function renderScene(
   // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
   drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
   drawBuriedProps(ctx, world, camera.x, viewWidth)
-  // Under a complete blanket of snow the dirt and the litter are not seen: not drawn.
-  const blanket = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999
-  if (!blanket) {
-    drawGround(ctx, world, camera.x, viewWidth)
-  }
-  if (!blanket) {
-    drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
-  }
+  drawGround(ctx, world, camera.x, viewWidth)
+  // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
+  drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   drawSnow(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
@@ -586,10 +581,13 @@ function drawForest(
         const firstColumn = Math.floor((shift / scale - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
         const lastColumn = Math.floor(((shift + viewWidth) / scale + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
         const rows = Math.ceil(((limit - base) / scale + SNOW_CELL_DEPTH * 2) / SNOW_CELL_DEPTH)
+        // The patches start above the highest ridge of the layer's ground (their depth is measured from 30 px
+        // above the base line), or the ridges would be left bare the moment the melt starts.
+        const firstRow = Math.floor((30 * scale - strip.rise) / scale / SNOW_CELL_DEPTH) - 1
         const patches = new Path2D()
         const points = 10
         for (let i = firstColumn; i <= lastColumn; i += 1) {
-          for (let j = -1; j <= rows; j += 1) {
+          for (let j = firstRow; j <= rows; j += 1) {
             const blob = snowBlob(i, j, cover)
             if (!blob) {
               continue
@@ -762,6 +760,8 @@ type ForestStrip = {
   veg: VegPlan
   /** The same bitmap with the layer's winter haze over it (made when winter first comes near). */
   winterCanvas?: HTMLCanvasElement
+  /** How far the layer's ground rises above its base line at the highest (the melting snow's patches reach that high). */
+  rise: number
   /** The ground's shape in snow white at half size (made when snow comes near). */
   snowCanvas?: HTMLCanvasElement
   /** The ground's shape in its final color once the snow is complete (drawn alone then, instead of the bitmap and two masks). */
@@ -1666,8 +1666,10 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   ctx?.getImageData(0, 0, 1, 1)
   // How far down the trees' image reaches (the ground covers the rest) and how high the props' image starts.
   let lowestGround = 0
+  let highestGround = 0
   for (let x = 0; x <= layer.span + 8; x += 8) {
     lowestGround = Math.max(lowestGround, offset(x))
+    highestGround = Math.min(highestGround, offset(x))
   }
   veg.backBottom = Math.min(originY + bottomPad, originY + lowestGround + 12)
   let highest = originY
@@ -1682,7 +1684,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   }
   veg.frontTop = Math.max(0, Math.floor(highest))
   veg.frontBottom = originY + bottomPad
-  const strip = { canvas, resolution, originY, waterLine, columnGround, veg }
+  const strip = { canvas, resolution, originY, waterLine, columnGround, veg, rise: Math.max(0, -highestGround) + 20 }
   forestStrips.set(layer, strip)
   if (workerUsable()) {
     const id = registerLayer(layer, veg)
@@ -1714,17 +1716,19 @@ function drawGround(
   const endX = Math.min(world.width + 64, cameraX + viewWidth + 16 + terrain.step)
   // The creek bed can lie below the bottom of the world, so the dirt reaches a little lower.
   const bottom = world.height + world.terrain.creek.depth
+  // While snow covers all of the ground (it comes in, and stays until the melt) the ground itself is its color,
+  // mixed from the dirt's by how thick the snow is, and the litter on it fades away: the same as a layer of
+  // snow over it, with no edge of its own. Once the snow melts in patches, the patches are drawn over the dirt
+  // (see `drawSnow`).
+  const whiteness = snowCover(world.season.time) >= 0.999 ? snowThickness(world.season.time) : 0
   const dirt = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, bottom)
-  dirt.addColorStop(0, GROUND_COLOR)
-  dirt.addColorStop(1, '#4b2f1a')
+  dirt.addColorStop(0, whiteness > 0 ? mixColor(GROUND_COLOR, SNOW_TOP, whiteness) : GROUND_COLOR)
+  dirt.addColorStop(1, whiteness > 0 ? mixColor('#4b2f1a', SNOW_BOTTOM, whiteness) : '#4b2f1a')
   ctx.fillStyle = dirt
   ctx.beginPath()
   ctx.moveTo(startX, bottom)
-  // While snow covers all of the ground the dirt's top edge sits a little lower than the snow's, so that its
-  // brownish edge never shows as a line along the surface through snow that is not opaque yet.
-  const sink = snowThickness(world.season.time) > 0 && snowCover(world.season.time) >= 0.999 ? 4 : 0
   for (let x = startX; x <= endX; x += terrain.step) {
-    ctx.lineTo(x, groundYAt(terrain, x) + sink)
+    ctx.lineTo(x, groundYAt(terrain, x))
   }
   ctx.lineTo(endX, bottom)
   ctx.closePath()
@@ -1732,7 +1736,8 @@ function drawGround(
 }
 
 /**
- * Draws the snow on the foreground ground, over the litter: a whole blanket when it covers everything, else
+ * Draws the melting snow's patches on the foreground ground, over the litter (while snow covers everything the
+ * ground itself is snow-colored, see `drawGround`), else
  * its patches (grid cells that each hold a patch, which grow from their own moment of the melt).
  *
  * @param ctx - 2D canvas context in world space.
@@ -1743,7 +1748,8 @@ function drawGround(
 function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
   const thickness = snowThickness(world.season.time)
   const cover = snowCover(world.season.time)
-  if (thickness <= 0 || cover <= 0) {
+  // (While it covers everything the ground itself is snow-colored, see `drawGround`.)
+  if (thickness <= 0 || cover <= 0 || cover >= 0.999) {
     return
   }
   const { terrain } = world
@@ -1759,7 +1765,7 @@ function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, 
   if (cover >= 0.999) {
     ctx.moveTo(startX, bottom)
     for (let x = startX; x <= endX; x += terrain.step) {
-      ctx.lineTo(x, groundYAt(terrain, x) - 2)
+      ctx.lineTo(x, groundYAt(terrain, x) - 1)
     }
     ctx.lineTo(endX, bottom)
     ctx.closePath()
