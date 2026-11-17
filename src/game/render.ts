@@ -560,8 +560,10 @@ type VegPlan = {
   props: { kind: 'rock' | 'fern' | 'bush'; index: number; y: number }[]
   /** The trees' and logs' image covers rows from 0 down to here (the ground hides what is below). */
   backBottom: number
-  /** The props' image covers rows from here down to the bottom of the strip. */
+  /** The props' image covers rows from here down to ... */
   frontTop: number
+  /** ... here (a little below the lowest prop; the rest of the strip has none). */
+  frontBottom: number
 }
 
 
@@ -577,12 +579,19 @@ const FOREST_SLAB = 64
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
 /**
- * Bitmap pixels per layer pixel of a layer's vegetation images: the same as the layer's ground (the far,
- * hazy layers are drawn at half size, the near ones at three quarters), so nothing is softer than before.
+ * Bitmap pixels per layer pixel of a layer's vegetation images: 0.3 for the farthest layers (parallax
+ * under 0.15), 0.4 up to 0.3, 0.5 up to 0.4, and 0.75 for the nearest, which are prominent.
  *
  * @param layer - Forest layer.
  */
 function vegRes(layer: ForestLayer): number {
+  // The farthest layers are hazy and small: far less detail; the nearest ones (0.5 and up) are prominent.
+  if (layer.parallax < 0.15) {
+    return 0.3
+  }
+  if (layer.parallax < 0.3) {
+    return 0.4
+  }
   return layer.parallax < 0.4 ? 0.5 : 0.75
 }
 
@@ -645,9 +654,8 @@ function* buildVegImage(
   const time = sampleTime(k)
   const res = vegRes(layer)
   const veg = strip.veg
-  const stripHeight = strip.canvas.height / strip.resolution
   const rowTop = part === 'back' ? 0 : veg.frontTop
-  const rowBottom = part === 'back' ? veg.backBottom : stripHeight
+  const rowBottom = part === 'back' ? veg.backBottom : veg.frontBottom
   const left = chunk * VEG_CHUNK
   const right = Math.min(layer.span + 8, left + VEG_CHUNK + VEG_OVERLAP)
   const canvas = document.createElement('canvas')
@@ -840,6 +848,22 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
   return { pending: pendingJobs(), images, megapixels: Math.round(pixels / 1e5) / 10 }
 }
 
+/**
+ * For experiments: per layer, the parallax, the images' count and megapixels and the resolution.
+ *
+ * @param world - Play space.
+ */
+export function layerImageReport(world: World): { p: number; res: number; images: number; mp: number }[] {
+  return world.forest.map((layer) => {
+    let pixels = 0
+    const images = [...vegMap(layer).values()]
+    for (const image of images) {
+      pixels += image.canvas.width * image.canvas.height
+    }
+    return { p: layer.parallax, res: vegRes(layer), images: images.length, mp: Math.round(pixels / 1e5) / 10 }
+  })
+}
+
 /** How long the last frame's drawing took (the background work is given more time when it was cheap). */
 let lastSceneMs = 0
 
@@ -1009,7 +1033,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   treeHeight = Math.min(treeHeight, world.viewHeight * 1.1)
   const originY = Math.ceil(treeHeight + (world.groundY - minGround) * Math.max(relief, creekScale) + 20)
   const resolution = layer.parallax < 0.4 ? 0.5 : 0.75
-  const veg: VegPlan = { trees: [], logs: [], props: [], backBottom: 0, frontTop: 0 }
+  const veg: VegPlan = { trees: [], logs: [], props: [], backBottom: 0, frontTop: 0, frontBottom: 0 }
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(layer.span * resolution)
   // Extra depth below the horizon so the layer's whole ground can carry leaf litter.
@@ -1177,6 +1201,11 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     highest = Math.min(highest, prop.y - reach)
   }
   veg.frontTop = Math.max(0, Math.floor(highest))
+  let lowestProp = originY
+  for (const prop of veg.props) {
+    lowestProp = Math.max(lowestProp, prop.y + 60)
+  }
+  veg.frontBottom = Math.min(originY + bottomPad, Math.ceil(lowestProp))
   const strip = { canvas, resolution, originY, waterLine, columnGround, veg }
   forestStrips.set(layer, strip)
   return strip

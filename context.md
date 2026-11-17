@@ -401,3 +401,7 @@ The acorn drop chance per oak (and the cap on acorns in the world) is multiplied
 
 ## Acorn supply over the year
 The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and falls linearly to 0 at the start of mid winter (was the middle), 0 after. Area under the curve is about 6.55 segments, so about 170 acorns fall against the roughly 171 the animals need from drops through spring (see the earlier calculation: need 210 total, minus 16 starting acorns and starting hunger reserve). `MAX_BASE_DROP_RATE` (graph scale) follows `PEAK_RATE`.
+
+## Lower-detail background, finer sampling
+- Far forest layers draw their vegetation images at lower resolution (`vegRes`: 0.3 under parallax 0.15, 0.4 under 0.3, 0.5 under 0.4, 0.75 for the nearest, which are unchanged in detail), and the props image only covers rows down to the lowest prop (`VegPlan.frontBottom`). `layerImageReport(world)` lists per layer the images' megapixels (debug).
+- `SAMPLE_COUNT` is now 25 (`SAMPLE_STEP` 1/8 segment) so each step between sample images is half as big and the colour change looks smoother; images are still kept for moments k-3..k+4 (half the time span as before).
