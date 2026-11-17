@@ -89,7 +89,7 @@ const BACKDROP_SPRING: BackdropLook = {
 const BACKDROP_KEYS: [number, BackdropLook][] = [
   [0.5, BACKDROP_GREEN],
   [2.5, BACKDROP_FALL],
-  [5.5, BACKDROP_WINTER],
+  [4, BACKDROP_WINTER],
   [7.5, BACKDROP_SPRING],
 ]
 

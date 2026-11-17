@@ -409,3 +409,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Bush twigs: the wood limit is now 0.55 of a lobe radius (was 0.68) and at most 0.3 radius above a lobe's center (was 0.45); a piece must have both its end and its midpoint inside, and a fork only starts from a point inside.
 
 - Far layers were too blurry: `vegRes` is now 0.4 under parallax 0.15, 0.5 under 0.3, 0.6 under 0.4, 0.75 above. The props image reaches the strip bottom again (the crop to the lowest prop was dropped while a vanishing-rock report is investigated; it was never shown to be the cause).
+
+- Winter blue earlier: `winterTintAt` is 0 at the start of late fall and 1 at the start of early winter (was 0 at the start of winter, 1 mid mid winter); the backdrop reaches its winter color at the start of early winter (key 4, was 5.5).
