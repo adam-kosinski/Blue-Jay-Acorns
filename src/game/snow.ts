@@ -12,11 +12,8 @@ export const SNOW_BOTTOM = '#c3d8ee'
 /** The tones of the snow a hop kicks up. */
 export const SNOW_PARTICLE_TONES = ['#ffffff', '#eef6ff', '#dcebfa']
 
-/** Length of the quick change to thin snow in the middle of early winter, in segments (about 6 seconds). */
-const THIN_FADE = 6 / SEGMENT_SECONDS
-
-/** Length of the change to a full layer going into mid winter, in segments (about 20 seconds: while it snows). */
-const FULL_FADE = 20 / SEGMENT_SECONDS
+/** Length of the snow's coming in, in segments: the 30 seconds before mid winter starts (while it snows). */
+const SNOW_IN = 30 / SEGMENT_SECONDS
 
 /**
  * Smoothstep.
@@ -29,40 +26,39 @@ function smooth(x: number): number {
 }
 
 /**
- * How thick the snow is, 0-1 (it decides how much of the litter below shows through): none until the middle
- * of early winter, where it quickly comes in thin, then going into mid winter it goes to a full layer over
- * about 20 seconds (while it snows, see `snowfallAt`).
+ * How thick the snow is, 0-1 (it decides how much of the litter below shows through): none until 30 seconds
+ * before mid winter starts, then a smooth fade to a full, white layer by the start of mid winter, all the
+ * while it snows (see `snowfallAt`).
  *
  * @param time - Seconds along the timeline.
  */
 export function snowThickness(time: number): number {
   const u = time / SEGMENT_SECONDS
-  return 0.55 * smooth((u - (4.5 - THIN_FADE / 2)) / THIN_FADE) + 0.45 * smooth((u - (5 - FULL_FADE / 2)) / FULL_FADE)
+  return smooth((u - (5 - SNOW_IN)) / SNOW_IN)
 }
 
 /**
- * The share of the particles a hop kicks up that are snow where there is snow: none before the middle of
- * early winter, half in its second half, all of them from mid winter on.
+ * The share of the particles a hop kicks up that are snow where there is snow: none before the snow starts
+ * to come in, half while it does (the second half of early winter), all of them from mid winter on.
  *
  * @param time - Seconds along the timeline.
  */
 export function snowKickShare(time: number): number {
   const u = time / SEGMENT_SECONDS
-  return u < 4.5 ? 0 : u < 5 ? 0.5 : 1
+  return u < 5 - SNOW_IN ? 0 : u < 5 ? 0.5 : 1
 }
 
 /**
- * The two layers of snow on a boulder, each 0-1: first a thin coat that follows the rock's upper boundary
- * comes in (with the quick change to thin snow in the middle of early winter), then, as it snows going
- * into mid winter, the full covering fades in.
+ * The two layers of snow on a boulder, each 0-1: while the snow comes in, first a dusting along the rock's
+ * upper boundary (the first half), then the full cap (the second half) which grows out of the dusting.
  *
  * @param time - Seconds along the timeline.
  */
 export function snowCapLayers(time: number): { thin: number; full: number } {
   const u = time / SEGMENT_SECONDS
   return {
-    thin: smooth((u - (4.5 - THIN_FADE / 2)) / THIN_FADE),
-    full: smooth((u - (5 - FULL_FADE / 2)) / FULL_FADE),
+    thin: smooth((u - (5 - SNOW_IN)) / (SNOW_IN / 2)),
+    full: smooth((u - (5 - SNOW_IN / 2)) / (SNOW_IN / 2)),
   }
 }
 

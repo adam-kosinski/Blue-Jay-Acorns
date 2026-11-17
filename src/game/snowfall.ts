@@ -1,15 +1,15 @@
 /**
  * Falling snow: a few hundred flakes in screen space over the foreground, when it is snowing. It snows for
- * about 20 seconds going into mid winter (as the ground whitens, see `snowThickness`) and again halfway
- * through mid winter.
+ * the 30 seconds before mid winter starts (as the ground whitens, see `snowThickness`) and for 20 seconds
+ * halfway through mid winter.
  */
 import { SEGMENT_SECONDS } from './seasons'
 
-/** Seconds a snowfall lasts (and the ground's fades). */
-export const SNOWFALL_SECONDS = 20
-
-/** The moments (in segments along the timeline) the middle of a snowfall is at. */
-export const SNOWFALL_CENTERS = [5, 5.5]
+/** The snowfalls: when each starts and ends, in seconds along the timeline (30 s before mid winter, 20 s halfway through it). */
+const SNOWFALLS: [number, number][] = [
+  [5 * SEGMENT_SECONDS - 30, 5 * SEGMENT_SECONDS],
+  [5.5 * SEGMENT_SECONDS - 10, 5.5 * SEGMENT_SECONDS + 10],
+]
 
 /** Most flakes in the air at once. */
 const MAX_FLAKES = 260
@@ -34,10 +34,8 @@ function smooth(x: number): number {
  */
 export function snowfallAt(time: number): number {
   let strongest = 0
-  for (const center of SNOWFALL_CENTERS) {
-    const d = time - center * SEGMENT_SECONDS
-    const half = SNOWFALL_SECONDS / 2
-    strongest = Math.max(strongest, smooth((d + half) / RAMP_SECONDS) * smooth((half - d) / RAMP_SECONDS))
+  for (const [start, end] of SNOWFALLS) {
+    strongest = Math.max(strongest, smooth((time - start) / RAMP_SECONDS) * smooth((end - time) / RAMP_SECONDS))
   }
   return strongest
 }
