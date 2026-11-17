@@ -12,8 +12,11 @@ export const SNOW_BOTTOM = '#c3d8ee'
 /** The tones of the snow a hop kicks up. */
 export const SNOW_PARTICLE_TONES = ['#ffffff', '#eef6ff', '#dcebfa']
 
-/** Length of a change of the snow, in segments (about 20 seconds: while it snows). */
-const SNOW_FADE = 20 / SEGMENT_SECONDS
+/** Length of the quick change to thin snow in the middle of early winter, in segments (about 6 seconds). */
+const THIN_FADE = 6 / SEGMENT_SECONDS
+
+/** Length of the change to a full layer going into mid winter, in segments (about 20 seconds: while it snows). */
+const FULL_FADE = 20 / SEGMENT_SECONDS
 
 /**
  * Smoothstep.
@@ -27,14 +30,14 @@ function smooth(x: number): number {
 
 /**
  * How thick the snow is, 0-1 (it decides how much of the litter below shows through): none until the middle
- * of early winter, where it comes in thin over about 20 seconds, then at the start of mid winter it goes to a
- * full layer the same way (it snows during both, see `snowfallAt`).
+ * of early winter, where it quickly comes in thin, then going into mid winter it goes to a full layer over
+ * about 20 seconds (while it snows, see `snowfallAt`).
  *
  * @param time - Seconds along the timeline.
  */
 export function snowThickness(time: number): number {
   const u = time / SEGMENT_SECONDS
-  return 0.55 * smooth((u - (4.5 - SNOW_FADE / 2)) / SNOW_FADE) + 0.45 * smooth((u - (5 - SNOW_FADE / 2)) / SNOW_FADE)
+  return 0.55 * smooth((u - (4.5 - THIN_FADE / 2)) / THIN_FADE) + 0.45 * smooth((u - (5 - FULL_FADE / 2)) / FULL_FADE)
 }
 
 /**
@@ -49,18 +52,14 @@ export function snowKickShare(time: number): number {
 }
 
 /**
- * How much snow lies on top of a rock or other object (the same schedule as the ground's, and melting at its
- * own moment of the melt).
+ * How big the snow on top of a rock is, 0-1: full until the melt, then shrinking at the rock's own moment of
+ * it (the snow's coming is a fade of its opacity, `snowThickness`, not a growing).
  *
  * @param time - Seconds along the timeline.
  * @param key - A number 0-1 of its own (its moment of the melt).
  */
-export function snowCapAmount(time: number, key: number): number {
-  const thickness = snowThickness(time)
-  if (thickness <= 0) {
-    return 0
-  }
-  return thickness * smooth((snowCover(time) - 0.6 * key) / 0.4)
+export function snowCapSize(time: number, key: number): number {
+  return smooth((snowCover(time) - 0.6 * key) / 0.4)
 }
 
 /**

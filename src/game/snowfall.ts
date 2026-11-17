@@ -1,7 +1,7 @@
 /**
  * Falling snow: a few hundred flakes in screen space over the foreground, when it is snowing. It snows for
- * about 20 seconds in the middle of early winter, at the start of mid winter and halfway through mid
- * winter (see `snowfallAt`), the first two as the ground whitens (see `snowThickness`).
+ * about 20 seconds going into mid winter (as the ground whitens, see `snowThickness`) and again halfway
+ * through mid winter.
  */
 import { SEGMENT_SECONDS } from './seasons'
 
@@ -9,7 +9,7 @@ import { SEGMENT_SECONDS } from './seasons'
 export const SNOWFALL_SECONDS = 20
 
 /** The moments (in segments along the timeline) the middle of a snowfall is at. */
-export const SNOWFALL_CENTERS = [4.5, 5, 5.5]
+export const SNOWFALL_CENTERS = [5, 5.5]
 
 /** Most flakes in the air at once. */
 const MAX_FLAKES = 260

@@ -16,7 +16,7 @@ import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import { drawSnowfall } from './snowfall'
-import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapAmount, snowCover, snowThickness } from './snow'
+import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapSize, snowCover, snowThickness } from './snow'
 import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
@@ -845,7 +845,7 @@ function* buildVegImage(
         if (rock && near(rock.x, rock.rx * 1.5)) {
           mossFade = transitionProgress(rock.fadeStart, time)
           paintRock(ctx, rock, rock.x, prop.y + rock.ry * 0.4)
-          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowAmount(rock, time))
+          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowThickness(time))
           mossFade = 0
         }
       } else if (prop.kind === 'fern') {
@@ -3662,14 +3662,14 @@ function rockShape(
 }
 
 /**
- * How much snow lies on a rock now (each melts at its own moment).
+ * How big the snow on a rock is now (full until the melt, where each rock's snow shrinks at its own moment).
  *
  * @param rock - The rock.
  * @param time - Seconds along the timeline.
  */
-function rockSnowAmount(rock: Rock, time: number): number {
+function rockSnowSize(rock: Rock, time: number): number {
   const key = (rock.jitter.reduce((a, b) => a + b, 0) * 997) % 1
-  return snowCapAmount(time, key)
+  return snowCapSize(time, key)
 }
 
 /**
@@ -3680,12 +3680,22 @@ function rockSnowAmount(rock: Rock, time: number): number {
  * @param rock - The rock.
  * @param cx - Center x.
  * @param baseY - Y of the rock's base line.
- * @param amount - How much snow, 0-1.
+ * @param amount - How big the snow is, 0-1 (it melts away as it shrinks).
+ * @param opacity - How strongly it shows, 0-1 (it comes in by fading in, with the ground's snow).
  */
-function paintRockSnow(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY: number, amount: number): void {
-  if (amount < 0.04) {
+function paintRockSnow(
+  ctx: CanvasRenderingContext2D,
+  rock: Rock,
+  cx: number,
+  baseY: number,
+  amount: number,
+  opacity: number,
+): void {
+  if (amount < 0.04 || opacity < 0.02) {
     return
   }
+  ctx.save()
+  ctx.globalAlpha = opacity
   const { rx, ry } = rock
   const { outline } = rockShape(rock, cx, baseY)
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
@@ -3731,6 +3741,7 @@ function paintRockSnow(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, ba
     }
   }
   ctx.stroke()
+  ctx.restore()
 }
 
 /**
@@ -3967,7 +3978,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, fa
       queueRockWinter(rock, res)
     }
   }
-  paintRockSnow(ctx, rock, rock.x, y, rockSnowAmount(rock, seasonNow))
+  paintRockSnow(ctx, rock, rock.x, y, rockSnowSize(rock, seasonNow), snowThickness(seasonNow))
 }
 
 /**
@@ -3997,11 +4008,13 @@ function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numb
   })
   ctx.closePath()
   ctx.fill()
-  const snowOn = rockSnowAmount(rock, seasonNow)
-  if (snowOn > 0.04) {
+  const snowOn = rockSnowSize(rock, seasonNow)
+  const snowOpacity = snowThickness(seasonNow)
+  if (snowOn > 0.04 && snowOpacity > 0.02) {
     // Snow over the upper part, clipped to the outline.
     ctx.save()
     ctx.clip()
+    ctx.globalAlpha = snowOpacity
     ctx.fillStyle = SNOW_TOP
     ctx.fillRect(rock.x - rock.rx * 1.3, baseY - rock.ry * 1.4, rock.rx * 2.6, rock.ry * (0.45 + 0.7 * snowOn))
     ctx.restore()
