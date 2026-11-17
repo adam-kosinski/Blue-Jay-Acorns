@@ -413,3 +413,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Winter blue earlier: `winterTintAt` is 0 at the start of late fall and 1 at the start of early winter (was 0 at the start of winter, 1 mid mid winter); the backdrop reaches its winter color at the start of early winter (key 4, was 5.5).
 
 - Winter haze bands: each layer's blue wash was a flat rectangle up to the nearer layers' cull line with the layer's whole haze as alpha, so the creek showed a band at every layer boundary (and far layers were hazed far more than in fall). Now each layer adds only the difference between its haze and the next nearer layer's (so the washes pile up to each layer's own haze), and the wash fades out over its lowest 120 px.
+
+- Winter wash seam: each layer's wash is now one vertical gradient fill (full strength, then an eased fade over the lowest 200 px to nothing at the cull line) instead of a flat rect plus a separate fading rect, to remove a horizontal seam in the creek. Not yet confirmed visually. Idea noted: build the season images in a Web Worker (OffscreenCanvas) to take the build work off the main thread.

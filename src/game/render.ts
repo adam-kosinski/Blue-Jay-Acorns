@@ -530,21 +530,25 @@ function drawForest(
     // In winter the air goes light blue: a wash over everything this layer and the ones behind it show.
     // Each layer adds only what its own haze has over the next nearer layer's, so that the washes pile up to
     // each layer's own haze (nearer layers are clearer) and the water shows no band where one ends; the
-    // wash fades out over its lowest rows for the same reason.
+    // wash fades out smoothly over its lowest rows for the same reason.
     const winter = winterTintAt(world.season.time)
     if (winter > 0 && !hidden && limit > 0) {
       const own = Math.min(0.95, winter * layer.fog * 0.85)
       const nearer = next ? Math.min(0.95, winter * next.fog * 0.85) : 0
       const alpha = Math.max(0, 1 - (1 - own) / (1 - nearer))
       const [wr, wg, wb] = WINTER_HAZE_RGB
-      const fade = Math.min(limit, 120)
-      const wash = ctx.createLinearGradient(0, limit - fade, 0, limit)
-      wash.addColorStop(0, `rgba(${wr}, ${wg}, ${wb}, ${alpha.toFixed(3)})`)
-      wash.addColorStop(1, `rgba(${wr}, ${wg}, ${wb}, 0)`)
-      ctx.fillStyle = `rgba(${wr}, ${wg}, ${wb}, ${alpha.toFixed(3)})`
-      ctx.fillRect(0, 0, viewWidth, limit - fade)
+      // One gradient fill (no seam between a flat part and a fading part): full strength down to a point,
+      // then an eased fade to nothing at the cull line.
+      const fade = Math.min(limit, 200)
+      const start = (limit - fade) / limit
+      const wash = ctx.createLinearGradient(0, 0, 0, limit)
+      for (let step = 0; step <= 8; step += 1) {
+        const x = step / 8
+        const ease = 1 - x * x * (3 - 2 * x)
+        wash.addColorStop(start + (1 - start) * x, `rgba(${wr}, ${wg}, ${wb}, ${(alpha * ease).toFixed(4)})`)
+      }
       ctx.fillStyle = wash
-      ctx.fillRect(0, limit - fade, viewWidth, fade)
+      ctx.fillRect(0, 0, viewWidth, limit)
     }
   }
 }
