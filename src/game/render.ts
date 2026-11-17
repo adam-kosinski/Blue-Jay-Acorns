@@ -1748,8 +1748,12 @@ function drawGround(
   ctx.fillStyle = dirt
   ctx.beginPath()
   ctx.moveTo(startX, bottom)
+  // The snow patches that take over at the start of the melt stand 3 px above the surface: the snow-colored
+  // ground rises that much over the 30 s before, slowly, so that nothing seems to move when the patches start.
+  const meltIn = (world.season.time / SEGMENT_SECONDS - (6 - 30 / SEGMENT_SECONDS)) / (30 / SEGMENT_SECONDS)
+  const raise = whiteness >= 0.999 ? 3 * Math.max(0, Math.min(1, meltIn)) * Math.max(0, Math.min(1, meltIn)) * (3 - 2 * Math.max(0, Math.min(1, meltIn))) : 0
   for (let x = startX; x <= endX; x += terrain.step) {
-    ctx.lineTo(x, groundYAt(terrain, x))
+    ctx.lineTo(x, groundYAt(terrain, x) - raise)
   }
   ctx.lineTo(endX, bottom)
   ctx.closePath()
@@ -3799,12 +3803,14 @@ function snowGeometry(
   amount: number,
 ): { top: number; depth: number; dustDepth: number; edgeY: (x: number) => number; dustY: (x: number) => number } {
   // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
-  const depth = rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)
+  // (As it melts down to nothing it also gets thinner, so that the last of it shrinks away, not just disappears.)
+  const thinning = Math.min(1, amount / 0.3)
+  const depth = (rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)) * thinning
   const lumps = (x: number): number => ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
   const dustDepth = ry * 0.6
   // While it melts the snow also draws in from the sides, into a patch over the top of the rock (like the
   // ground's patches shrink): it only reaches `reach` either side of the middle, and is thinner toward its ends.
-  const reach = rx * (0.15 + 1.4 * amount)
+  const reach = rx * (0.02 + 1.5 * amount)
   const squash = (x: number): number => Math.max(0, 1 - (Math.abs(x - cx) / reach) ** 8)
   return {
     top: baseY - ry * 1.2,
@@ -3868,7 +3874,7 @@ function paintSnowShapes(
   }
   ctx.save()
   if (layers.thin > 0.02) {
-    ctx.globalAlpha = layers.thin * Math.min(1, amount * 3)
+    ctx.globalAlpha = layers.thin
     // Fully opaque along the rock's top (where the heap line will start to grow, so it does not stand out as a
     // brighter line), then thinning out downward.
     const dust = ctx.createLinearGradient(0, baseY - ry * 1.08, 0, baseY - ry * 1.15 + g.dustDepth + ry * 0.12)
@@ -3995,9 +4001,79 @@ function strokeSnowHeap(ctx: CanvasRenderingContext2D, path: Path2D, ry: number,
   ctx.restore()
 }
 
+/** The silhouette of a bitmap by column: where each column's painted pixels start and end (world coordinates). */
+type Silhouette = { x: number[]; top: number[]; bottom: number[] }
+
 /**
- * The top contour of what a bitmap shows (the topmost painted pixel of each column, a little smoothed), in
- * world coordinates: so snow can follow a rock with its moss, not just the rock's outline.
+ * The silhouette of what a bitmap shows, column by column (a little smoothed), in world coordinates: so snow can
+ * follow a rock with its moss, not just the rock's outline.
+ *
+ * @param source - The bitmap.
+ * @param left - Where its left edge is in the world.
+ * @param top - Where its top edge is.
+ * @param width - Its width in the world.
+ * @param height - Its height in the world.
+ */
+function silhouetteColumns(
+  source: CanvasImageSource & { width: number; height: number },
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): Silhouette {
+  const columns = Math.max(8, Math.min(360, Math.round(source.width)))
+  const rows = Math.max(8, Math.min(400, Math.round((columns * source.height) / Math.max(1, source.width))))
+  const probe = newCanvas()
+  probe.width = columns
+  probe.height = rows
+  const result: Silhouette = { x: [], top: [], bottom: [] }
+  const pctx = probe.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | null
+  if (!pctx) {
+    return result
+  }
+  pctx.drawImage(source, 0, 0, columns, rows)
+  const data = pctx.getImageData(0, 0, columns, rows).data
+  const firsts: (number | null)[] = []
+  const lasts: (number | null)[] = []
+  for (let c = 0; c < columns; c += 1) {
+    let first: number | null = null
+    let last: number | null = null
+    for (let row = 0; row < rows; row += 1) {
+      if ((data[(row * columns + c) * 4 + 3] ?? 0) > 60) {
+        if (first === null) {
+          first = row
+        }
+        last = row
+      }
+    }
+    firsts.push(first)
+    lasts.push(last)
+  }
+  const smooth = (values: (number | null)[], c: number): number => {
+    let sum = 0
+    let count = 0
+    for (let d = -2; d <= 2; d += 1) {
+      const other = values[c + d]
+      if (other !== null && other !== undefined) {
+        sum += other
+        count += 1
+      }
+    }
+    return sum / Math.max(1, count)
+  }
+  for (let c = 0; c < columns; c += 1) {
+    if (firsts[c] === null || firsts[c] === undefined) {
+      continue
+    }
+    result.x.push(left + ((c + 0.5) / columns) * width)
+    result.top.push(top + ((smooth(firsts, c) + 0.5) / rows) * height)
+    result.bottom.push(top + ((smooth(lasts, c) + 1) / rows) * height)
+  }
+  return result
+}
+
+/**
+ * The top contour of what a bitmap shows, as points (see `silhouetteColumns`).
  *
  * @param source - The bitmap.
  * @param left - Where its left edge is in the world.
@@ -4012,47 +4088,8 @@ function silhouetteTop(
   width: number,
   height: number,
 ): [number, number][] {
-  const columns = Math.max(8, Math.min(220, Math.round(source.width)))
-  const rows = Math.max(8, Math.round((columns * source.height) / Math.max(1, source.width)))
-  const probe = newCanvas()
-  probe.width = columns
-  probe.height = rows
-  const pctx = probe.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | null
-  if (!pctx) {
-    return []
-  }
-  pctx.drawImage(source, 0, 0, columns, rows)
-  const data = pctx.getImageData(0, 0, columns, rows).data
-  const raw: (number | null)[] = []
-  for (let c = 0; c < columns; c += 1) {
-    let found: number | null = null
-    for (let row = 0; row < rows; row += 1) {
-      if ((data[(row * columns + c) * 4 + 3] ?? 0) > 60) {
-        found = row
-        break
-      }
-    }
-    raw.push(found)
-  }
-  const points: [number, number][] = []
-  for (let c = 0; c < columns; c += 1) {
-    const here = raw[c]
-    if (here === null || here === undefined) {
-      continue
-    }
-    // Average with the neighbours that are painted too.
-    let sum = 0
-    let count = 0
-    for (let d = -2; d <= 2; d += 1) {
-      const other = raw[c + d]
-      if (other !== null && other !== undefined) {
-        sum += other
-        count += 1
-      }
-    }
-    points.push([left + ((c + 0.5) / columns) * width, top + ((sum / count + 0.5) / rows) * height])
-  }
-  return points
+  const columns = silhouetteColumns(source, left, top, width, height)
+  return columns.x.map((x, i): [number, number] => [x, columns.top[i] ?? top])
 }
 
 /**
@@ -4084,7 +4121,7 @@ function paintRockWithSnow(
   amount: number,
   layers: { thin: number; full: number },
 ): void {
-  if (amount < 0.04 || layers.thin < 0.02) {
+  if (amount < 0.005 || layers.thin < 0.02) {
     paintRock(ctx, rock, cx, baseY)
     return
   }
@@ -4122,17 +4159,13 @@ function paintRockWithSnow(
   paintSnowHeap(ctx, contour, 0, 0, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
 }
 
-type RockSnowOverlay = { canvas: HTMLCanvasElement; thin: number; full: number; size: number; heap?: Path2D; heapKey?: string }
-
-const rockSnowOverlays = new WeakMap<Rock, RockSnowOverlay>()
-
-/** Each rock's top contour (moss included) relative to its center and base line, found once. */
-const rockContours = new WeakMap<Rock, [number, number][]>()
+/** Each rock's silhouette (moss included) relative to its center and base line, found once. */
+const rockSilhouettes = new WeakMap<Rock, Silhouette>()
 
 /**
- * Draws the snow on a rock from its bitmap: an overlay the shape of the rock's silhouette (moss that hangs
- * over the outline included), made by cutting the snow shapes to the bitmap and kept until the snow changes a
- * step, and the heap over the top edge.
+ * Draws the snow on a rock from its bitmap's silhouette: the dusting and the full cap are shapes between the
+ * silhouette's top (moss that hangs over the outline included) and their lower edges, drawn afresh every frame
+ * (so the melt shrinks them continuously), and the heap over the top edge.
  *
  * @param ctx - 2D canvas context in world space.
  * @param rock - The rock.
@@ -4149,56 +4182,67 @@ function drawRockSnow(
   amount: number,
   layers: { thin: number; full: number },
 ): void {
-  if (amount < 0.04 || layers.thin < 0.02) {
-    rockSnowOverlays.delete(rock)
+  if (amount < 0.003 || layers.thin < 0.02) {
     return
   }
-  const thin = Math.round(layers.thin * 48) / 48
-  const full = Math.round(layers.full * 48) / 48
-  // (the melt's shrinking in fine steps, about a pixel or two on the biggest rocks, so it looks continuous)
-  const size = Math.round(amount * 160) / 160
-  let overlay = rockSnowOverlays.get(rock)
-  if (!overlay || overlay.thin !== thin || overlay.full !== full || overlay.size !== size) {
-    const canvas = overlay?.canvas ?? document.createElement('canvas')
-    // Half the bitmap's size is plenty for a soft white shape (and keeps the overlay small).
-    const w = Math.max(1, Math.ceil(sprite.canvas.width * 0.5))
-    const h = Math.max(1, Math.ceil(sprite.canvas.height * 0.5))
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w
-      canvas.height = h
-    }
-    const sctx = canvas.getContext('2d')
-    if (!sctx) {
-      return
-    }
-    sctx.setTransform(1, 0, 0, 1, 0, 0)
-    sctx.globalCompositeOperation = 'source-over'
-    sctx.clearRect(0, 0, w, h)
-    const k = w / sprite.width
-    sctx.scale(k, k)
-    sctx.translate(-sprite.offsetX, -sprite.offsetY)
-    paintSnowShapes(sctx, 0, 0, rock.rx, rock.ry, snowPhase(rock), size, { thin, full }, rock.fog)
-    sctx.setTransform(1, 0, 0, 1, 0, 0)
-    sctx.globalCompositeOperation = 'destination-in'
-    sctx.drawImage(sprite.canvas, 0, 0, w, h)
-    sctx.globalCompositeOperation = 'source-over'
-    overlay = { canvas, thin, full, size }
-    rockSnowOverlays.set(rock, overlay)
+  let sil = rockSilhouettes.get(rock)
+  if (!sil) {
+    sil = silhouetteColumns(sprite.canvas, sprite.offsetX, sprite.offsetY, sprite.width, sprite.height)
+    rockSilhouettes.set(rock, sil)
   }
-  ctx.drawImage(overlay.canvas, rock.x + sprite.offsetX, baseY + sprite.offsetY, sprite.width, sprite.height)
-  if (layers.full > 0.02) {
-    // The heap's path is kept for as long as the snow's state and the rock's place stay the same.
-    const heapKey = `${full}|${size}|${baseY}`
-    if (!overlay.heap || overlay.heapKey !== heapKey) {
-      let contour = rockContours.get(rock)
-      if (!contour) {
-        contour = silhouetteTop(sprite.canvas, sprite.offsetX, sprite.offsetY, sprite.width, sprite.height)
-        rockContours.set(rock, contour)
+  const n = sil.x.length
+  if (n < 2) {
+    return
+  }
+  const cx = rock.x
+  const phase = snowPhase(rock)
+  const g = snowGeometry(cx, baseY, rock.rx, rock.ry, phase, amount)
+  const colors = snowColors(rock.fog)
+  const [tr, tg, tb] = parseRgb(colors.top)
+  // The shape between the silhouette's top (a pixel or two above, to cover its edge) and a lower edge, not
+  // going below the silhouette.
+  const shape = (edge: (x: number) => number): Path2D => {
+    const path = new Path2D()
+    for (let i = 0; i < n; i += 1) {
+      const x = cx + (sil.x[i] ?? 0)
+      const y = baseY + (sil.top[i] ?? 0) - 1.5
+      if (i === 0) {
+        path.moveTo(x, y)
+      } else {
+        path.lineTo(x, y)
       }
-      overlay.heap = snowHeapPath(contour, rock.x, baseY, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full)
-      overlay.heapKey = heapKey
     }
-    strokeSnowHeap(ctx, overlay.heap, rock.ry, layers.full, rock.fog)
+    for (let i = n - 1; i >= 0; i -= 1) {
+      const x = cx + (sil.x[i] ?? 0)
+      const upper = baseY + (sil.top[i] ?? 0) - 1.5
+      path.lineTo(x, Math.max(upper, Math.min(edge(x), baseY + (sil.bottom[i] ?? 0))))
+    }
+    path.closePath()
+    return path
+  }
+  ctx.save()
+  // First the dusting, opaque along the top and thinning out downward.
+  ctx.globalAlpha = layers.thin
+  const dust = ctx.createLinearGradient(0, baseY - rock.ry * 1.08, 0, baseY - rock.ry * 1.15 + g.dustDepth + rock.ry * 0.12)
+  dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+  dust.addColorStop(0.3, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+  dust.addColorStop(0.7, `rgba(${tr}, ${tg}, ${tb}, 0.45)`)
+  dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
+  ctx.fillStyle = dust
+  ctx.fill(shape(g.dustY))
+  // Then the full cap, inside the rock.
+  if (layers.full > 0.02) {
+    ctx.globalAlpha = layers.full
+    const cap = ctx.createLinearGradient(0, g.top, 0, baseY - rock.ry * 1.15 + g.depth + rock.ry * 0.2)
+    cap.addColorStop(0, colors.top)
+    cap.addColorStop(1, colors.bottom)
+    ctx.fillStyle = cap
+    ctx.fill(shape(g.edgeY))
+  }
+  ctx.restore()
+  if (layers.full > 0.02) {
+    const outline: [number, number][] = sil.x.map((x, i): [number, number] => [x, sil.top[i] ?? 0])
+    strokeSnowHeap(ctx, snowHeapPath(outline, cx, baseY, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full), rock.ry, layers.full, rock.fog)
   }
 }
 
