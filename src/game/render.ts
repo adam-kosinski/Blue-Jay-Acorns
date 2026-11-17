@@ -223,8 +223,14 @@ export function renderScene(
   // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
   drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
   drawBuriedProps(ctx, world, camera.x, viewWidth)
-  drawGround(ctx, world, camera.x, viewWidth)
-  drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
+  // Under a complete blanket of snow the dirt and the litter are not seen: not drawn.
+  const blanket = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999
+  if (!blanket) {
+    drawGround(ctx, world, camera.x, viewWidth)
+  }
+  if (!blanket) {
+    drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
+  }
   drawSnow(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
@@ -417,6 +423,7 @@ function drawForest(
   const maxCamY = Math.max(0, world.height - viewHeight)
   const winter = winterTintAt(world.season.time)
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
+  const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999 && winter >= 0.999
   let stripsMade = 0
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
@@ -482,14 +489,14 @@ function drawForest(
     const topRow = Math.max(0, strip.originY - base)
     const below = base - strip.originY + stripHeight
     // Blits a strip bitmap in slabs, each cut at its own cull line (the +1 px overlap hides seams).
-    const blit = (source: HTMLCanvasElement, fillBelow: boolean, alpha = 1, groundColor = layer.groundColor): void => {
+    const blit = (source: HTMLCanvasElement, fillBelow: boolean, alpha = 1, groundColor = layer.groundColor, image = true): void => {
       ctx.globalAlpha = alpha
       for (let s = 0; s < slabs; s += 1) {
         const slabLimit = layerLimits[s] ?? viewHeight
         const bottomRow = Math.min(stripHeight, slabLimit - base + strip.originY)
         const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * strip.resolution)
         const srcW = Math.min((FOREST_SLAB + 1) * strip.resolution, source.width - srcX)
-        if (bottomRow > topRow && !hidden && srcW > 0) {
+        if (image && bottomRow > topRow && !hidden && srcW > 0) {
           ctx.drawImage(
             source,
             srcX,
@@ -552,6 +559,19 @@ function drawForest(
     }
     // The ground bitmap, then snow over it (far layers are all snow or all bare: the share covered is how
     // strongly it shows), then a mask in the haze's color as strong as this layer's haze.
+    // Once the snow is complete (and the haze, and nothing is melting) the ground is one flat color: its shape in
+    // that color is drawn alone, instead of the bitmap and the snow and haze masks over it.
+    if (snowedIn && !hidden && !strip.frozenCanvas && stripsMade < 2) {
+      strip.frozenColor = winterHazed(mixHex(layer.groundColor, SNOW_TOP, 0.92), layer, 1)
+      strip.frozenCanvas = makeMask(strip, strip.frozenColor, 0.75, 0.75)
+      stripsMade += 1
+    }
+    if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
+      blit(strip.canvas, true, 1, strip.frozenColor, false)
+      if (!hidden) {
+        drawMask(strip.frozenCanvas, 1)
+      }
+    } else {
     blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor)
     if (snow > 0 && strip.snowCanvas && !hidden) {
       const cover = snowCover(world.season.time)
@@ -596,6 +616,7 @@ function drawForest(
     }
     if (winter > 0 && strip.winterCanvas && !hidden) {
       drawMask(strip.winterCanvas, winterAmount(layer, winter))
+    }
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -740,6 +761,10 @@ type ForestStrip = {
   winterCanvas?: HTMLCanvasElement
   /** The ground's shape in snow white at half size (made when snow comes near). */
   snowCanvas?: HTMLCanvasElement
+  /** The ground's shape in its final color once the snow is complete (drawn alone then, instead of the bitmap and two masks). */
+  frozenCanvas?: HTMLCanvasElement
+  /** That color. */
+  frozenColor?: string
 }
 
 /** Where a layer's vegetation stands, in the strip's coordinates, and which rows of the strip its images cover. */
@@ -3861,29 +3886,72 @@ function paintSnowHeap(
   if (full <= 0.02) {
     return
   }
+  strokeSnowHeap(ctx, snowHeapPath(outline, offX, offY, cx, baseY, rx, ry, phase, amount, full), ry, full, fog)
+}
+
+/**
+ * The path of the snow heaped over the top edge of a rock (built from its top contour).
+ *
+ * @param outline - The top contour to follow.
+ * @param offX - Added to the contour's x.
+ * @param offY - Added to the contour's y.
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ * @param rx - Half width.
+ * @param ry - Height.
+ * @param phase - Shape of the lumps.
+ * @param amount - How big the snow is, 0-1.
+ * @param full - How far the full cap has come in, 0-1.
+ */
+function snowHeapPath(
+  outline: [number, number][],
+  offX: number,
+  offY: number,
+  cx: number,
+  baseY: number,
+  rx: number,
+  ry: number,
+  phase: number,
+  amount: number,
+  full: number,
+): Path2D {
   const g = snowGeometry(cx, baseY, rx, ry, phase, amount)
-  ctx.save()
-  ctx.strokeStyle = snowColors(fog).top
-  ctx.lineWidth = Math.max(1.5, ry * 0.14) * full
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.beginPath()
+  const lift = (Math.max(1.5, ry * 0.14) * full) * 0.25
+  const path = new Path2D()
   let pen = false
   for (const [px, py] of outline) {
     const x = px + offX
     const y = py + offY
     if (y < g.edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
       if (pen) {
-        ctx.lineTo(x, y - ctx.lineWidth * 0.25)
+        path.lineTo(x, y - lift)
       } else {
-        ctx.moveTo(x, y - ctx.lineWidth * 0.25)
+        path.moveTo(x, y - lift)
         pen = true
       }
     } else {
       pen = false
     }
   }
-  ctx.stroke()
+  return path
+}
+
+/**
+ * Strokes a rock's heap path.
+ *
+ * @param ctx - 2D canvas context.
+ * @param path - The heap's path.
+ * @param ry - The rock's height (the line's width is a share of it).
+ * @param full - How far the full cap has come in, 0-1.
+ * @param fog - The rock's distance haze.
+ */
+function strokeSnowHeap(ctx: CanvasRenderingContext2D, path: Path2D, ry: number, full: number, fog: number): void {
+  ctx.save()
+  ctx.strokeStyle = snowColors(fog).top
+  ctx.lineWidth = Math.max(1.5, ry * 0.14) * full
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.stroke(path)
   ctx.restore()
 }
 
@@ -4014,7 +4082,7 @@ function paintRockWithSnow(
   paintSnowHeap(ctx, contour, 0, 0, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
 }
 
-type RockSnowOverlay = { canvas: HTMLCanvasElement; thin: number; full: number; size: number }
+type RockSnowOverlay = { canvas: HTMLCanvasElement; thin: number; full: number; size: number; heap?: Path2D; heapKey?: string }
 
 const rockSnowOverlays = new WeakMap<Rock, RockSnowOverlay>()
 
@@ -4078,12 +4146,20 @@ function drawRockSnow(
     rockSnowOverlays.set(rock, overlay)
   }
   ctx.drawImage(overlay.canvas, rock.x + sprite.offsetX, baseY + sprite.offsetY, sprite.width, sprite.height)
-  let contour = rockContours.get(rock)
-  if (!contour) {
-    contour = silhouetteTop(sprite.canvas, sprite.offsetX, sprite.offsetY, sprite.width, sprite.height)
-    rockContours.set(rock, contour)
+  if (layers.full > 0.02) {
+    // The heap's path is kept for as long as the snow's state and the rock's place stay the same.
+    const heapKey = `${full}|${size}|${baseY}`
+    if (!overlay.heap || overlay.heapKey !== heapKey) {
+      let contour = rockContours.get(rock)
+      if (!contour) {
+        contour = silhouetteTop(sprite.canvas, sprite.offsetX, sprite.offsetY, sprite.width, sprite.height)
+        rockContours.set(rock, contour)
+      }
+      overlay.heap = snowHeapPath(contour, rock.x, baseY, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full)
+      overlay.heapKey = heapKey
+    }
+    strokeSnowHeap(ctx, overlay.heap, rock.ry, layers.full, rock.fog)
   }
-  paintSnowHeap(ctx, contour, rock.x, baseY, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full, rock.fog)
 }
 
 /**
