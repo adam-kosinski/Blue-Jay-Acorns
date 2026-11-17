@@ -13,6 +13,7 @@ import {
 } from './constants'
 import { drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, oakPartJob, oakPartKey, paintBark, seededRandom, drawOak } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
+import { pendingRequests, registerLayer, requestImage, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import {
   SAMPLE_COUNT,
@@ -77,6 +78,52 @@ const BACKDROP_FALL: BackdropLook = {
 /** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
 const WINTER_HAZE_COLOR = '#bcd8ee'
 const WINTER_HAZE_RGB = rgbOf(WINTER_HAZE_COLOR)
+
+/** How far a layer's colors go toward the winter haze at full winter, per unit of the layer's fog (its distance haze). */
+const WINTER_HAZE_STRENGTH = 0.85
+
+/**
+ * How far a layer's own colors have gone toward the light blue winter haze: the farther (foggier) the
+ * layer, the more, like the summer haze that is already part of its colors.
+ *
+ * @param layer - Forest layer.
+ * @param winter - How far the air is in its winter look, 0-1.
+ */
+function winterAmount(layer: ForestLayer, winter: number): number {
+  return Math.min(0.95, layer.fog * WINTER_HAZE_STRENGTH) * winter
+}
+
+/**
+ * A color of a layer as it is with the winter haze.
+ *
+ * @param color - The layer's (summer-hazed) color.
+ * @param layer - Forest layer.
+ * @param winter - How far the air is in its winter look, 0-1.
+ */
+function winterHazed(color: string, layer: ForestLayer, winter: number): string {
+  return winter > 0 ? mixHex(color, WINTER_HAZE_COLOR, winterAmount(layer, winter)) : color
+}
+
+/**
+ * A copy of a layer whose colors have the winter haze (for drawing its vegetation).
+ *
+ * @param layer - Forest layer.
+ * @param winter - How far the air is in its winter look, 0-1.
+ */
+function winterLayer(layer: ForestLayer, winter: number): ForestLayer {
+  if (winter <= 0) {
+    return layer
+  }
+  const tint = (color: string): string => winterHazed(color, layer, winter)
+  return {
+    ...layer,
+    groundColor: tint(layer.groundColor),
+    trunkColor: tint(layer.trunkColor),
+    tones: layer.tones.map(tint),
+    leafColors: layer.leafColors.map(tint),
+    rocks: layer.rocks.map((rock) => ({ ...rock, color: tint(rock.color), highlight: tint(rock.highlight), litter: rock.litter.map(tint) })),
+  }
+}
 
 const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, WINTER_HAZE_COLOR, BACKDROP_WINTER_FOG))
 const BACKDROP_WINTER: BackdropLook = { top: BACKDROP_WINTER_COLOR, bottom: BACKDROP_WINTER_COLOR }
@@ -347,6 +394,8 @@ function drawForest(
   viewHeight: number,
 ): void {
   const maxCamY = Math.max(0, world.height - viewHeight)
+  const winter = winterTintAt(world.season.time)
+  let stripsMade = 0
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
 
@@ -411,7 +460,8 @@ function drawForest(
     const topRow = Math.max(0, strip.originY - base)
     const below = base - strip.originY + stripHeight
     // Blits a strip bitmap in slabs, each cut at its own cull line (the +1 px overlap hides seams).
-    const blit = (source: HTMLCanvasElement, fillBelow: boolean): void => {
+    const blit = (source: HTMLCanvasElement, fillBelow: boolean, alpha = 1, groundColor = layer.groundColor): void => {
+      ctx.globalAlpha = alpha
       for (let s = 0; s < slabs; s += 1) {
         const slabLimit = layerLimits[s] ?? viewHeight
         const bottomRow = Math.min(stripHeight, slabLimit - base + strip.originY)
@@ -431,17 +481,27 @@ function drawForest(
           )
         }
         if (fillBelow && below < slabLimit && layer.localRadius === null) {
-          ctx.fillStyle = layer.groundColor
+          ctx.fillStyle = groundColor
           ctx.fillRect(s * FOREST_SLAB, below - 1, FOREST_SLAB + 1, slabLimit - below + 1)
         }
       }
+      ctx.globalAlpha = 1
     }
     // The ground first; then the creek's water over it (below); then the props, so the water only
     // ever covers the ground and what lies behind it, never a bush or rock standing in front.
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'back')
     }
-    blit(strip.canvas, true)
+    // In winter the ground has its layer's share of the light blue haze: its summer bitmap first, then the
+    // hazed copy over it as the haze comes in.
+    if (winter > 0 && !hidden && !strip.winterCanvas && stripsMade < 2) {
+      strip.winterCanvas = makeWinterStrip(strip, layer)
+      stripsMade += 1
+    }
+    blit(strip.canvas, true, 1, layer.groundColor)
+    if (winter > 0 && strip.winterCanvas) {
+      blit(strip.winterCanvas, true, winter, winterHazed(layer.groundColor, layer, winter))
+    }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
     const next = layers[index + 1]
@@ -456,7 +516,7 @@ function drawForest(
       bottom = nextBase + nextStrip.waterLine
       bottomX = next.creek.x - camera.x * next.parallax
       bottomHalf = next.creek.halfWidth
-      bottomColor = next.waterColor
+      bottomColor = winterHazed(next.waterColor, next, winter)
     } else {
       bottom = world.terrain.creek.waterY - camera.y
       bottomX = world.terrain.creek.x - camera.x
@@ -467,7 +527,7 @@ function drawForest(
     const topX = layer.creek.x - camera.x * p
     if (top < limit && bottom > 0) {
       const water = ctx.createLinearGradient(0, top, 0, bottom)
-      water.addColorStop(0, layer.waterColor)
+      water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
       water.addColorStop(1, bottomColor)
       ctx.fillStyle = water
       // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
@@ -521,36 +581,43 @@ function drawForest(
         edge.rock.rx = rx
         edge.rock.ry = rx * 0.7
         edge.rock.x = px
-        drawRockSimple(ctx, edge.rock, py)
+        if (winter > 0) {
+          const { color, highlight } = edge.rock
+          edge.rock.color = winterHazed(color, layer, winter)
+          edge.rock.highlight = winterHazed(highlight, layer, winter)
+          drawRockSimple(ctx, edge.rock, py)
+          edge.rock.color = color
+          edge.rock.highlight = highlight
+        } else {
+          drawRockSimple(ctx, edge.rock, py)
+        }
       }
     }
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
     }
-    // In winter the air goes light blue: a wash over everything this layer and the ones behind it show.
-    // Each layer adds only what its own haze has over the next nearer layer's, so that the washes pile up to
-    // each layer's own haze (nearer layers are clearer) and the water shows no band where one ends; the
-    // wash fades out smoothly over its lowest rows for the same reason.
-    const winter = winterTintAt(world.season.time)
-    if (winter > 0 && !hidden && limit > 0) {
-      const own = Math.min(0.95, winter * layer.fog * 0.85)
-      const nearer = next ? Math.min(0.95, winter * next.fog * 0.85) : 0
-      const alpha = Math.max(0, 1 - (1 - own) / (1 - nearer))
-      const [wr, wg, wb] = WINTER_HAZE_RGB
-      // One gradient fill (no seam between a flat part and a fading part): full strength down to a point,
-      // then an eased fade to nothing at the cull line.
-      const fade = Math.min(limit, 200)
-      const start = (limit - fade) / limit
-      const wash = ctx.createLinearGradient(0, 0, 0, limit)
-      for (let step = 0; step <= 8; step += 1) {
-        const x = step / 8
-        const ease = 1 - x * x * (3 - 2 * x)
-        wash.addColorStop(start + (1 - start) * x, `rgba(${wr}, ${wg}, ${wb}, ${(alpha * ease).toFixed(4)})`)
-      }
-      ctx.fillStyle = wash
-      ctx.fillRect(0, 0, viewWidth, limit)
-    }
   }
+}
+
+/**
+ * Makes a layer's ground bitmap with its full winter haze over it (the opaque pixels are blended toward the
+ * light blue; the transparent ones stay as they are).
+ *
+ * @param strip - The layer's ground bitmap.
+ * @param layer - Forest layer.
+ */
+function makeWinterStrip(strip: ForestStrip, layer: ForestLayer): HTMLCanvasElement {
+  const copy = document.createElement('canvas')
+  copy.width = strip.canvas.width
+  copy.height = strip.canvas.height
+  const copyCtx = copy.getContext('2d')
+  if (copyCtx) {
+    copyCtx.drawImage(strip.canvas, 0, 0)
+    copyCtx.globalCompositeOperation = 'source-atop'
+    copyCtx.fillStyle = `rgba(${WINTER_HAZE_RGB[0]}, ${WINTER_HAZE_RGB[1]}, ${WINTER_HAZE_RGB[2]}, ${winterAmount(layer, 1).toFixed(3)})`
+    copyCtx.fillRect(0, 0, copy.width, copy.height)
+  }
+  return copy
 }
 
 /** Pre-rendered forest layer: horizon, trees, bushes and logs drawn once into a wide bitmap. */
@@ -566,10 +633,12 @@ type ForestStrip = {
   columnGround: Float32Array
   /** Where the layer's trees, logs, rocks, ferns and bushes stand (they are drawn onto images of their own). */
   veg: VegPlan
+  /** The same bitmap with the layer's winter haze over it (made when winter first comes near). */
+  winterCanvas?: HTMLCanvasElement
 }
 
 /** Where a layer's vegetation stands, in the strip's coordinates, and which rows of the strip its images cover. */
-type VegPlan = {
+export type VegPlan = {
   trees: { x: number; y: number }[]
   logs: { x: number; y: number; angle: number }[]
   props: { kind: 'rock' | 'fern' | 'bush'; index: number; y: number }[]
@@ -617,7 +686,7 @@ const VEG_CHUNK = 1024
 const VEG_OVERLAP = 3
 
 /** An image of one kind of a layer's vegetation at one moment of the seasons over one chunk, and the first strip row it covers. */
-type VegImage = { canvas: HTMLCanvasElement; rowTop: number }
+type VegImage = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; rowTop: number }
 
 /** The images of a layer by moment, kind and chunk (`k|part|chunk`). */
 const vegImages = new WeakMap<ForestLayer, Map<string, VegImage>>()
@@ -660,30 +729,34 @@ function vegKey(k: number, part: 'back' | 'front', chunk: number): string {
  * @param chunk - Which chunk of the layer.
  */
 function* buildVegImage(
-  layer: ForestLayer,
-  strip: ForestStrip,
+  plainLayer: ForestLayer,
+  veg: VegPlan,
   k: number,
   part: 'back' | 'front',
   chunk: number,
 ): Generator<void, VegImage> {
   const time = sampleTime(k)
+  const winter = winterTintAt(time)
+  // In winter the layer's colors (and the haze its leaves are blended with) have the light blue haze.
+  const layer = winterLayer(plainLayer, winter)
   const res = vegRes(layer)
-  const veg = strip.veg
   const rowTop = part === 'back' ? 0 : veg.frontTop
   const rowBottom = part === 'back' ? veg.backBottom : veg.frontBottom
   const left = chunk * VEG_CHUNK
   const right = Math.min(layer.span + 8, left + VEG_CHUNK + VEG_OVERLAP)
-  const canvas = document.createElement('canvas')
+  // In a worker there is no document: the image is an offscreen canvas.
+  const canvas: HTMLCanvasElement | OffscreenCanvas =
+    typeof document === 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil((right - left) * res))
   canvas.height = Math.max(1, Math.ceil((rowBottom - rowTop) * res))
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
   if (!ctx) {
     return { canvas, rowTop }
   }
   ctx.scale(res, res)
   ctx.translate(-left, -rowTop)
   const near = (x: number, reach: number): boolean => x + reach >= left && x - reach <= right
-  const haze = { color: FOREST_HAZE_COLOR, amount: layer.fog }
+  const haze = { color: mixHex(FOREST_HAZE_COLOR, WINTER_HAZE_COLOR, WINTER_HAZE_STRENGTH * winter), amount: layer.fog }
   if (part === 'back') {
     for (const [index, tree] of layer.trees.entries()) {
       const at = veg.trees[index]
@@ -766,6 +839,47 @@ function* buildVegImage(
 }
 
 /**
+ * For the background worker: builds one image of a layer's vegetation in one go and hands it over as a bitmap.
+ *
+ * @param layer - Forest layer (the parts the drawing needs).
+ * @param veg - Where its vegetation stands.
+ * @param k - Which moment.
+ * @param part - Which kind.
+ * @param chunk - Which chunk.
+ */
+export function buildVegImageSync(
+  layer: ForestLayer,
+  veg: VegPlan,
+  k: number,
+  part: 'back' | 'front',
+  chunk: number,
+): { bitmap: ImageBitmap; rowTop: number } {
+  const steps = buildVegImage(layer, veg, k, part, chunk)
+  let step = steps.next()
+  while (!step.done) {
+    step = steps.next()
+  }
+  return { bitmap: (step.value.canvas as OffscreenCanvas).transferToImageBitmap(), rowTop: step.value.rowTop }
+}
+
+/** The ids the background worker knows the layers by (absent when drawing happens on the main thread). */
+const workerLayerIds = new WeakMap<ForestLayer, number>()
+
+/** What a layer's images are still wanted for: the chunks and moments (kept up to date by `planVegetation`). */
+const vegWanted = new WeakMap<ForestLayer, { first: number; last: number; lo: number; hi: number }>()
+
+/**
+ * Frees a layer image's memory when it is dropped.
+ *
+ * @param image - The image.
+ */
+function releaseVegImage(image: VegImage): void {
+  if (typeof ImageBitmap !== 'undefined' && image.canvas instanceof ImageBitmap) {
+    image.canvas.close()
+  }
+}
+
+/**
  * Builds one image of a layer's vegetation (queued work) and stores it.
  *
  * @param layer - Forest layer.
@@ -775,7 +889,7 @@ function* buildVegImage(
  * @param chunk - Which chunk.
  */
 function* vegJob(layer: ForestLayer, strip: ForestStrip, k: number, part: 'back' | 'front', chunk: number): Generator<void> {
-  const image = yield* buildVegImage(layer, strip, k, part, chunk)
+  const image = yield* buildVegImage(layer, strip.veg, k, part, chunk)
   vegMap(layer).set(vegKey(k, part, chunk), image)
 }
 
@@ -817,6 +931,8 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     const map = vegMap(layer)
     const { first, last } = visibleChunks(layer, cameraX, viewWidth)
     const exact = visibleChunks(layer, cameraX, viewWidth, 0)
+    vegWanted.set(layer, { first: first - 1, last: last + 1, lo: k - 3, hi: k + 4 })
+    const workerId = workerLayerIds.get(layer)
     for (const [list, priority] of [[now, 2], [ahead, 7]] as const) {
       for (const moment of list) {
         if (moment >= SAMPLE_COUNT) {
@@ -825,7 +941,29 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
         // The moments in use get the chunks next to the visible ones too; the ones ahead only the visible ones.
         for (let chunk = priority === 2 ? first : exact.first; chunk <= (priority === 2 ? last : exact.last); chunk += 1) {
           for (const part of ['back', 'front'] as const) {
-            if (!map.has(vegKey(moment, part, chunk))) {
+            if (map.has(vegKey(moment, part, chunk))) {
+              continue
+            }
+            if (workerId !== undefined && workerUsable()) {
+              const key = vegKey(moment, part, chunk)
+              requestImage({
+                key: `veg|${index}|${key}`,
+                priority: priority - index * 0.01 + Math.abs(chunk - Math.floor((cameraX * layer.parallax) / VEG_CHUNK)) * 0.001,
+                id: workerId,
+                k: moment,
+                part,
+                chunk,
+                wanted: () => vegStillWanted(layer, moment, chunk),
+                onDone: (bitmap, rowTop) => {
+                  const image: VegImage = { canvas: bitmap, rowTop }
+                  if (map.has(key) || !vegStillWanted(layer, moment, chunk)) {
+                    releaseVegImage(image)
+                  } else {
+                    map.set(key, image)
+                  }
+                },
+              })
+            } else {
               enqueueJob(
                 `veg|${index}|${moment}|${part}|${chunk}`,
                 priority - index * 0.01 + Math.abs(chunk - Math.floor((cameraX * layer.parallax) / VEG_CHUNK)) * 0.001,
@@ -839,10 +977,26 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     for (const key of [...map.keys()]) {
       const [moment, , chunk] = key.split('|').map((piece, position) => (position === 1 ? 0 : Number(piece)))
       if ((chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1 || (moment ?? 0) < k - 3 || (moment ?? 0) > k + 4) {
+        const old = map.get(key)
+        if (old) {
+          releaseVegImage(old)
+        }
         map.delete(key)
       }
     }
   })
+}
+
+/**
+ * Whether an image of a layer is still needed (its moment and chunk are inside what is being kept).
+ *
+ * @param layer - Forest layer.
+ * @param moment - Moment.
+ * @param chunk - Chunk.
+ */
+function vegStillWanted(layer: ForestLayer, moment: number, chunk: number): boolean {
+  const range = vegWanted.get(layer)
+  return !range || (chunk >= range.first && chunk <= range.last && moment >= range.lo && moment <= range.hi)
 }
 
 /**
@@ -860,7 +1014,7 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
       pixels += image.canvas.width * image.canvas.height
     }
   }
-  return { pending: pendingJobs(), images, megapixels: Math.round(pixels / 1e5) / 10 }
+  return { pending: pendingJobs() + pendingRequests(), images, megapixels: Math.round(pixels / 1e5) / 10 }
 }
 
 /**
@@ -1219,6 +1373,12 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   veg.frontBottom = originY + bottomPad
   const strip = { canvas, resolution, originY, waterLine, columnGround, veg }
   forestStrips.set(layer, strip)
+  if (workerUsable()) {
+    const id = registerLayer(layer, veg)
+    if (id >= 0) {
+      workerLayerIds.set(layer, id)
+    }
+  }
   return strip
 }
 
@@ -4779,9 +4939,38 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
     const strip = forestStripFor(layer, world)
     yield
     const { first, last } = visibleChunks(layer, startCameraX, world.viewHeight * TYPICAL_ASPECT_RATIO)
+    const workerId = workerLayerIds.get(layer)
+    if (workerId !== undefined && workerUsable()) {
+      // The worker makes the first (summer) images; the start waits for them.
+      let waiting = 0
+      for (let chunk = first; chunk <= last; chunk += 1) {
+        for (const part of ['back', 'front'] as const) {
+          waiting += 1
+          requestImage({
+            key: `warm|${workerId}|${part}|${chunk}`,
+            priority: 0,
+            id: workerId,
+            k: 0,
+            part,
+            chunk,
+            wanted: () => true,
+            onDone: (bitmap, rowTop) => {
+              vegMap(layer).set(vegKey(0, part, chunk), { canvas: bitmap, rowTop })
+              waiting -= 1
+            },
+          })
+        }
+      }
+      while (waiting > 0 && workerUsable()) {
+        yield
+      }
+      if (waiting <= 0) {
+        continue
+      }
+    }
     for (let chunk = first; chunk <= last; chunk += 1) {
       for (const part of ['back', 'front'] as const) {
-        const steps = buildVegImage(layer, strip, 0, part, chunk)
+        const steps = buildVegImage(layer, strip.veg, 0, part, chunk)
         let step = steps.next()
         let sliceStart = performance.now()
         while (!step.done) {
