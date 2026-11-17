@@ -11,7 +11,7 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, oakPartJob, oakPartKey, paintBark, seededRandom, drawOak } from './oak'
+import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
@@ -203,6 +203,7 @@ export function renderScene(
   runWork(lastSceneMs < 6 ? 4 : 1.5)
   const sceneStart = performance.now()
   settleArrivals(3)
+  settleOakArrivals(3)
   planVegetation(world, camera.x, viewWidth)
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
@@ -1139,7 +1140,7 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
  * @param viewWidth - Viewport width.
  */
 export function forestReady(world: World, cameraX: number, viewWidth: number): boolean {
-  if (arrivals.length > 0) {
+  if (arrivals.length > 0 || oakArrivalsPending()) {
     return false
   }
   const { k } = sampleAt(world.season.time)
@@ -1158,6 +1159,45 @@ export function forestReady(world: World, cameraX: number, viewWidth: number): b
     }
   }
   return true
+}
+
+/**
+ * For experiments: megapixels of the main bitmap caches.
+ *
+ * @param world - Play space.
+ */
+export function memoryReport(world: World): Record<string, number | { count: number; mp: number }> {
+  const mp = (pixels: number): number => Math.round(pixels / 1e5) / 10
+  let strips = 0
+  let winterStrips = 0
+  let veg = 0
+  let vegCount = 0
+  let fades = 0
+  let bush = 0
+  for (const layer of world.forest) {
+    const strip = forestStrips.get(layer)
+    if (strip) {
+      strips += strip.canvas.width * strip.canvas.height
+      winterStrips += strip.winterCanvas ? strip.winterCanvas.width * strip.winterCanvas.height : 0
+    }
+    for (const image of vegMap(layer).values()) {
+      veg += image.canvas.width * image.canvas.height
+      vegCount += 1
+    }
+    for (const piece of fadePieces.get(layer)?.values() ?? []) {
+      fades += piece.canvas.width * piece.canvas.height
+    }
+  }
+  for (const b of [...world.bushes, ...world.frontBushes.map((front) => front.bush)]) {
+    for (const sprite of bushParts.get(b)?.values() ?? []) {
+      bush += sprite.canvas.width * sprite.canvas.height
+    }
+  }
+  let tiles = 0
+  for (const tile of leafTileEntry(world).tiles.values()) {
+    tiles += tile.canvas.width * tile.canvas.height
+  }
+  return { strips: mp(strips), winterStrips: mp(winterStrips), veg: mp(veg), vegCount, fades: mp(fades), bush: mp(bush), tiles: mp(tiles), oak: oakCacheReport() }
 }
 
 /**
@@ -2990,6 +3030,21 @@ function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number, fa
   }
 }
 
+let touchCanvas: HTMLCanvasElement | null = null
+
+/**
+ * Draws a bitmap once into a tiny canvas, which makes the browser finish drawing it and hand it to the
+ * graphics card now (a canvas drawn into is only really rendered when it is first used, which is a stall).
+ *
+ * @param source - The bitmap.
+ */
+function touchBitmap(source: CanvasImageSource): void {
+  touchCanvas ??= document.createElement('canvas')
+  touchCanvas.width = 1
+  touchCanvas.height = 1
+  touchCanvas.getContext('2d')?.drawImage(source, 0, 0, 1, 1)
+}
+
 /**
  * Makes a fern's summer bitmap now (it is otherwise made when it is first drawn).
  *
@@ -3003,9 +3058,12 @@ function warmFernSprite(fern: Fern, res: number): void {
     fernSprites.set(fern, map)
   }
   const key = `0|${res.toFixed(2)}`
-  if (!map.has(key)) {
-    map.set(key, buildFernSprite(fern, res, false))
+  let sprite = map.get(key)
+  if (!sprite) {
+    sprite = buildFernSprite(fern, res, false)
+    map.set(key, sprite)
   }
+  touchBitmap(sprite.canvas)
 }
 
 /**
@@ -3021,9 +3079,12 @@ function warmRockSprite(rock: Rock, res: number): void {
     rockSprites.set(rock, map)
   }
   const key = `0|${res.toFixed(2)}`
-  if (!map.has(key)) {
-    map.set(key, buildRockSprite(rock, res, false))
+  let sprite = map.get(key)
+  if (!sprite) {
+    sprite = buildRockSprite(rock, res, false)
+    map.set(key, sprite)
   }
+  touchBitmap(sprite.canvas)
 }
 
 /**
@@ -5169,14 +5230,20 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
     yield
   }
   for (const tree of world.trees) {
-    getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'trunk')
+    touchBitmap(getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'trunk').canvas)
     yield
-    getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'c0')
+    touchBitmap(getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'c0').canvas)
     yield
   }
   for (const bush of world.bushes) {
-    bushPartSprite(bush, dpr, 'wood', true)
-    bushPartSprite(bush, dpr, 'c0', true)
+    const wood = bushPartSprite(bush, dpr, 'wood', true)
+    const leaves = bushPartSprite(bush, dpr, 'c0', true)
+    if (wood) {
+      touchBitmap(wood.canvas)
+    }
+    if (leaves) {
+      touchBitmap(leaves.canvas)
+    }
   }
   yield
   // The foreground's rocks and ferns (their summer bitmaps are otherwise made when first drawn).
@@ -5197,9 +5264,6 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
   yield
   // The fall and winter looks of the foreground, queued to be made in the background.
   for (const part of ['c1', 'c2', 'c3'] as const) {
-    for (const tree of world.trees) {
-      enqueueJob(oakPartKey(tree.shape, TRUNK_COLOR, dpr, part), 8, oakPartJob(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, part))
-    }
     for (const bush of world.bushes) {
       enqueueJob(bushPartKey(bush, part, dpr), 8, bushPartJob(bush, dpr, part))
     }

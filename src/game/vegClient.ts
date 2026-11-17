@@ -6,7 +6,7 @@ import type { VegPlan } from './render'
 import type { ForestLayer } from './types'
 import type { FromWorker, ToWorker } from './vegWorker'
 
-/** A request for one image. */
+/** A request for one vegetation image. */
 export type VegRequest = {
   key: string
   priority: number
@@ -30,9 +30,20 @@ let broken =
   (typeof location !== 'undefined' && location.search.includes('noworker'))
 let nextLayer = 0
 let nextReq = 0
-const waiting: VegRequest[] = []
+/** A queued piece of work for the worker. */
+type Work = {
+  key: string
+  priority: number
+  payload: DistributiveOmit<ToWorker, 'req'>
+  wanted: () => boolean
+  onDone: (bitmap: ImageBitmap, meta: Record<string, number>) => void
+}
+
+type DistributiveOmit<T, K extends string> = T extends unknown ? Omit<T, K> : never
+
+const waiting: Work[] = []
 const keys = new Set<string>()
-const inFlight = new Map<number, VegRequest>()
+const inFlight = new Map<number, Work>()
 
 /**
  * Gives up on the worker (the game then draws the images itself).
@@ -68,7 +79,7 @@ function pump(): void {
     const req = nextReq
     nextReq += 1
     inFlight.set(req, request)
-    worker.postMessage({ type: 'build', req, id: request.id, k: request.k, part: request.part, chunk: request.chunk } satisfies ToWorker)
+    worker.postMessage({ ...request.payload, req } as ToWorker)
   }
 }
 
@@ -89,7 +100,7 @@ function ensureWorker(): Worker | null {
         if (request) {
           keys.delete(request.key)
           if (message.type === 'done') {
-            request.onDone(message.bitmap, message.rowTop)
+            request.onDone(message.bitmap, message.meta)
           }
         }
         if (message.type === 'error') {
@@ -98,7 +109,7 @@ function ensureWorker(): Worker | null {
         pump()
       }
       created.onerror = (event): void => {
-        console.error('vegetation worker failed, drawing on the main thread:', event.message)
+        console.error('vegetation worker failed, drawing on the main thread:', event.message, event.filename, event.lineno, event.error)
         fail()
       }
       worker = created
@@ -153,17 +164,34 @@ export function registerLayer(layer: ForestLayer, veg: VegPlan): number {
 }
 
 /**
- * Asks for an image unless the same one is already waiting or being made.
+ * Asks for a piece of work unless the same is already waiting or being made.
+ *
+ * @param work - The work.
+ */
+export function requestWork(work: Work): void {
+  if (!worker || keys.has(work.key)) {
+    return
+  }
+  keys.add(work.key)
+  waiting.push(work)
+  pump()
+}
+
+/**
+ * Asks for a vegetation image unless the same one is already waiting or being made.
  *
  * @param request - The request.
  */
 export function requestImage(request: VegRequest): void {
-  if (!worker || keys.has(request.key)) {
-    return
-  }
-  keys.add(request.key)
-  waiting.push(request)
-  pump()
+  requestWork({
+    key: request.key,
+    priority: request.priority,
+    payload: { type: 'build', id: request.id, k: request.k, part: request.part, chunk: request.chunk },
+    wanted: request.wanted,
+    onDone: (bitmap, meta) => {
+      request.onDone(bitmap, meta['rowTop'] ?? 0)
+    },
+  })
 }
 
 /**

@@ -166,21 +166,24 @@ const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 2 / 3, 11 / 12]
 
 /**
  * The look of a tree's or bush's leaves for objects drawn from ready-made images: which look it holds
- * (`a`, 0-3, or 4 for bare), and while it passes to the next (`b`) over a few seconds, how far (`w`).
+ * (`a`, 0-3, or 4 for bare), and while it passes to the next (`b`) over a few seconds, how far (`w`);
+ * `soon` is whether a change is about to start (the next look should be made).
  *
  * @param progress - Its progress, 0-1 (see `transitionProgress`).
  */
-export function leafStageMix(progress: number): { a: number; b: number; w: number } {
+export function leafStageMix(progress: number): { a: number; b: number; w: number; soon: boolean } {
   const width = FADE_SECONDS / (TRANSITION_SEGMENTS * SEGMENT_SECONDS)
   let stage = 0
   for (const [index, boundary] of STAGE_BOUNDARIES.entries()) {
     if (progress >= boundary + width / 2) {
       stage = index + 1
     } else if (progress > boundary - width / 2) {
-      return { a: index, b: index + 1, w: smooth((progress - (boundary - width / 2)) / width) }
+      return { a: index, b: index + 1, w: smooth((progress - (boundary - width / 2)) / width), soon: true }
     }
   }
-  return { a: stage, b: stage, w: 0 }
+  // The next look is wanted when its change is near (about 8 seconds before it starts).
+  const next = STAGE_BOUNDARIES[stage]
+  return { a: stage, b: stage, w: 0, soon: next !== undefined && progress > next - width / 2 - 0.05 }
 }
 
 /**

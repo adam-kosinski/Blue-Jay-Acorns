@@ -1,4 +1,5 @@
 import { fallTones, newLeafSeason, parseRgb } from './leafColors'
+import { requestWork, workerUsable } from './vegClient'
 import { enqueueJob } from './work'
 import { STAGE_LOOKS } from './seasons'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
@@ -46,14 +47,14 @@ export const OAK_TONE_COUNT = 4
 let nextShapeId = 0
 
 /** Largest tree bitmap, in pixels. */
-const MAX_SPRITE_PIXELS = 8_000_000
+const MAX_SPRITE_PIXELS = 4_500_000
 
 /** Most tree sprites kept before the least recently used one is dropped. */
 const SPRITE_CACHE_LIMIT = 80
 
 /** Pre-rendered tree bitmap plus where it sits relative to the tree base. */
 type TreeSprite = {
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap
   offsetX: number
   offsetY: number
   width: number
@@ -984,10 +985,12 @@ function* buildPartSteps(
   const height = -minY + maxY
   // Cap bitmap size so big trees on hi-dpi screens stay within a few megapixels.
   const scale = Math.min(resolution, Math.sqrt(MAX_SPRITE_PIXELS / (width * height)))
-  const canvas = document.createElement('canvas')
+  // In the background worker there is no document: the bitmap is an offscreen canvas.
+  const canvas: HTMLCanvasElement | OffscreenCanvas =
+    typeof document === 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(scale, scale)
     yield* drawOakSteps(ctx, shape, -minX, -minY, tones, trunkColor, 1, part !== 'trunk', PART_LOOKS[part])
@@ -996,6 +999,15 @@ function* buildPartSteps(
 }
 
 const partCache = new Map<string, TreeSprite>()
+
+/** For experiments: how many tree part bitmaps are kept and their megapixels. */
+export function oakCacheReport(): { count: number; mp: number } {
+  let pixels = 0
+  for (const sprite of partCache.values()) {
+    pixels += sprite.canvas.width * sprite.canvas.height
+  }
+  return { count: partCache.size, mp: Math.round(pixels / 1e5) / 10 }
+}
 
 /**
  * The key of a tree part's bitmap.
@@ -1030,13 +1042,147 @@ export function* oakPartJob(
     return
   }
   const sprite = yield* buildPartSteps(shape, tones, trunkColor, resolution, part)
+  storePart(key, sprite)
+}
+
+/**
+ * Frees a part's memory.
+ *
+ * @param sprite - The bitmap.
+ */
+function releaseSprite(sprite: TreeSprite): void {
+  if (typeof ImageBitmap !== 'undefined' && sprite.canvas instanceof ImageBitmap) {
+    sprite.canvas.close()
+  }
+}
+
+/**
+ * Keeps a built part (the least recently stored one goes when there are too many).
+ *
+ * @param key - The part's key.
+ * @param sprite - The bitmap.
+ */
+function storePart(key: string, sprite: TreeSprite): void {
   if (partCache.size >= SPRITE_CACHE_LIMIT) {
     const oldest = partCache.keys().next().value
     if (oldest !== undefined) {
+      const old = partCache.get(oldest)
+      if (old) {
+        releaseSprite(old)
+      }
       partCache.delete(oldest)
     }
   }
   partCache.set(key, sprite)
+}
+
+/** Parts that came from the background worker and are not in use yet (each is given to the graphics card in a frame of its own). */
+const partArrivals: { key: string; sprite: TreeSprite }[] = []
+
+let partUploadCanvas: HTMLCanvasElement | null = null
+
+/**
+ * Makes the parts that arrived from the worker ready, a few milliseconds' worth a frame: the first draw of a
+ * big bitmap has to hand it to the graphics card, which is done here, one at a time, before it can be used.
+ *
+ * @param budgetMs - Time to spend.
+ */
+export function settleOakArrivals(budgetMs: number): void {
+  const start = performance.now()
+  while (partArrivals.length > 0 && performance.now() - start < budgetMs) {
+    const arrival = partArrivals.shift()
+    if (!arrival) {
+      break
+    }
+    if (partCache.has(arrival.key)) {
+      releaseSprite(arrival.sprite)
+      continue
+    }
+    partUploadCanvas ??= document.createElement('canvas')
+    partUploadCanvas.width = 1
+    partUploadCanvas.height = 1
+    partUploadCanvas.getContext('2d')?.drawImage(arrival.sprite.canvas, 0, 0, 1, 1)
+    storePart(arrival.key, arrival.sprite)
+  }
+}
+
+/**
+ * Whether parts from the worker are waiting to be used.
+ */
+export function oakArrivalsPending(): boolean {
+  return partArrivals.length > 0
+}
+
+/**
+ * Builds a part completely, for the background worker, and hands it over as a bitmap.
+ *
+ * @param shape - Tree.
+ * @param tones - Leaf fill colors.
+ * @param trunkColor - Trunk color.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ * @param part - Which part.
+ */
+export function buildOakPartSync(
+  shape: TreeShape,
+  tones: string[],
+  trunkColor: string,
+  resolution: number,
+  part: OakPart,
+): { bitmap: ImageBitmap; offsetX: number; offsetY: number; width: number; height: number } {
+  const sprite = buildNow(shape, tones, trunkColor, resolution, part)
+  return {
+    bitmap: (sprite.canvas as OffscreenCanvas).transferToImageBitmap(),
+    offsetX: sprite.offsetX,
+    offsetY: sprite.offsetY,
+    width: sprite.width,
+    height: sprite.height,
+  }
+}
+
+/**
+ * Has a part built in the background (by the worker if there is one, else in slices on the main thread).
+ *
+ * @param shape - Tree.
+ * @param tones - Leaf fill colors.
+ * @param trunkColor - Trunk color.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ * @param part - Which part.
+ * @param priority - Lower is more urgent.
+ */
+export function queueOakPart(
+  shape: TreeShape,
+  tones: string[],
+  trunkColor: string,
+  resolution: number,
+  part: OakPart,
+  priority: number,
+): void {
+  const key = oakPartKey(shape, trunkColor, resolution, part)
+  if (partCache.has(key)) {
+    return
+  }
+  if (workerUsable()) {
+    requestWork({
+      key: `oak|${key}`,
+      priority,
+      payload: { type: 'oak', shape, tones, trunkColor, res: resolution, part },
+      wanted: () => !partCache.has(key),
+      onDone: (bitmap, meta) => {
+        partArrivals.push({
+          key,
+          sprite: {
+            canvas: bitmap,
+            offsetX: meta['offsetX'] ?? 0,
+            offsetY: meta['offsetY'] ?? 0,
+            width: meta['width'] ?? 0,
+            height: meta['height'] ?? 0,
+          },
+        })
+      },
+    })
+  } else {
+    enqueueJob(key, priority, oakPartJob(shape, tones, trunkColor, resolution, part))
+  }
 }
 
 /**
@@ -1103,7 +1249,7 @@ export function drawOak(
   y: number,
   tones: string[],
   trunkColor: string,
-  mix: { a: number; b: number; w: number },
+  mix: { a: number; b: number; w: number; soon?: boolean },
 ): void {
   const res = ctx.getTransform().a
   const trunk = getOakPart(shape, tones, trunkColor, res, 'trunk')
@@ -1131,7 +1277,7 @@ function drawCrowns(
   tones: string[],
   trunkColor: string,
   res: number,
-  mix: { a: number; b: number; w: number },
+  mix: { a: number; b: number; w: number; soon?: boolean },
 ): void {
   const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
   for (const [stage, alpha] of stages) {
@@ -1141,7 +1287,7 @@ function drawCrowns(
     }
     let sprite = peekOakPart(shape, trunkColor, res, part)
     if (!sprite) {
-      enqueueJob(oakPartKey(shape, trunkColor, res, part), 1, oakPartJob(shape, tones, trunkColor, res, part))
+      queueOakPart(shape, tones, trunkColor, res, part, 1)
       // The nearest look that is built stands in for it.
       for (const other of [stage - 1, stage + 1, stage - 2, stage + 2, 0]) {
         const alt = crownPart(other)
@@ -1156,6 +1302,24 @@ function drawCrowns(
     ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
   }
   ctx.globalAlpha = 1
+  if (mix.w === 0) {
+    // Holding a look: get the next one ready when its change is near, and let go of the ones that are over (memory).
+    const next = mix.soon ? crownPart(mix.a + 1) : null
+    if (next) {
+      queueOakPart(shape, tones, trunkColor, res, next, 6)
+    }
+    for (let old = 0; old < mix.a; old += 1) {
+      const oldPart = crownPart(old)
+      if (oldPart) {
+        const oldKey = oakPartKey(shape, trunkColor, res, oldPart)
+        const dropped = partCache.get(oldKey)
+        if (dropped && peekOakPart(shape, trunkColor, res, crownPart(mix.a) ?? 'c0')) {
+          releaseSprite(dropped)
+          partCache.delete(oldKey)
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -1177,7 +1341,7 @@ export function drawOakCrown(
   y: number,
   tones: string[],
   trunkColor: string,
-  mix: { a: number; b: number; w: number },
+  mix: { a: number; b: number; w: number; soon?: boolean },
 ): void {
   drawCrowns(ctx, shape, x, y, tones, trunkColor, ctx.getTransform().a, mix)
 }
