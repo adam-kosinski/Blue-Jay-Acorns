@@ -442,7 +442,7 @@ function spawnBushes(
                 ? extent * randRange(0.2, 0.65)
                 : extent + Math.random() * bank.width * 0.85))
         : pickBushX(worldWidth, playerSize, treeXs, keepOut, extent)
-    bushes.push({ x, lobes })
+    bushes.push({ x, lobes, leaf: { hue: randRange(0, 55), colorRank: Math.random(), bareRank: Math.random() } })
   }
   return bushes
 }
@@ -557,7 +557,11 @@ function spawnFrontProps(
     // Bushes are already big; nearness adds only a little.
     const nearer = 1 + (spot.scale - 1) * 0.4
     bushes.push({
-      bush: { x: bush.x, lobes: bush.lobes.map((lobe) => ({ ...lobe, dx: lobe.dx * nearer, dy: lobe.dy * nearer, radius: lobe.radius * nearer })) },
+      bush: {
+        x: bush.x,
+        lobes: bush.lobes.map((lobe) => ({ ...lobe, dx: lobe.dx * nearer, dy: lobe.dy * nearer, radius: lobe.radius * nearer })),
+        leaf: bush.leaf,
+      },
       y: spot.y,
     })
   }

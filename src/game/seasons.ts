@@ -31,6 +31,46 @@ export type SeasonClock = {
   phases: [number, number, number]
 }
 
+/**
+ * Times (in segments, 1 = the start of early fall) at which the trees' leaves change, so a bounded number
+ * of distinct looks exists: a quarter, half, three quarters and all of the trees turn color at 1.5, 2, 2.5
+ * and 3 (half of them by the end of early fall, all of them by the end of mid fall); a quarter, half and
+ * all of them have lost their leaves at 3.33, 3.67 and 4 (the start of winter).
+ */
+const LEAF_STEPS = [1.5, 2, 2.5, 3, 10 / 3, 11 / 3, 4]
+const COLORED_AT = [0.25, 0.5, 0.75, 1]
+const BARE_AT = [0.25, 0.5, 1]
+
+/**
+ * The leaf stage at a time: how many of the steps have passed (0 is summer, all green). The trees only
+ * look different when the stage changes.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function leafStageAt(time: number): number {
+  const u = time / SEGMENT_SECONDS
+  return LEAF_STEPS.filter((step) => u >= step).length
+}
+
+/**
+ * What a tree's leaves look like at a time: green in summer, in its fall color once its rank has come
+ * up (a quarter of the trees at 1.5 segments, half by the end of early fall, all by the end of mid
+ * fall), and gone once its other rank has (a quarter, then half of the trees in late fall, all of them
+ * from the start of winter, through spring for now).
+ *
+ * @param leaf - The tree's seasonal traits.
+ * @param time - Seconds along the timeline.
+ */
+export function leafStateAt(leaf: { colorRank: number; bareRank: number }, time: number): 'green' | 'fall' | 'bare' {
+  const stage = leafStageAt(time)
+  const colored = stage >= 1 ? (COLORED_AT[Math.min(stage, 4) - 1] ?? 0) : 0
+  const bare = stage >= 5 ? (BARE_AT[stage - 5] ?? 1) : 0
+  if (leaf.bareRank < bare) {
+    return 'bare'
+  }
+  return leaf.colorRank < colored ? 'fall' : 'green'
+}
+
 /** Greatest relative wobble of the drop rate around the seasonal trend. */
 const WOBBLE = 0.15
 

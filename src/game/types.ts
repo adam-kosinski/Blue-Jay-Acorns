@@ -172,12 +172,24 @@ export type TreeLobe = {
   tone: number
 }
 
+/** How a tree's leaves change with the seasons (chosen when the tree is generated). */
+export type LeafSeason = {
+  /** Its fall color's hue in degrees: 0 is red, about 55 yellow. */
+  hue: number
+  /** Where it ranks (0-1) among the trees for turning color: the lowest ranks turn first. */
+  colorRank: number
+  /** Where it ranks (0-1) among the trees for losing its leaves in late fall. */
+  bareRank: number
+}
+
 /** Generated oak: trunk and branches plus many leaf lobes. */
 export type TreeShape = {
   /** Unique id, used as a sprite-cache key. */
   id: number
   segments: TreeSegment[]
   lobes: TreeLobe[]
+  /** How its leaves change with the seasons. */
+  leaf: LeafSeason
   /** Maximum horizontal extent from the base, for culling. */
   halfWidth: number
   /** Highest point (most negative y) of the tree. */
@@ -264,6 +276,8 @@ export type BushLobe = {
 export type Bush = {
   x: number
   lobes: BushLobe[]
+  /** How its leaves change with the seasons (see `LeafSeason`). */
+  leaf: LeafSeason
 }
 
 /** Fallen log lying along the terrain slope. */

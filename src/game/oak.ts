@@ -1,4 +1,8 @@
+import { fallTones } from './leafColors'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
+
+/** What a tree's leaves look like: green, in fall color, or gone. `haze` blends fall colors toward the haze for distant trees. */
+export type TreeLook = { state: 'green' | 'fall' | 'bare'; haze?: { color: string; amount: number } }
 
 /** Number of leaf tones (dark to light) a tree's lobes pick from. */
 export const OAK_TONE_COUNT = 4
@@ -21,6 +25,10 @@ type TreeSprite = {
 }
 
 const spriteCache = new Map<string, TreeSprite>()
+
+/** The latest bitmap built or used for each tree, and how many more may be built for a changed look this frame. */
+const latestSprite = new Map<string, TreeSprite>()
+let treeBuildsLeft = 1
 
 /**
  * Random number in `[min, max)`.
@@ -208,7 +216,10 @@ export function generateOak(
     top = Math.min(top, lobe.y - lobe.r)
   }
   nextShapeId += 1
-  return { id: nextShapeId, segments, lobes, halfWidth, top, flare }
+  // Fall color: anywhere from red (0) to yellow (55 degrees); the ranks decide when this tree turns and
+  // when it drops its leaves relative to the other trees.
+  const leaf = { hue: randRange(0, 55), colorRank: Math.random(), bareRank: Math.random() }
+  return { id: nextShapeId, segments, lobes, halfWidth, top, flare, leaf }
 }
 
 /**
@@ -760,6 +771,7 @@ export function drawOakVector(
   trunkColor: string,
   leafDetail = 1,
   crownOnly = false,
+  look: TreeLook = { state: 'green' },
 ): void {
   ctx.save()
   ctx.translate(x, y)
@@ -789,10 +801,17 @@ export function drawOakVector(
       drawBark(ctx, shape)
     }
   }
-  const rand = seededRandom(shape.id * 7919 + 13)
-  shape.lobes.forEach((lobe) => {
-    drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail)
-  })
+  if (look.state !== 'bare') {
+    const rand = seededRandom(shape.id * 7919 + 13)
+    shape.lobes.forEach((lobe, index) => {
+      // In fall every lobe has the tree's color with its own small shift in hue.
+      const lobeTones =
+        look.state === 'fall'
+          ? fallTones(shape.leaf.hue, (seededRandom(shape.id * 31 + index)() - 0.5) * 18, look.haze ?? null)
+          : tones
+      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, lobeTones, lobe.tone, rand, leafDetail)
+    })
+  }
   ctx.restore()
 }
 
@@ -811,6 +830,9 @@ function buildSprite(
   trunkColor: string,
   resolution: number,
   crownOnly = false,
+  state: TreeLook['state'] = 'green',
+  leafDetail = 1,
+  haze?: TreeLook['haze'],
 ): TreeSprite {
   let minY = 0
   let maxY = 14
@@ -832,7 +854,7 @@ function buildSprite(
   const ctx = canvas.getContext('2d')
   if (ctx) {
     ctx.scale(scale, scale)
-    drawOakVector(ctx, shape, -minX, -minY, tones, trunkColor, 1, crownOnly)
+    drawOakVector(ctx, shape, -minX, -minY, tones, trunkColor, leafDetail, crownOnly, { state, haze })
   }
   return { canvas, offsetX: minX, offsetY: minY, width, height }
 }
@@ -845,6 +867,7 @@ function buildSprite(
  * @param trunkColor - Trunk and branch fill.
  * @param resolution - Bitmap pixels per CSS pixel.
  * @param crownOnly - The bitmap of just the leaves.
+ * @param state - Green leaves, fall colors or bare.
  */
 export function getOakSprite(
   shape: TreeShape,
@@ -852,13 +875,25 @@ export function getOakSprite(
   trunkColor: string,
   resolution: number,
   crownOnly = false,
+  state: TreeLook['state'] = 'green',
 ): TreeSprite {
-  const key = `${shape.id}|${trunkColor}|${resolution}${crownOnly ? '|crown' : ''}`
+  const treeKey = `${shape.id}|${trunkColor}|${resolution}${crownOnly ? '|crown' : ''}`
+  const key = `${treeKey}|${state}`
   let sprite = spriteCache.get(key)
   if (sprite) {
     spriteCache.delete(key)
+    latestSprite.set(treeKey, sprite)
   } else {
-    sprite = buildSprite(shape, tones, trunkColor, resolution, crownOnly)
+    // A tree whose look changed keeps showing its previous bitmap while a new one is built (one a frame).
+    const previous = latestSprite.get(treeKey)
+    if (previous && treeBuildsLeft <= 0) {
+      return previous
+    }
+    if (previous) {
+      treeBuildsLeft -= 1
+    }
+    sprite = buildSprite(shape, tones, trunkColor, resolution, crownOnly, state)
+    latestSprite.set(treeKey, sprite)
     if (spriteCache.size >= SPRITE_CACHE_LIMIT) {
       const oldest = spriteCache.keys().next().value
       if (oldest !== undefined) {
@@ -867,6 +902,76 @@ export function getOakSprite(
     }
   }
   spriteCache.set(key, sprite)
+  return sprite
+}
+
+/** Bitmaps of the trees of the backdrop layers, by layer, tree and look; and the latest one built for each tree. */
+const layerSprites = new Map<string, TreeSprite>()
+const layerLatest = new Map<string, TreeSprite>()
+
+/** Most backdrop tree bitmaps kept. */
+const LAYER_SPRITE_LIMIT = 360
+
+/** How many more backdrop tree bitmaps may be built this frame (trees without any bitmap yet are always built). */
+let layerBuildsLeft = 2
+
+/**
+ * Sets how many backdrop tree bitmaps may be rebuilt for a new look in the frame about to be drawn.
+ *
+ * @param count - Builds allowed.
+ */
+export function setLayerSpriteBudget(count: number): void {
+  layerBuildsLeft = count
+  treeBuildsLeft = 1
+}
+
+/**
+ * The bitmap of a backdrop layer's tree in a given look, built on first use. When the look has changed
+ * and the frame's budget for building is used up, the tree keeps its previous bitmap for now, so a change
+ * of season spreads over a few frames (and over the trees) instead of stalling one frame.
+ *
+ * @param shape - The tree.
+ * @param layerKey - Which layer it stands in.
+ * @param tones - The layer's green tones.
+ * @param trunkColor - The layer's trunk color.
+ * @param leafDetail - The layer's leaf density.
+ * @param look - What its leaves look like.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ */
+export function getLayerTreeSprite(
+  shape: TreeShape,
+  layerKey: string,
+  tones: string[],
+  trunkColor: string,
+  leafDetail: number,
+  look: TreeLook,
+  resolution: number,
+): TreeSprite {
+  const treeKey = `${layerKey}|${shape.id}`
+  const key = `${treeKey}|${look.state}|${resolution}`
+  const cached = layerSprites.get(key)
+  if (cached) {
+    layerSprites.delete(key)
+    layerSprites.set(key, cached)
+    layerLatest.set(treeKey, cached)
+    return cached
+  }
+  const previous = layerLatest.get(treeKey)
+  if (previous && layerBuildsLeft <= 0) {
+    return previous
+  }
+  if (previous) {
+    layerBuildsLeft -= 1
+  }
+  const sprite = buildSprite(shape, tones, trunkColor, resolution, false, look.state, leafDetail, look.haze)
+  if (layerSprites.size >= LAYER_SPRITE_LIMIT) {
+    const oldest = layerSprites.keys().next().value
+    if (oldest !== undefined) {
+      layerSprites.delete(oldest)
+    }
+  }
+  layerSprites.set(key, sprite)
+  layerLatest.set(treeKey, sprite)
   return sprite
 }
 
@@ -887,8 +992,9 @@ export function drawOak(
   y: number,
   tones: string[],
   trunkColor: string,
+  state: TreeLook['state'] = 'green',
 ): void {
-  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a)
+  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, false, state)
   ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
 }
 
@@ -910,7 +1016,8 @@ export function drawOakCrown(
   y: number,
   tones: string[],
   trunkColor: string,
+  state: TreeLook['state'] = 'green',
 ): void {
-  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, true)
+  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, true, state)
   ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
 }

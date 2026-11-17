@@ -11,8 +11,11 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { drawLeafyDisk, drawOakCrown, drawOakVector, getOakSprite, paintBark, seededRandom, drawOak } from './oak'
+import { drawLeafyDisk, drawOakCrown, drawOakVector, getLayerTreeSprite, getOakSprite, paintBark, seededRandom, drawOak, setLayerSpriteBudget } from './oak'
 import { burialQuality } from './burial'
+import { SEGMENT_SECONDS, leafStageAt, leafStateAt } from './seasons'
+import { fallTones, mixHex } from './leafColors'
+import type { TreeLook } from './oak'
 import { BACKDROP_FOG, mixColor } from './world'
 import { CREEK_FRONT_DROP_IN_VIEWS, CREEK_FRONT_PARALLAX, TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
 import type {
@@ -34,6 +37,73 @@ import type {
 /** Backdrop gradient: leaf tones blended toward the haze by the farthest layer's atmospheric perspective. */
 const BACKDROP_TOP = mixColor(OAK_TONES[1] ?? '#2a6e34', FOREST_HAZE_COLOR, BACKDROP_FOG)
 const BACKDROP_BOTTOM = mixColor(OAK_TONES[3] ?? '#439150', FOREST_HAZE_COLOR, BACKDROP_FOG)
+
+/** The backdrop's top and bottom colors as [r, g, b] each. */
+type BackdropLook = { top: [number, number, number]; bottom: [number, number, number] }
+
+/**
+ * Reads a `#rrggbb` or `rgb(r,g,b)` color.
+ *
+ * @param color - The color.
+ */
+function rgbOf(color: string): [number, number, number] {
+  if (color.startsWith('#')) {
+    return [parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16)]
+  }
+  const parts = color.replace(/[^\d.,]/g, '').split(',').map(Number)
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]
+}
+
+/** How much farther back than the farthest layer the winter and spring backdrop looks: one more step of atmospheric perspective. */
+const BACKDROP_WINTER_FOG = BACKDROP_FOG + 0.015
+
+const BACKDROP_GREEN: BackdropLook = { top: rgbOf(BACKDROP_TOP), bottom: rgbOf(BACKDROP_BOTTOM) }
+const BACKDROP_FALL: BackdropLook = {
+  top: rgbOf(fallTones(30, 0, { color: FOREST_HAZE_COLOR, amount: BACKDROP_FOG })[1] ?? '#c0702a'),
+  bottom: rgbOf(fallTones(30, 0, { color: FOREST_HAZE_COLOR, amount: BACKDROP_FOG })[3] ?? '#d88a3a'),
+}
+/** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
+const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, FOREST_HAZE_COLOR, BACKDROP_WINTER_FOG))
+const BACKDROP_WINTER: BackdropLook = { top: BACKDROP_WINTER_COLOR, bottom: BACKDROP_WINTER_COLOR }
+const BACKDROP_SPRING: BackdropLook = {
+  top: BACKDROP_WINTER_COLOR,
+  bottom: rgbOf(mixHex('#9fd88a', FOREST_HAZE_COLOR, BACKDROP_FOG)),
+}
+
+/** The backdrop's looks along the timeline: green in summer, orange in fall, the far trunk color in winter, that with light green below in spring. */
+const BACKDROP_KEYS: [number, BackdropLook][] = [
+  [0, BACKDROP_GREEN],
+  [1.5, BACKDROP_GREEN],
+  [2.5, BACKDROP_FALL],
+  [3.5, BACKDROP_FALL],
+  [4.5, BACKDROP_WINTER],
+  [7, BACKDROP_WINTER],
+  [7.5, BACKDROP_SPRING],
+]
+
+/**
+ * The backdrop gradient's colors at a time (blended between the looks above).
+ *
+ * @param time - Seconds along the timeline.
+ */
+function backdropColors(time: number): [string, string] {
+  const u = time / SEGMENT_SECONDS
+  let from = BACKDROP_KEYS[0] as [number, BackdropLook]
+  let to = from
+  for (const key of BACKDROP_KEYS) {
+    if (u >= key[0]) {
+      from = key
+      to = key
+    } else {
+      to = key
+      break
+    }
+  }
+  const k = to[0] > from[0] ? Math.max(0, Math.min(1, (u - from[0]) / (to[0] - from[0]))) : 0
+  const mix = (a: [number, number, number], b: [number, number, number]): string =>
+    `rgb(${[0, 1, 2].map((i) => Math.round((a[i] ?? 0) + ((b[i] ?? 0) - (a[i] ?? 0)) * k)).join(',')})`
+  return [mix(from[1].top, to[1].top), mix(from[1].bottom, to[1].bottom)]
+}
 
 /**
  * Draws the hazy forest backdrop, scrolling world, entities, player, and a screen-space HUD.
@@ -60,9 +130,14 @@ export function renderScene(
 ): void {
   // The backdrop is the colour of the tree leaves as the farthest layer's haze would show them,
   // darker leaves at the top fading to lighter ones lower down, so layers melt into it.
+  stripRebuildsLeft = 1
+  setLayerSpriteBudget(2)
+  bushBuildsLeft = 4
+  layerBushBuildsLeft = 3
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
-  haze.addColorStop(0, BACKDROP_TOP)
-  haze.addColorStop(1, BACKDROP_BOTTOM)
+  const [backdropTop, backdropBottom] = backdropColors(world.season.time)
+  haze.addColorStop(0, backdropTop)
+  haze.addColorStop(1, backdropBottom)
   ctx.fillStyle = haze
   ctx.fillRect(0, 0, viewWidth, viewHeight)
 
@@ -72,7 +147,7 @@ export function renderScene(
   ctx.translate(-camera.x, -camera.y)
 
   // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
-  drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth)
+  drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
   drawBuriedProps(ctx, world, camera.x, viewWidth)
   drawGround(ctx, world, camera.x, viewWidth)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
@@ -349,6 +424,9 @@ function drawForest(
     }
     // The ground first; then the creek's water over it (below); then the props, so the water only
     // ever covers the ground and what lies behind it, never a bush or rock standing in front.
+    if (layer.localRadius === null && !hidden) {
+      drawLayerTrees(ctx, layer, strip, world, base, camera.x, viewWidth)
+    }
     blit(strip.canvas, true)
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -433,6 +511,9 @@ function drawForest(
       }
     }
     blit(strip.props, false)
+    if (layer.localRadius === null && !hidden) {
+      drawLayerBushes(ctx, layer, strip, world, base, camera.x, viewWidth)
+    }
   }
 }
 
@@ -449,7 +530,16 @@ type ForestStrip = {
   waterLine: number
   /** Lowest ground line of each `GROUND_COLUMN`-wide column relative to the base line: all below it is opaque. */
   columnGround: Float32Array
+  /** The leaf stage (`leafStageAt`) its trees were drawn for (layers that only exist around the creek bake their trees in). */
+  stage: number
+  /** Where each tree's base stands, relative to the layer's base line (the trees of the other layers are drawn each frame from their own bitmaps). */
+  treeBases: number[]
+  /** Where each bush's base stands, relative to the layer's base line (for the layers whose bushes are drawn each frame). */
+  bushBases: number[]
 }
+
+/** How many strips may be rebuilt for a new leaf stage in one frame (one a frame keeps it from stuttering). */
+let stripRebuildsLeft = 1
 
 /** Narrowest variation (in a layer's own pixels) kept in a layer's shared base elevation. */
 const LAYER_SMOOTH_WIDTH = 700
@@ -463,6 +553,49 @@ const FOREST_SLAB = 64
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
 /**
+ * Draws the trees of a forest layer (the ones that stand on the whole layer, not only around the creek)
+ * from their bitmaps, behind the layer's ground.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param layer - Forest layer.
+ * @param strip - The layer's strip (for the tree bases and the bitmap resolution).
+ * @param world - Play space (the season).
+ * @param base - Screen y of the layer's base line.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawLayerTrees(
+  ctx: CanvasRenderingContext2D,
+  layer: ForestLayer,
+  strip: ForestStrip,
+  world: World,
+  base: number,
+  cameraX: number,
+  viewWidth: number,
+): void {
+  const layerKey = String(layer.parallax)
+  layer.trees.forEach((tree, index) => {
+    const x = tree.x - cameraX * layer.parallax
+    if (x < -tree.shape.halfWidth - 8 || x > viewWidth + tree.shape.halfWidth + 8) {
+      return
+    }
+    const sprite = getLayerTreeSprite(
+      tree.shape,
+      layerKey,
+      layer.tones,
+      layer.trunkColor,
+      0.02 + layer.parallax * 0.4,
+      {
+        state: leafStateAt(tree.shape.leaf, world.season.time),
+        haze: { color: FOREST_HAZE_COLOR, amount: layer.fog },
+      },
+      strip.resolution,
+    )
+    ctx.drawImage(sprite.canvas, x + sprite.offsetX, base + (strip.treeBases[index] ?? 0) + sprite.offsetY, sprite.width, sprite.height)
+  })
+}
+
+/**
  * Returns a layer's cached bitmap, building it on first use.
  *
  * The layer's horizon is the foreground terrain flattened with distance and phase-shifted,
@@ -472,9 +605,14 @@ const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
  * @param world - Play space (terrain source).
  */
 function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
+  const stage = leafStageAt(world.season.time)
   const cached = forestStrips.get(layer)
-  if (cached) {
+  if (cached && (layer.localRadius === null || cached.stage === stage || stripRebuildsLeft <= 0)) {
     return cached
+  }
+  if (cached) {
+    // The leaves of a creek-only layer's baked-in trees changed: the layer is redrawn (a layer a frame; until then the old one shows).
+    stripRebuildsLeft -= 1
   }
   // The layer's elevation is the foreground's coarse elevation and hill scaled horizontally by the
   // layer's parallax factor about the screen center (so features line up with the foreground's the
@@ -532,6 +670,8 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   treeHeight = Math.min(treeHeight, world.viewHeight * 1.1)
   const originY = Math.ceil(treeHeight + (world.groundY - minGround) * Math.max(relief, creekScale) + 20)
   const resolution = layer.parallax < 0.4 ? 0.5 : 0.75
+  const treeBases: number[] = []
+  const bushBases: number[] = []
   const canvas = document.createElement('canvas')
   canvas.width = Math.ceil(layer.span * resolution)
   // Extra depth below the horizon so the layer's whole ground can carry leaf litter.
@@ -551,7 +691,17 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     for (const tree of layer.trees) {
       const trunkHalf = (tree.shape.segments[0]?.w0 ?? 40) / 2
       const lowest = Math.max(offset(tree.x - trunkHalf), offset(tree.x), offset(tree.x + trunkHalf))
-      drawOakVector(ctx, tree.shape, tree.x, originY + lowest + 2, layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4)
+      treeBases.push(lowest + 2)
+      if (layer.localRadius === null) {
+        // (These layers' trees are drawn every frame, each from a bitmap of its own, so a change of
+        // season only has to redraw the trees themselves.)
+        continue
+      }
+      const state = leafStateAt(tree.shape.leaf, world.season.time)
+      drawOakVector(ctx, tree.shape, tree.x, originY + lowest + 2, layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4, false, {
+        state,
+        haze: { color: FOREST_HAZE_COLOR, amount: layer.fog },
+      })
     }
     ctx.fillStyle = layer.trunkColor
     for (const log of layer.logs) {
@@ -610,12 +760,14 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     const averagePerColumn = (1.5 * (depthSum / Math.max(1, depthCount) + 0.1 * leafUnit)) / (0.45 * leafUnit)
     // Spread the columns out when the layer is small so one layer never holds more than ~9000 leaves.
     const columnStep = Math.max(7, (layer.span * averagePerColumn) / 9000)
+    // (Seeded, so that rebuilding the strip when the trees' leaves change leaves the litter as it was.)
+    const rnd = seededRandom(Math.floor(layer.parallax * 100000) + 17)
     const batches: number[][] = layer.leafColors.map(() => [])
     for (let x = 0; x < layer.span; x += columnStep) {
       const perColumn = perColumnAt(x)
-      const count = Math.floor(perColumn) + (Math.random() < perColumn - Math.floor(perColumn) ? 1 : 0)
+      const count = Math.floor(perColumn) + (rnd() < perColumn - Math.floor(perColumn) ? 1 : 0)
       for (let i = 0; i < count; i += 1) {
-        const lx = x + (Math.random() * 2 - 1) * columnStep
+        const lx = x + (rnd() * 2 - 1) * columnStep
         if (Math.abs(lx - creek.x) < creek.halfWidth) {
           continue
         }
@@ -624,10 +776,10 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
         if (lowest <= top) {
           continue
         }
-        const y = top + Math.random() * (lowest - top)
+        const y = top + rnd() * (lowest - top)
         const nearness = Math.min(1, Math.max(0, (y - top) / Math.max(1, bottomEdge - top)))
-        const rx = (0.035 + Math.random() * 0.045) * leafUnit * (1 + 0.5 * nearness)
-        batches[Math.floor(Math.random() * batches.length)]?.push(lx, originY + y, rx, rx * (0.35 + Math.random() * 0.2), (Math.random() - 0.5) * Math.PI)
+        const rx = (0.035 + rnd() * 0.045) * leafUnit * (1 + 0.5 * nearness)
+        batches[Math.floor(rnd() * batches.length)]?.push(lx, originY + y, rx, rx * (0.35 + rnd() * 0.2), (rnd() - 0.5) * Math.PI)
       }
     }
     batches.forEach((batch, colorIndex) => {
@@ -671,13 +823,30 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       })
     }
     for (const bush of layer.bushes) {
+      const baseDrop = offset(bush.x) + dropOf(bush.x + 2) * 0.6
+      bushBases.push(baseDrop)
+      if (layer.localRadius === null) {
+        // (Drawn every frame from bitmaps of their own: see `drawLayerBushes`.)
+        continue
+      }
+      const state = leafStateAt(bush.leaf, world.season.time)
       props.push({
-        y: originY + offset(bush.x) + dropOf(bush.x + 2) * 0.6,
+        y: originY + baseDrop,
         draw: (y) => {
           const rand = seededRandom(Math.floor(bush.x * 13))
-          for (const lobe of bush.lobes) {
-            drawLeafyDisk(pc, bush.x + lobe.dx, y + lobe.dy, lobe.radius, layer.tones, 1, rand, 0.3, 1)
+          pc.save()
+          pc.translate(bush.x, y)
+          drawBushWood(pc, bush, layer.trunkColor)
+          if (state !== 'bare') {
+            bush.lobes.forEach((lobe, index) => {
+              const tones =
+                state === 'fall'
+                  ? fallTones(bush.leaf.hue, (seededRandom(Math.floor(bush.x * 5) + index)() - 0.5) * 16, { color: FOREST_HAZE_COLOR, amount: layer.fog })
+                  : layer.tones
+              drawLeafyDisk(pc, lobe.dx, lobe.dy, lobe.radius, tones, 1, rand, 0.3, 1)
+            })
           }
+          pc.restore()
         },
       })
     }
@@ -711,7 +880,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   // Rasterize the recorded drawing once (see `buildLeafTile`), so blitting the strip stays cheap.
   ctx?.getImageData(0, 0, 1, 1)
   propsCtx?.getImageData(0, 0, 1, 1)
-  const strip = { canvas, props: propsCanvas, resolution, originY, waterLine, columnGround }
+  const strip = { canvas, props: propsCanvas, resolution, originY, waterLine, columnGround, stage, treeBases, bushBases }
   forestStrips.set(layer, strip)
   return strip
 }
@@ -1032,6 +1201,7 @@ function drawTrees(
   terrain: Terrain,
   cameraX: number,
   viewWidth: number,
+  seasonTime: number,
 ): void {
   const left = cameraX - 8
   const right = cameraX + viewWidth + 8
@@ -1040,7 +1210,7 @@ function drawTrees(
     if (baseX + tree.shape.halfWidth < left || baseX - tree.shape.halfWidth > right) {
       continue
     }
-    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR)
+    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR, leafStateAt(tree.shape.leaf, seasonTime))
   }
 }
 
@@ -1072,7 +1242,7 @@ function drawBuriedProps(
   }
   for (const bush of world.bushes) {
     if (bushOnScreen(bush, cameraX, viewWidth) && !overhangsWater(world, bush)) {
-      drawBush(ctx, bush, groundYAt(world.terrain, bush.x) + 14)
+      drawBush(ctx, bush, groundYAt(world.terrain, bush.x) + 14, leafStateAt(bush.leaf, world.season.time))
     }
   }
   for (const rock of world.rocks) {
@@ -1233,7 +1403,7 @@ function drawFrontProps(
   }
   for (const front of world.frontBushes) {
     if (bushOnScreen(front.bush, cameraX, viewWidth)) {
-      items.push({ y: front.y, draw: () => drawBush(ctx, front.bush, front.y) })
+      items.push({ y: front.y, draw: () => drawBush(ctx, front.bush, front.y, leafStateAt(front.bush.leaf, world.season.time)) })
     }
   }
   for (const front of world.frontFerns) {
@@ -1247,7 +1417,7 @@ function drawFrontProps(
   for (const bush of world.bushes) {
     if (overhangsWater(world, bush) && bushOnScreen(bush, cameraX, viewWidth)) {
       const y = groundYAt(world.terrain, bush.x) + bushHeight(bush) + 6
-      items.push({ y, draw: () => drawBush(ctx, bush, y) })
+      items.push({ y, draw: () => drawBush(ctx, bush, y, leafStateAt(bush.leaf, world.season.time)) })
     }
   }
   for (const fern of world.ferns) {
@@ -1750,15 +1920,32 @@ function fernOverhangsWater(world: World, fern: Fern): boolean {
  * @param bush - Bush to draw.
  * @param groundY - Ground Y at the bush.
  */
-function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number): void {
+function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, state: TreeLook['state'] = 'green'): void {
   const res = ctx.getTransform().a
-  let sprite = bushSprites.get(bush)
+  let byState = bushSprites.get(bush)
+  if (!byState) {
+    byState = new Map()
+    bushSprites.set(bush, byState)
+  }
+  let sprite = byState.get(state)
   if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
-    sprite = buildBushSprite(bush, res)
-    bushSprites.set(bush, sprite)
+    // A bush whose look changed keeps its previous bitmap for now when this frame's builds are used up.
+    const previous = [...byState.values()].pop()
+    if (previous && bushBuildsLeft <= 0) {
+      sprite = previous
+    } else {
+      if (previous) {
+        bushBuildsLeft -= 1
+      }
+      sprite = buildBushSprite(bush, res, state)
+      byState.set(state, sprite)
+    }
   }
   ctx.drawImage(sprite.canvas, bush.x + sprite.offsetX, groundY + sprite.offsetY, sprite.width, sprite.height)
 }
+
+/** How many bushes may get a new bitmap for a changed look in this frame. */
+let bushBuildsLeft = 4
 
 /** A bush drawn once into a bitmap, since its many leaves are expensive to draw every frame. */
 type BushSprite = {
@@ -1770,15 +1957,130 @@ type BushSprite = {
   height: number
 }
 
-const bushSprites = new WeakMap<Bush, BushSprite>()
+const bushSprites = new WeakMap<Bush, Map<string, BushSprite>>()
 
 /**
- * Renders a bush's lobes into a bitmap positioned relative to its base point.
+ * Paints the woody branches of a bush under its leaves: from its base a stem to each lobe's center,
+ * which forks into a few twigs inside the lobe, so a bush with no leaves is still a bush.
+ *
+ * @param ctx - 2D canvas context (the bush's base at the origin of the bush's coordinates).
+ * @param bush - The bush.
+ * @param color - Wood color.
+ */
+function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string): void {
+  const rand = seededRandom(Math.floor(bush.x * 7) + 3)
+  ctx.strokeStyle = color
+  ctx.lineCap = 'round'
+  for (const lobe of bush.lobes) {
+    const sx = lobe.dx * 0.25 + (rand() - 0.5) * lobe.radius * 0.2
+    const width = Math.max(1.5, lobe.radius * 0.07)
+    // The stem bends on its way up from the base to the middle of the lobe.
+    const midX = sx + (lobe.dx - sx) * 0.45 + (rand() - 0.5) * lobe.radius * 0.35
+    const midY = lobe.dy * 0.5
+    ctx.lineWidth = width * 1.15
+    ctx.beginPath()
+    ctx.moveTo(sx, 4)
+    ctx.quadraticCurveTo(midX, midY, lobe.dx, lobe.dy)
+    ctx.stroke()
+    // Twigs fan out from there into the lobe, some forking again.
+    const twigs = 4 + Math.floor(rand() * 3)
+    for (let i = 0; i < twigs; i += 1) {
+      const angle = -Math.PI / 2 + (i / (twigs - 1) - 0.5) * 2.6 + (rand() - 0.5) * 0.3
+      const length = lobe.radius * (0.65 + rand() * 0.3)
+      const tx = lobe.dx + Math.cos(angle) * length
+      const ty = lobe.dy + Math.sin(angle) * length * 0.9
+      ctx.lineWidth = width * 0.6
+      ctx.beginPath()
+      ctx.moveTo(lobe.dx, lobe.dy)
+      ctx.quadraticCurveTo(lobe.dx + Math.cos(angle) * length * 0.5 + (rand() - 0.5) * 6, lobe.dy + Math.sin(angle) * length * 0.4, tx, ty)
+      ctx.stroke()
+      if (rand() < 0.7) {
+        const fork = angle + (rand() < 0.5 ? -0.6 : 0.6)
+        ctx.lineWidth = width * 0.35
+        ctx.beginPath()
+        ctx.moveTo(lobe.dx + (tx - lobe.dx) * 0.6, lobe.dy + (ty - lobe.dy) * 0.6)
+        ctx.lineTo(tx + Math.cos(fork) * length * 0.3, ty + Math.sin(fork) * length * 0.3)
+        ctx.stroke()
+      }
+    }
+  }
+}
+
+/** How a backdrop layer's bushes are drawn: its wood color, its (hazy) leaf tones and the haze its fall colors blend toward. */
+type LayerBushLook = { wood: string; tones: string[]; haze: { color: string; amount: number } }
+
+/** Bitmaps of the backdrop layers' bushes by layer, bush and look, and the latest one of each bush. */
+const layerBushSprites = new Map<string, BushSprite>()
+const layerBushLatest = new Map<string, BushSprite>()
+let layerBushBuildsLeft = 3
+
+/**
+ * Draws the bushes of a forest layer (not the ones that only exist around the creek) from their bitmaps,
+ * in front of the layer's ground and water.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param layer - Forest layer.
+ * @param strip - The layer's strip (for the bush bases and the bitmap resolution).
+ * @param world - Play space (the season).
+ * @param base - Screen y of the layer's base line.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawLayerBushes(
+  ctx: CanvasRenderingContext2D,
+  layer: ForestLayer,
+  strip: ForestStrip,
+  world: World,
+  base: number,
+  cameraX: number,
+  viewWidth: number,
+): void {
+  layer.bushes.forEach((bush, index) => {
+    const x = bush.x - cameraX * layer.parallax
+    let reach = 0
+    for (const lobe of bush.lobes) {
+      reach = Math.max(reach, Math.abs(lobe.dx) + lobe.radius)
+    }
+    if (x < -reach - 8 || x > viewWidth + reach + 8) {
+      return
+    }
+    const state = leafStateAt(bush.leaf, world.season.time)
+    const bushKey = `${layer.parallax}|${bush.x}`
+    const key = `${bushKey}|${state}`
+    let sprite = layerBushSprites.get(key)
+    if (!sprite) {
+      const previous = layerBushLatest.get(bushKey)
+      if (previous && layerBushBuildsLeft <= 0) {
+        sprite = previous
+      } else {
+        if (previous) {
+          layerBushBuildsLeft -= 1
+        }
+        sprite = buildBushSprite(bush, strip.resolution, state, {
+          wood: layer.trunkColor,
+          tones: layer.tones,
+          haze: { color: FOREST_HAZE_COLOR, amount: layer.fog },
+        })
+        layerBushSprites.set(key, sprite)
+      }
+    }
+    layerBushLatest.set(bushKey, sprite)
+    ctx.drawImage(sprite.canvas, x + sprite.offsetX, base + (strip.bushBases[index] ?? 0) + sprite.offsetY, sprite.width, sprite.height)
+  })
+}
+
+/** Wood color of a foreground bush's branches. */
+const BUSH_WOOD_COLOR = '#4d3b2c'
+
+/**
+ * Renders a bush (its wood, then its leaves) into a bitmap positioned relative to its base point.
  *
  * @param bush - Bush to render.
  * @param res - Bitmap pixels per world pixel (capped so a bush stays a few megapixels at most).
+ * @param state - Green leaves, fall colors, or bare.
+ * @param layer - For a bush of a backdrop layer: that layer's wood color, tones and haze (else the foreground's).
  */
-function buildBushSprite(bush: Bush, res: number): BushSprite {
+function buildBushSprite(bush: Bush, res: number, state: TreeLook['state'], layer?: LayerBushLook): BushSprite {
   let minX = 0
   let maxX = 0
   let minY = 0
@@ -1800,9 +2102,17 @@ function buildBushSprite(bush: Bush, res: number): BushSprite {
   if (ctx) {
     ctx.scale(scale, scale)
     ctx.translate(-(minX - pad), -(minY - pad))
-    const rand = seededRandom(Math.floor(bush.x * 13))
-    for (const lobe of bush.lobes) {
-      drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, shadeRamp(lobe.color), 2, rand, 0.9, 1)
+    drawBushWood(ctx, bush, layer?.wood ?? BUSH_WOOD_COLOR)
+    if (state !== 'bare') {
+      const rand = seededRandom(Math.floor(bush.x * 13))
+      bush.lobes.forEach((lobe, index) => {
+        // In fall each lobe has the bush's color with its own small shift in hue.
+        const tones =
+          state === 'fall'
+            ? fallTones(bush.leaf.hue, (seededRandom(Math.floor(bush.x * 5) + index)() - 0.5) * 16, layer?.haze ?? null)
+            : (layer?.tones ?? shadeRamp(lobe.color))
+        drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, tones, layer ? 1 : 2, rand, layer ? 0.3 : 0.9, 1)
+      })
     }
   }
   return { canvas, res, offsetX: minX - pad, offsetY: minY - pad, width, height }
@@ -3698,7 +4008,15 @@ function drawClimbingSquirrel(ctx: CanvasRenderingContext2D, squirrel: Npc, worl
   off.setTransform(scale, 0, 0, scale, -ox * scale, -oy * scale)
   drawSquirrel(off, bird)
   off.globalCompositeOperation = 'destination-out'
-  drawOakCrown(off, home.tree.shape, home.trunkX, groundYAt(world.terrain, home.trunkX), OAK_TONES, TRUNK_COLOR)
+  drawOakCrown(
+    off,
+    home.tree.shape,
+    home.trunkX,
+    groundYAt(world.terrain, home.trunkX),
+    OAK_TONES,
+    TRUNK_COLOR,
+    leafStateAt(home.tree.shape.leaf, world.season.time),
+  )
   off.globalCompositeOperation = 'source-over'
   ctx.drawImage(climbCanvas, ox, oy, span, span)
 }
@@ -3932,8 +4250,33 @@ function drawHungerBar(
  */
 export function* warmUpScene(world: World, player: Player, dpr: number): Generator<void> {
   for (const layer of world.forest) {
-    forestStripFor(layer, world)
+    const strip = forestStripFor(layer, world)
     yield
+    if (layer.localRadius === null) {
+      // The bitmaps of the layer's bushes (drawn each frame, see `drawLayerBushes`), built by drawing them all once.
+      const scratch = document.createElement('canvas').getContext('2d')
+      if (scratch) {
+        drawLayerBushes(scratch, layer, strip, world, 0, 0, layer.span)
+      }
+      yield
+      // The bitmaps of the layer's trees (drawn each frame, see `drawLayerTrees`).
+      let built = 0
+      for (const tree of layer.trees) {
+        getLayerTreeSprite(
+          tree.shape,
+          String(layer.parallax),
+          layer.tones,
+          layer.trunkColor,
+          0.02 + layer.parallax * 0.4,
+          { state: leafStateAt(tree.shape.leaf, world.season.time), haze: { color: FOREST_HAZE_COLOR, amount: layer.fog } },
+          strip.resolution,
+        )
+        built += 1
+        if (built % 5 === 0) {
+          yield
+        }
+      }
+    }
   }
   for (const tree of world.trees) {
     getOakSprite(tree.shape, OAK_TONES, TRUNK_COLOR, dpr)
