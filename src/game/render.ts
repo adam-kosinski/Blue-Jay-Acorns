@@ -16,7 +16,7 @@ import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import { drawSnowfall } from './snowfall'
-import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapSize, snowCover, snowThickness } from './snow'
+import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
@@ -411,6 +411,9 @@ function drawForest(
   viewWidth: number,
   viewHeight: number,
 ): void {
+  // The far layers' bitmaps are drawn smaller than they show: smooth (blurry) rather than blocky when blown up.
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
   const maxCamY = Math.max(0, world.height - viewHeight)
   const winter = winterTintAt(world.season.time)
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
@@ -651,6 +654,7 @@ function drawForest(
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
     }
   }
+  ctx.imageSmoothingQuality = 'low'
 }
 
 /**
@@ -845,7 +849,7 @@ function* buildVegImage(
         if (rock && near(rock.x, rock.rx * 1.5)) {
           mossFade = transitionProgress(rock.fadeStart, time)
           paintRock(ctx, rock, rock.x, prop.y + rock.ry * 0.4)
-          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowThickness(time))
+          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowCapLayers(time))
           mossFade = 0
         }
       } else if (prop.kind === 'fern') {
@@ -3689,7 +3693,7 @@ function rockSnowSize(rock: Rock, time: number): number {
  * @param cx - Center x.
  * @param baseY - Y of the rock's base line.
  * @param amount - How big the snow is, 0-1 (it melts away as it shrinks).
- * @param opacity - How strongly it shows, 0-1 (it comes in by fading in, with the ground's snow).
+ * @param layers - How strongly each layer of snow shows, 0-1: the thin coat along the rock's upper boundary, and the full covering.
  */
 function paintRockSnow(
   ctx: CanvasRenderingContext2D,
@@ -3697,13 +3701,13 @@ function paintRockSnow(
   cx: number,
   baseY: number,
   amount: number,
-  opacity: number,
+  layers: { thin: number; full: number },
 ): void {
-  if (amount < 0.04 || opacity < 0.02) {
+  if (amount < 0.04 || layers.thin < 0.02) {
     return
   }
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
-  paintSnowCap(ctx, rockShape(rock, cx, baseY).outline, cx, baseY, rock.rx, rock.ry, phase, amount, opacity, rock.fog)
+  paintSnowCap(ctx, rockShape(rock, cx, baseY).outline, cx, baseY, rock.rx, rock.ry, phase, amount, layers, rock.fog)
 }
 
 /**
@@ -3719,7 +3723,7 @@ function paintRockSnow(
  * @param ry - Height.
  * @param phase - Shape of the lumps.
  * @param amount - How big the snow is, 0-1.
- * @param opacity - How strongly it shows, 0-1.
+ * @param layers - How strongly the thin coat and the full covering show, 0-1.
  * @param fog - The rock's distance haze (the snow takes some of it, so it is not whiter than its surroundings).
  */
 function paintSnowCap(
@@ -3731,13 +3735,45 @@ function paintSnowCap(
   ry: number,
   phase: number,
   amount: number,
-  opacity: number,
+  layers: { thin: number; full: number },
   fog: number,
 ): void {
   const topColor = fog > 0 ? mixHex(SNOW_TOP, WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)) : SNOW_TOP
   const bottomColor = mixHex('#d4e3f3', WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7))
   ctx.save()
-  ctx.globalAlpha = opacity
+  // First layer: a coat along the rock's upper boundary, inside it (clipped to the outline, so it never goes
+  // above it); it thins away with the melt.
+  ctx.save()
+  ctx.beginPath()
+  outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+  ctx.closePath()
+  ctx.clip()
+  ctx.globalAlpha = layers.thin * Math.min(1, amount * 3)
+  ctx.strokeStyle = topColor
+  ctx.lineWidth = Math.max(2, ry * 0.7)
+  ctx.lineCap = 'butt'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  let coat = false
+  for (const [x, y] of outline) {
+    if (y < baseY - ry * 0.05) {
+      if (coat) {
+        ctx.lineTo(x, y)
+      } else {
+        ctx.moveTo(x, y)
+        coat = true
+      }
+    } else {
+      coat = false
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
+  if (layers.full < 0.02) {
+    ctx.restore()
+    return
+  }
+  ctx.globalAlpha = layers.full
   // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
   const depth = rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)
   const edgeY = (x: number): number => baseY - ry * 1.15 + depth + ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
@@ -4017,7 +4053,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, fa
       queueRockWinter(rock, res)
     }
   }
-  paintRockSnow(ctx, rock, rock.x, y, rockSnowSize(rock, seasonNow), snowThickness(seasonNow))
+  paintRockSnow(ctx, rock, rock.x, y, rockSnowSize(rock, seasonNow), snowCapLayers(seasonNow))
 }
 
 /**
@@ -4073,10 +4109,10 @@ function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numb
   ctx.globalAlpha = 1
   // Snow over the top (after the highlight, so nothing shows through it).
   const snowSize = rockSnowSize(rock, seasonNow)
-  const snowOpacity = snowThickness(seasonNow)
-  if (snowSize > 0.04 && snowOpacity > 0.02) {
+  const snowLayers = snowCapLayers(seasonNow)
+  if (snowSize > 0.04 && snowLayers.thin > 0.02) {
     const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
-    paintSnowCap(ctx, outline, rock.x, baseY, rock.rx, rock.ry, phase, snowSize, snowOpacity, rock.fog)
+    paintSnowCap(ctx, outline, rock.x, baseY, rock.rx, rock.ry, phase, snowSize, snowLayers, rock.fog)
   }
   // A few fallen leaves over the base, as if the rock were settled into the litter.
   if (rock.rx < 7) {

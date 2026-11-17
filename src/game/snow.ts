@@ -52,6 +52,21 @@ export function snowKickShare(time: number): number {
 }
 
 /**
+ * The two layers of snow on a boulder, each 0-1: first a thin coat that follows the rock's upper boundary
+ * comes in (with the quick change to thin snow in the middle of early winter), then, as it snows going
+ * into mid winter, the full covering fades in.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function snowCapLayers(time: number): { thin: number; full: number } {
+  const u = time / SEGMENT_SECONDS
+  return {
+    thin: smooth((u - (4.5 - THIN_FADE / 2)) / THIN_FADE),
+    full: smooth((u - (5 - FULL_FADE / 2)) / FULL_FADE),
+  }
+}
+
+/**
  * How big the snow on top of a rock is, 0-1: full until the melt, then shrinking at the rock's own moment of
  * it (the snow's coming is a fade of its opacity, `snowThickness`, not a growing).
  *
