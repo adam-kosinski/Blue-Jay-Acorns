@@ -486,3 +486,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
   - A foreground rock's snow heap path is built once and kept (`RockSnowOverlay.heap`) instead of a 200-point line every frame.
 
 - **Blue outline on far ridges in early winter:** `makeMask` drew the ground's shape five times (once and a pixel left, right, up, down) to widen it, which also multiplied the opacity of the soft edge pixels, so the haze (blue) and snow (white) masks showed as an outline along each ridge against the sky. The masks (haze, snow, frozen) are now made from a single draw (`grow` 0).
+
+- Boulder dusting is fully opaque along the rock's top (gradient: opaque to 30%, 0.45 at 70%, 0 at the end, starting at 1.08 ry above the base) so the heap line that starts to grow over it does not stand out as a brighter line.

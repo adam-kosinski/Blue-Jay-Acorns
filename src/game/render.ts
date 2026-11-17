@@ -3835,9 +3835,12 @@ function paintSnowShapes(
   ctx.save()
   if (layers.thin > 0.02) {
     ctx.globalAlpha = layers.thin * Math.min(1, amount * 3)
-    const dust = ctx.createLinearGradient(0, g.top, 0, baseY - ry * 1.15 + g.dustDepth + ry * 0.12)
-    dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 0.95)`)
-    dust.addColorStop(0.55, `rgba(${tr}, ${tg}, ${tb}, 0.55)`)
+    // Fully opaque along the rock's top (where the heap line will start to grow, so it does not stand out as a
+    // brighter line), then thinning out downward.
+    const dust = ctx.createLinearGradient(0, baseY - ry * 1.08, 0, baseY - ry * 1.15 + g.dustDepth + ry * 0.12)
+    dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+    dust.addColorStop(0.3, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+    dust.addColorStop(0.7, `rgba(${tr}, ${tg}, ${tb}, 0.45)`)
     dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
     ctx.fillStyle = dust
     across(g.dustY)
