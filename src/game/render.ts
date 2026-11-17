@@ -521,7 +521,7 @@ function drawForest(
       stripsMade += 1
     }
     if (snow > 0 && !hidden && !strip.snowCanvas && stripsMade < 2) {
-      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5)
+      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5, 0.5)
       stripsMade += 1
     }
     // Draws a mask of the ground (the same shape in one color) over it, in one piece (cut to the slabs' cull
@@ -554,7 +554,45 @@ function drawForest(
     // strongly it shows), then a mask in the haze's color as strong as this layer's haze.
     blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor)
     if (snow > 0 && strip.snowCanvas && !hidden) {
-      drawMask(strip.snowCanvas, snow * 0.92)
+      const cover = snowCover(world.season.time)
+      const thickness = snowThickness(world.season.time)
+      if (cover >= 0.999) {
+        drawMask(strip.snowCanvas, thickness * 0.92)
+      } else {
+        // While it melts the snow goes in patches here too (the same patches as the foreground's, at this
+        // layer's scale, and not smaller than half of it): the mask is drawn only inside them.
+        const scale = Math.max(0.5, layer.scale)
+        const shift = camera.x * p
+        const firstColumn = Math.floor((shift / scale - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+        const lastColumn = Math.floor(((shift + viewWidth) / scale + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+        const rows = Math.ceil(((limit - base) / scale + SNOW_CELL_DEPTH * 2) / SNOW_CELL_DEPTH)
+        const patches = new Path2D()
+        const points = 10
+        for (let i = firstColumn; i <= lastColumn; i += 1) {
+          for (let j = -1; j <= rows; j += 1) {
+            const blob = snowBlob(i, j, cover)
+            if (!blob) {
+              continue
+            }
+            for (let k = 0; k < points; k += 1) {
+              const angle = (k / points) * Math.PI * 2
+              const stretch = blobStretch(blob, angle)
+              const x = (blob.x + Math.cos(angle) * blob.rx * stretch) * scale - shift
+              const y = base - 30 * scale + (blob.depth + Math.sin(angle) * blob.ry * stretch) * scale
+              if (k === 0) {
+                patches.moveTo(x, y)
+              } else {
+                patches.lineTo(x, y)
+              }
+            }
+            patches.closePath()
+          }
+        }
+        ctx.save()
+        ctx.clip(patches)
+        drawMask(strip.snowCanvas, thickness * 0.92)
+        ctx.restore()
+      }
     }
     if (winter > 0 && strip.winterCanvas && !hidden) {
       drawMask(strip.winterCanvas, winterAmount(layer, winter))
@@ -664,8 +702,9 @@ function drawForest(
  * @param strip - The layer's ground bitmap.
  * @param color - The color the mask is in.
  * @param scale - Its size against the bitmap's.
+ * @param grow - How many of its own pixels wider the shape is made all round.
  */
-function makeMask(strip: ForestStrip, color: string, scale: number): HTMLCanvasElement {
+function makeMask(strip: ForestStrip, color: string, scale: number, grow = 1): HTMLCanvasElement {
   const copy = document.createElement('canvas')
   copy.width = Math.max(1, Math.round(strip.canvas.width * scale))
   copy.height = Math.max(1, Math.round(strip.canvas.height * scale))
@@ -674,7 +713,7 @@ function makeMask(strip: ForestStrip, color: string, scale: number): HTMLCanvasE
     // The shape a pixel wider all round (so the soft edge of the ground, which is brownish, never peeks out
     // from under the mask as a line along the surface).
     for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-      copyCtx.drawImage(strip.canvas, dx, dy, copy.width, copy.height)
+      copyCtx.drawImage(strip.canvas, dx * grow, dy * grow, copy.width, copy.height)
     }
     // Keep the shape (the opaque and soft-edged pixels) and make all of it one color.
     copyCtx.globalCompositeOperation = 'source-in'
@@ -1698,7 +1737,7 @@ function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, 
     const rows = Math.ceil((bottom - world.groundY + SNOW_CELL_DEPTH) / SNOW_CELL_DEPTH)
     const firstColumn = Math.floor((cameraX - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
     const lastColumn = Math.floor((cameraX + viewWidth + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
-    const points = 14
+    const points = 30
     for (let i = firstColumn; i <= lastColumn; i += 1) {
       for (let j = 0; j <= rows; j += 1) {
         const blob = snowBlob(i, j, cover)
