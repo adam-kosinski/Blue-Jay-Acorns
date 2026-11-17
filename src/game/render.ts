@@ -22,6 +22,7 @@ import {
   STAGE_LOOKS,
   leafLook,
   sampleAt,
+  sampleIndexAt,
   sampleTime,
   transitionProgress,
   winterTintAt,
@@ -919,6 +920,9 @@ function visibleChunks(layer: ForestLayer, cameraX: number, viewWidth: number, m
   }
 }
 
+let planFrame = 0
+let plannedMoment = -1
+
 /**
  * Queues the images the layers' vegetation needs for the time now and next, for the chunks the camera
  * sees: the two moments the time is between first, then the moments after them (so they are ready by the
@@ -930,8 +934,18 @@ function visibleChunks(layer: ForestLayer, cameraX: number, viewWidth: number, m
  */
 function planVegetation(world: World, cameraX: number, viewWidth: number): void {
   const { k, t } = sampleAt(world.season.time)
+  // Planning goes through every layer's chunks and images, which makes a lot of small strings: a few times a
+  // second is enough (a chunk is queued a screen or so before it is seen), and at once when the moment changes.
+  planFrame += 1
+  if (planFrame % 8 !== 0 && k === plannedMoment) {
+    return
+  }
+  plannedMoment = k
   const now = t > 0 ? [k, k + 1] : [k]
-  const ahead = [k + 1, k + 2]
+  // The next moments are only prepared when they are about to be needed (not all summer long).
+  const position = sampleIndexAt(world.season.time)
+  const through = position - Math.floor(position)
+  const ahead = position < -0.6 ? [] : through > 0.4 ? [k + 1, k + 2] : [k + 1]
   world.forest.forEach((layer, index) => {
     const strip = forestStrips.get(layer)
     if (!strip) {

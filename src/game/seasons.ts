@@ -94,15 +94,15 @@ export function leafAlphas(progress: number): { green: number; fall: number } {
   return { green: presence * (1 - fall), fall: presence * fall }
 }
 
-/** Segments between two sample moments (an eighth). */
-const SAMPLE_STEP = 0.125
+/** Segments between two sample moments (a sixth). */
+const SAMPLE_STEP = 1 / 6
 
-/** The number of moments along the timeline that images of the far layers are made for (one every eighth of a segment). */
-export const SAMPLE_COUNT = 25
+/** The number of moments along the timeline that images of the far layers are made for (one every sixth of a segment). */
+export const SAMPLE_COUNT = 19
 
 /**
  * The time of one of the sample moments: the first is the start of early fall (all summer before it), the
- * last the start of winter, with one every eighth of a segment (all winter after it).
+ * last the start of winter, with one every sixth of a segment (all winter after it).
  *
  * @param index - 0 to `SAMPLE_COUNT` - 1.
  */
@@ -121,6 +121,16 @@ export const FADE_SECONDS = 3
 function smooth(x: number): number {
   const c = Math.max(0, Math.min(1, x))
   return c * c * (3 - 2 * c)
+}
+
+/**
+ * Where a time is along the sample moments, as a fractional index (below 0 before the first, above the last
+ * index after the last).
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function sampleIndexAt(time: number): number {
+  return (time / SEGMENT_SECONDS - 1) / SAMPLE_STEP
 }
 
 /**
