@@ -38,14 +38,16 @@ export function snowThickness(time: number): number {
 }
 
 /**
- * The share of the particles a hop kicks up that are snow where there is snow: none before the snow starts
- * to come in, half while it does (the second half of early winter), all of them from mid winter on.
+ * The share of the particles a hop kicks up that are snow where there is snow: none until the snow layer has
+ * come in two thirds of the way, half from then until mid winter starts, all of them from mid winter on.
  *
  * @param time - Seconds along the timeline.
  */
 export function snowKickShare(time: number): number {
-  const u = time / SEGMENT_SECONDS
-  return u < 5 - SNOW_IN ? 0 : u < 5 ? 0.5 : 1
+  if (snowThickness(time) < 2 / 3) {
+    return 0
+  }
+  return time / SEGMENT_SECONDS < 5 ? 0.5 : 1
 }
 
 /**
