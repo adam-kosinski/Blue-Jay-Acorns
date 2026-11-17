@@ -12,7 +12,7 @@ import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
-import { renderScene, setBurialHeatmap, setShowMinimap, warmUpScene } from './render'
+import { forestReady, renderScene, setBurialHeatmap, setShowMinimap, warmUpScene } from './render'
 import { advanceSeason, baseDropRate } from './seasons'
 import { Timeline } from './Timeline'
 import type { Player, World } from './types'
@@ -75,6 +75,8 @@ export function GameCanvas() {
   const [invisible, setInvisible] = useState<boolean>(false)
   const [debugOpen, setDebugOpen] = useState<boolean>(loadDebugOpen)
   const [buriedCount, setBuriedCount] = useState<number>(0)
+  // A loading screen covers the game until the forest is made (at the start and after Restart).
+  const [loading, setLoading] = useState<boolean>(true)
   const invisibleRef = useRef<boolean>(false)
 
   useEffect(() => {
@@ -120,6 +122,8 @@ export function GameCanvas() {
     let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
     let gameOver = false
+    let loading = true
+    let loadedFrames = 0
     let warmUp: Generator<void> | null = warmUpScene(
       world,
       player,
@@ -137,6 +141,9 @@ export function GameCanvas() {
       player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
       warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
       gameOver = false
+      loading = true
+      loadedFrames = 0
+      setLoading(true)
     }
 
     restartRef.current = regenerate
@@ -165,6 +172,22 @@ export function GameCanvas() {
       const height = LOGICAL_VIEW_HEIGHT
       if (warmUp && warmUp.next().done) {
         warmUp = null
+      }
+      if (loading) {
+        // Nothing moves until the forest is made: first the warm-up, then a few frames drawn so that the
+        // images made in the background are in place.
+        if (!warmUp) {
+          const camera = cameraForPlayer(player, world, width, height)
+          renderScene(ctx, width, height, world, camera, player, false)
+          loadedFrames += 1
+          if (loadedFrames > 4 && forestReady(world, camera.x, width)) {
+            loading = false
+            lastTime = performance.now()
+            setLoading(false)
+          }
+        }
+        animationId = window.requestAnimationFrame(frame)
+        return
       }
       if (!gameOver) {
         player.invisible = invisibleRef.current
@@ -251,6 +274,12 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
+      {loading && (
+        <div className="loading-screen" role="status">
+          <div className="loading-spinner" />
+          <div className="loading-text">Growing the forest…</div>
+        </div>
+      )}
       <div className="hud-left">
         <div className="debug-column">
           <button

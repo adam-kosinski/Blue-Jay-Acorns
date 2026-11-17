@@ -1131,6 +1131,36 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
 }
 
 /**
+ * Whether everything the first view of the forest needs is made: every layer's images for the chunks in view
+ * (for the moment the clock is at), with none still on their way to being shown.
+ *
+ * @param world - Play space.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+export function forestReady(world: World, cameraX: number, viewWidth: number): boolean {
+  if (arrivals.length > 0) {
+    return false
+  }
+  const { k } = sampleAt(world.season.time)
+  for (const layer of world.forest) {
+    const strip = forestStrips.get(layer)
+    if (!strip) {
+      return false
+    }
+    const { first, last } = visibleChunks(layer, cameraX, viewWidth, 0)
+    for (let chunk = first; chunk <= last; chunk += 1) {
+      for (const part of ['back', 'front'] as const) {
+        if (chunkHasContent(layer, strip.veg, part, chunk) && !vegMap(layer).has(vegKey(k, part, chunk))) {
+          return false
+        }
+      }
+    }
+  }
+  return true
+}
+
+/**
  * For experiments: per layer, the parallax, the images' count and megapixels and the resolution.
  *
  * @param world - Play space.
@@ -2957,6 +2987,42 @@ function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number, fa
     } else {
       enqueueJob(`fern|${fern.x}|${res.toFixed(2)}`, 3, fernWinterJob(fern, res))
     }
+  }
+}
+
+/**
+ * Makes a fern's summer bitmap now (it is otherwise made when it is first drawn).
+ *
+ * @param fern - Fern.
+ * @param res - Bitmap pixels per world pixel.
+ */
+function warmFernSprite(fern: Fern, res: number): void {
+  let map = fernSprites.get(fern)
+  if (!map) {
+    map = new Map()
+    fernSprites.set(fern, map)
+  }
+  const key = `0|${res.toFixed(2)}`
+  if (!map.has(key)) {
+    map.set(key, buildFernSprite(fern, res, false))
+  }
+}
+
+/**
+ * Makes a rock's summer bitmap now (it is otherwise made when it is first drawn).
+ *
+ * @param rock - Rock.
+ * @param res - Bitmap pixels per world pixel.
+ */
+function warmRockSprite(rock: Rock, res: number): void {
+  let map = rockSprites.get(rock)
+  if (!map) {
+    map = new Map()
+    rockSprites.set(rock, map)
+  }
+  const key = `0|${res.toFixed(2)}`
+  if (!map.has(key)) {
+    map.set(key, buildRockSprite(rock, res, false))
   }
 }
 
@@ -5111,6 +5177,22 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
   for (const bush of world.bushes) {
     bushPartSprite(bush, dpr, 'wood', true)
     bushPartSprite(bush, dpr, 'c0', true)
+  }
+  yield
+  // The foreground's rocks and ferns (their summer bitmaps are otherwise made when first drawn).
+  const rocks = [...world.rocks, ...world.frontRocks.map((front) => front.rock)]
+  const ferns = [...world.ferns, ...world.frontFerns.map((front) => front.fern)]
+  for (const [index, rock] of rocks.entries()) {
+    warmRockSprite(rock, dpr)
+    if (index % 6 === 5) {
+      yield
+    }
+  }
+  for (const [index, fern] of ferns.entries()) {
+    warmFernSprite(fern, dpr)
+    if (index % 6 === 5) {
+      yield
+    }
   }
   yield
   // The fall and winter looks of the foreground, queued to be made in the background.
