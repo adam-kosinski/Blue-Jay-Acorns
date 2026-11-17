@@ -91,7 +91,7 @@ const SHADE_OFFSETS: number[] = (() => {
 const SHADE_STRENGTH = 1.3
 
 /** Saturation and lightness of the base fall color (hue decides red, orange or yellow). */
-const FALL_SATURATION = 0.82
+const FALL_SATURATION = 0.615
 const FALL_LIGHTNESS = 0.5
 
 /**
