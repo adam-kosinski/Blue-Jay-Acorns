@@ -15,6 +15,7 @@ import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOa
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
+import { drawSnowfall } from './snowfall'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapAmount, snowCover, snowThickness } from './snow'
 import {
   SAMPLE_COUNT,
@@ -264,6 +265,9 @@ export function renderScene(
   }
 
   ctx.restore()
+
+  // Falling snow, in front of the scene (screen space; the background layers have none).
+  drawSnowfall(ctx, world.season.time, camera.x, viewWidth, viewHeight)
 
   if (showMinimap) {
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)

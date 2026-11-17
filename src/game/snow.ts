@@ -12,8 +12,8 @@ export const SNOW_BOTTOM = '#c3d8ee'
 /** The tones of the snow a hop kicks up. */
 export const SNOW_PARTICLE_TONES = ['#ffffff', '#eef6ff', '#dcebfa']
 
-/** Length of a quick change of the snow, in segments (about 4.5 seconds). */
-const SNOW_FADE = 0.06
+/** Length of a change of the snow, in segments (about 20 seconds: while it snows). */
+const SNOW_FADE = 20 / SEGMENT_SECONDS
 
 /**
  * Smoothstep.
@@ -27,8 +27,8 @@ function smooth(x: number): number {
 
 /**
  * How thick the snow is, 0-1 (it decides how much of the litter below shows through): none until the middle
- * of early winter, where it quickly comes in thin, then at the start of mid winter it quickly goes to a full
- * layer.
+ * of early winter, where it comes in thin over about 20 seconds, then at the start of mid winter it goes to a
+ * full layer the same way (it snows during both, see `snowfallAt`).
  *
  * @param time - Seconds along the timeline.
  */
