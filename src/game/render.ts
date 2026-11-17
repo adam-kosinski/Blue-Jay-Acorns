@@ -562,7 +562,7 @@ type VegPlan = {
   backBottom: number
   /** The props' image covers rows from here down to ... */
   frontTop: number
-  /** ... here (a little below the lowest prop; the rest of the strip has none). */
+  /** ... here (the bottom of the strip). */
   frontBottom: number
 }
 
@@ -579,20 +579,20 @@ const FOREST_SLAB = 64
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
 /**
- * Bitmap pixels per layer pixel of a layer's vegetation images: 0.3 for the farthest layers (parallax
- * under 0.15), 0.4 up to 0.3, 0.5 up to 0.4, and 0.75 for the nearest, which are prominent.
+ * Bitmap pixels per layer pixel of a layer's vegetation images: 0.4 for the farthest layers (parallax
+ * under 0.15), 0.5 up to 0.3, 0.6 up to 0.4, and 0.75 for the nearest, which are prominent.
  *
  * @param layer - Forest layer.
  */
 function vegRes(layer: ForestLayer): number {
   // The farthest layers are hazy and small: far less detail; the nearest ones (0.5 and up) are prominent.
   if (layer.parallax < 0.15) {
-    return 0.3
-  }
-  if (layer.parallax < 0.3) {
     return 0.4
   }
-  return layer.parallax < 0.4 ? 0.5 : 0.75
+  if (layer.parallax < 0.3) {
+    return 0.5
+  }
+  return layer.parallax < 0.4 ? 0.6 : 0.75
 }
 
 /** Width, in layer pixels, of the chunks the layers' vegetation images are made in (only those near the camera exist). */
@@ -1201,11 +1201,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     highest = Math.min(highest, prop.y - reach)
   }
   veg.frontTop = Math.max(0, Math.floor(highest))
-  let lowestProp = originY
-  for (const prop of veg.props) {
-    lowestProp = Math.max(lowestProp, prop.y + 60)
-  }
-  veg.frontBottom = Math.min(originY + bottomPad, Math.ceil(lowestProp))
+  veg.frontBottom = originY + bottomPad
   const strip = { canvas, resolution, originY, waterLine, columnGround, veg }
   forestStrips.set(layer, strip)
   return strip
