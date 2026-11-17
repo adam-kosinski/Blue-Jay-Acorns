@@ -13,8 +13,8 @@ import {
 } from './constants'
 import { drawLeafyDisk, drawOakCrown, drawOakVector, getLayerTreeSprite, getOakSprite, paintBark, seededRandom, drawOak, setLayerSpriteBudget } from './oak'
 import { burialQuality } from './burial'
-import { SEGMENT_SECONDS, leafStageAt, leafStateAt } from './seasons'
-import { fallTones, mixHex } from './leafColors'
+import { SEGMENT_SECONDS, leafStageAt, leafStateAt, winterAmountAt } from './seasons'
+import { fallTones, mixHex, winterGreen } from './leafColors'
 import type { TreeLook } from './oak'
 import { BACKDROP_FOG, mixColor } from './world'
 import { CREEK_FRONT_DROP_IN_VIEWS, CREEK_FRONT_PARALLAX, TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
@@ -132,6 +132,8 @@ export function renderScene(
   // darker leaves at the top fading to lighter ones lower down, so layers melt into it.
   stripRebuildsLeft = 1
   setLayerSpriteBudget(2)
+  winterLevel = Math.round(winterAmountAt(world.season.time) * 3)
+  groundBuildsLeft = 3
   bushBuildsLeft = 4
   layerBushBuildsLeft = 3
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
@@ -2200,9 +2202,12 @@ function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem
 }
 
 /** A foreground fern drawn once into a bitmap. */
-type FernSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+type FernSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number; level: number }
 
 const fernSprites = new WeakMap<Fern, FernSprite>()
+
+/** How many ferns and mossy rocks may be redrawn for a changed winter look in this frame. */
+let groundBuildsLeft = 3
 
 /**
  * Draws a foreground fern (from a cached bitmap) with its base at (fern.x, groundY).
@@ -2214,6 +2219,13 @@ const fernSprites = new WeakMap<Fern, FernSprite>()
 function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number): void {
   const res = ctx.getTransform().a
   let sprite = fernSprites.get(fern)
+  if (sprite && sprite.level !== winterLevel && Math.abs(sprite.res - res) / res <= 0.2) {
+    // The undergrowth's winter look changed: a few bitmaps a frame are redrawn, the rest follow.
+    if (groundBuildsLeft > 0) {
+      groundBuildsLeft -= 1
+      sprite = undefined
+    }
+  }
   if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
     const reachX = fern.size * 1.25
     const width = reachX * 2 + 8
@@ -2227,9 +2239,10 @@ function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number): v
     if (sctx) {
       sctx.scale(scale, scale)
       sctx.translate(width / 2, height - below - 4)
-      paintFern(sctx, fern, FERN_TONES[fern.tone] ?? '#3f8f3b', '#2a5a2a')
+      const amount = winterLevel / 3
+      paintFern(sctx, fern, winterGreen(FERN_TONES[fern.tone] ?? '#3f8f3b', amount), winterGreen('#2a5a2a', amount))
     }
-    sprite = { canvas, res, offsetX: -width / 2, offsetY: -(height - below - 4), width, height }
+    sprite = { canvas, res, offsetX: -width / 2, offsetY: -(height - below - 4), width, height, level: winterLevel }
     fernSprites.set(fern, sprite)
   }
   ctx.drawImage(sprite.canvas, fern.x + sprite.offsetX, groundY + sprite.offsetY, sprite.width, sprite.height)
@@ -2342,6 +2355,18 @@ function drawFallenLog(ctx: CanvasRenderingContext2D, log: Log, color: string, f
 /** Moss greens from shadow to highlight. */
 const MOSS_TONES = ['#2e4a1f', '#4a7a2a', '#6f9f38', '#9bc75a']
 
+/** The winter look of the undergrowth in steps of a third: 0 is summer and spring, 3 is full winter (see `winterAmountAt`). */
+let winterLevel = 0
+
+/**
+ * A moss tone as it looks now (a little darker and less saturated in winter).
+ *
+ * @param index - Tone from shadow (0) to highlight (3).
+ */
+function mossTone(index: number): string {
+  return winterGreen(MOSS_TONES[index] ?? '#4a7a2a', winterLevel / 3)
+}
+
 /**
  * A color blended toward the haze (a no-op in the foreground).
  *
@@ -2385,7 +2410,7 @@ function paintMoss(ctx: CanvasRenderingContext2D, spots: [number, number, number
     }
   }
   const pass = (tone: number, pick: (i: number) => boolean, dx: number, dy: number, scale: number): void => {
-    ctx.fillStyle = hazy(MOSS_TONES[tone] ?? '#4a7a2a', fog)
+    ctx.fillStyle = hazy(mossTone(tone), fog)
     ctx.beginPath()
     spots.forEach(([x, y, r], i) => {
       if (pick(i)) {
@@ -2399,7 +2424,7 @@ function paintMoss(ctx: CanvasRenderingContext2D, spots: [number, number, number
   pass(2, (i) => i % 2 === 0, -0.22, -0.28, 0.7)
   pass(3, (i) => i % 5 === 0, -0.38, -0.42, 0.38)
   // A fuzz of fine tips standing up from the moss.
-  ctx.strokeStyle = hazy(MOSS_TONES[3] ?? '#9bc75a', fog)
+  ctx.strokeStyle = hazy(mossTone(3), fog)
   ctx.lineCap = 'round'
   ctx.beginPath()
   spots.forEach(([x, y, r], i) => {
@@ -2546,7 +2571,7 @@ function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY:
       const [ex, ey] = edge(theta, 1)
       return [ex + (cx - ex) * d, ey + (baseY + ry * 0.1 - ey) * d]
     }
-    ctx.fillStyle = hazy(MOSS_TONES[1] ?? '#4a7a2a', fog)
+    ctx.fillStyle = hazy(mossTone(1), fog)
     ctx.beginPath()
     for (let i = 0; i <= steps; i += 1) {
       const theta = from + ((to - from) * i) / steps
@@ -2587,7 +2612,7 @@ function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY:
   }
 }
 
-type RockSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+type RockSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number; level: number }
 
 const rockSprites = new WeakMap<Rock, RockSprite>()
 
@@ -2602,6 +2627,12 @@ const rockSprites = new WeakMap<Rock, RockSprite>()
 function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): void {
   const res = ctx.getTransform().a
   let sprite = rockSprites.get(rock)
+  if (sprite && rock.moss && sprite.level !== winterLevel && Math.abs(sprite.res - res) / res <= 0.2) {
+    if (groundBuildsLeft > 0) {
+      groundBuildsLeft -= 1
+      sprite = undefined
+    }
+  }
   if (!sprite || Math.abs(sprite.res - res) / res > 0.2) {
     const pad = rock.rx * 0.2 + 8
     const width = rock.rx * 2.5 + pad * 2
@@ -2617,7 +2648,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number): v
       sctx.translate(width / 2, above)
       paintRock(sctx, rock, 0, 0)
     }
-    sprite = { canvas, res, offsetX: -width / 2, offsetY: -above, width, height }
+    sprite = { canvas, res, offsetX: -width / 2, offsetY: -above, width, height, level: winterLevel }
     rockSprites.set(rock, sprite)
   }
   ctx.drawImage(sprite.canvas, rock.x + sprite.offsetX, groundY + rock.ry * 0.4 + sprite.offsetY, sprite.width, sprite.height)

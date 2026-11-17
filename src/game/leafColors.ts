@@ -109,3 +109,21 @@ export function fallTones(hue: number, hueShift: number, haze: { color: string; 
     return haze ? mixHex(tone, haze.color, haze.amount) : tone
   })
 }
+
+/** How much darker (lightness share) and less saturated (saturation share) greens are in winter. */
+const WINTER_DARKEN = 0.14
+const WINTER_DESATURATE = 0.22
+
+/**
+ * A green as it looks in winter: a little darker and a little less saturated. At 0 the color is unchanged.
+ *
+ * @param hex - The summer color (`#rrggbb`).
+ * @param amount - How far into winter, 0-1.
+ */
+export function winterGreen(hex: string, amount: number): string {
+  if (amount <= 0) {
+    return hex
+  }
+  const { h, s, l } = hexToHsl(hex)
+  return hslToHex(h, s * (1 - WINTER_DESATURATE * amount), l * (1 - WINTER_DARKEN * amount))
+}

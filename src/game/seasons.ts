@@ -71,6 +71,27 @@ export function leafStateAt(leaf: { colorRank: number; bareRank: number }, time:
   return leaf.colorRank < colored ? 'fall' : 'green'
 }
 
+/**
+ * How far into its winter look the undergrowth (ferns and moss) is, from 0 (summer and spring) to 1: it
+ * darkens over the first half of early winter, stays through the winter, and fades back over the second
+ * half of late winter.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function winterAmountAt(time: number): number {
+  const u = time / SEGMENT_SECONDS
+  if (u < 4 || u >= 7) {
+    return 0
+  }
+  if (u < 4.5) {
+    return (u - 4) / 0.5
+  }
+  if (u > 6.5) {
+    return (7 - u) / 0.5
+  }
+  return 1
+}
+
 /** Greatest relative wobble of the drop rate around the seasonal trend. */
 const WOBBLE = 0.15
 
