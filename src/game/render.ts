@@ -887,8 +887,7 @@ function* buildVegImage(
         const rock = layer.rocks[prop.index]
         if (rock && near(rock.x, rock.rx * 1.5)) {
           mossFade = transitionProgress(rock.fadeStart, time)
-          paintRock(ctx, rock, rock.x, prop.y + rock.ry * 0.4)
-          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowCapLayers(time))
+          paintRockWithSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowCapLayers(time))
           mossFade = 0
         }
       } else if (prop.kind === 'fern') {
@@ -3724,35 +3723,113 @@ function rockSnowSize(rock: Rock, time: number): number {
 }
 
 /**
- * Lays snow on the upper part of a rock: a white cap over its top with a lumpy lower edge, and a little
- * bulge over the outline, thicker the more snow there is.
+ * The geometry of the snow on a rock: where the dusting and the full cap end, with lumps.
  *
- * @param ctx - 2D canvas context.
- * @param rock - The rock.
  * @param cx - Center x.
  * @param baseY - Y of the rock's base line.
- * @param amount - How big the snow is, 0-1 (it melts away as it shrinks).
- * @param layers - How strongly each layer of snow shows, 0-1: the thin coat along the rock's upper boundary, and the full covering.
+ * @param rx - Half width.
+ * @param ry - Height.
+ * @param phase - Shape of the lumps.
+ * @param amount - How big the snow is, 0-1.
  */
-function paintRockSnow(
-  ctx: CanvasRenderingContext2D,
-  rock: Rock,
+function snowGeometry(
   cx: number,
   baseY: number,
+  rx: number,
+  ry: number,
+  phase: number,
   amount: number,
-  layers: { thin: number; full: number },
-): void {
-  if (amount < 0.04 || layers.thin < 0.02) {
-    return
+): { top: number; depth: number; dustDepth: number; edgeY: (x: number) => number; dustY: (x: number) => number } {
+  // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
+  const depth = rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)
+  const lumps = (x: number): number => ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
+  const dustDepth = ry * 0.6
+  return {
+    top: baseY - ry * 1.2,
+    depth,
+    dustDepth,
+    edgeY: (x) => baseY - ry * 1.15 + depth + lumps(x),
+    dustY: (x) => baseY - ry * 1.15 + dustDepth + lumps(x) * 0.6,
   }
-  const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
-  paintSnowCap(ctx, rockShape(rock, cx, baseY).outline, cx, baseY, rock.rx, rock.ry, phase, amount, layers, rock.fog)
 }
 
 /**
- * Lays a cap of snow over the upper part of a rock's outline: white with a lumpy lower edge (shallower on
- * the giant boulders, so some of them still shows underneath), a little shade at the bottom of the cap and
- * a heap of snow over the top edge.
+ * The colors of a rock's snow (it takes some of the rock's distance haze).
+ *
+ * @param fog - The rock's distance haze.
+ */
+function snowColors(fog: number): { top: string; bottom: string } {
+  return {
+    top: fog > 0 ? mixHex(SNOW_TOP, WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)) : SNOW_TOP,
+    bottom: mixHex('#d4e3f3', WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)),
+  }
+}
+
+/**
+ * Paints the snow shapes of a rock, not cut to anything (the caller keeps them to the rock's silhouette): a
+ * dusting along the upper boundary that thins out downward (no hard line where it ends), and over it the full
+ * cap with a lumpy lower edge, which comes in inside the rock.
+ *
+ * @param ctx - 2D canvas context.
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ * @param rx - Half width.
+ * @param ry - Height.
+ * @param phase - Shape of the lumps.
+ * @param amount - How big the snow is, 0-1.
+ * @param layers - How strongly the dusting and the full cap show, 0-1.
+ * @param fog - The rock's distance haze.
+ */
+function paintSnowShapes(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  baseY: number,
+  rx: number,
+  ry: number,
+  phase: number,
+  amount: number,
+  layers: { thin: number; full: number },
+  fog: number,
+): void {
+  const colors = snowColors(fog)
+  const [tr, tg, tb] = parseRgb(colors.top)
+  const g = snowGeometry(cx, baseY, rx, ry, phase, amount)
+  const across = (edge: (x: number) => number): void => {
+    ctx.beginPath()
+    ctx.moveTo(cx - rx * 1.4, baseY - ry * 1.5)
+    for (let k = 0; k <= 24; k += 1) {
+      const x = cx - rx * 1.4 + (rx * 2.8 * k) / 24
+      ctx.lineTo(x, edge(x))
+    }
+    ctx.lineTo(cx + rx * 1.4, baseY - ry * 1.5)
+    ctx.closePath()
+  }
+  ctx.save()
+  if (layers.thin > 0.02) {
+    ctx.globalAlpha = layers.thin * Math.min(1, amount * 3)
+    const dust = ctx.createLinearGradient(0, g.top, 0, baseY - ry * 1.15 + g.dustDepth + ry * 0.12)
+    dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 0.95)`)
+    dust.addColorStop(0.55, `rgba(${tr}, ${tg}, ${tb}, 0.55)`)
+    dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
+    ctx.fillStyle = dust
+    across(g.dustY)
+    ctx.fill()
+  }
+  if (layers.full > 0.02) {
+    ctx.globalAlpha = layers.full
+    const cap = ctx.createLinearGradient(0, g.top, 0, baseY - ry * 1.15 + g.depth + ry * 0.2)
+    cap.addColorStop(0, colors.top)
+    cap.addColorStop(1, colors.bottom)
+    ctx.fillStyle = cap
+    across(g.edgeY)
+    ctx.fill()
+  }
+  ctx.restore()
+}
+
+/**
+ * Paints the snow heaped over the top edge of a rock's outline; it rises from the rock as the full cap comes
+ * in (the line grows from nothing).
  *
  * @param ctx - 2D canvas context.
  * @param outline - The rock's outline.
@@ -3762,8 +3839,192 @@ function paintRockSnow(
  * @param ry - Height.
  * @param phase - Shape of the lumps.
  * @param amount - How big the snow is, 0-1.
- * @param layers - How strongly the thin coat and the full covering show, 0-1.
- * @param fog - The rock's distance haze (the snow takes some of it, so it is not whiter than its surroundings).
+ * @param full - How far the full cap has come in, 0-1.
+ * @param fog - The rock's distance haze.
+ */
+function paintSnowHeap(
+  ctx: CanvasRenderingContext2D,
+  outline: [number, number][],
+  cx: number,
+  baseY: number,
+  rx: number,
+  ry: number,
+  phase: number,
+  amount: number,
+  full: number,
+  fog: number,
+): void {
+  if (full <= 0.02) {
+    return
+  }
+  const g = snowGeometry(cx, baseY, rx, ry, phase, amount)
+  ctx.save()
+  ctx.strokeStyle = snowColors(fog).top
+  ctx.lineWidth = Math.max(1.5, ry * 0.14) * full
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  let pen = false
+  for (const [x, y] of outline) {
+    if (y < g.edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
+      if (pen) {
+        ctx.lineTo(x, y - ctx.lineWidth * 0.25)
+      } else {
+        ctx.moveTo(x, y - ctx.lineWidth * 0.25)
+        pen = true
+      }
+    } else {
+      pen = false
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
+}
+
+/**
+ * The shape phase of a rock's snow lumps.
+ *
+ * @param rock - The rock.
+ */
+function snowPhase(rock: Rock): number {
+  return (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
+}
+
+/**
+ * Paints a rock with snow lying on it, for the far layers' images: the rock is painted on a canvas of its own,
+ * the snow shapes are cut to what it painted (so the snow covers exactly its silhouette, moss that hangs over
+ * the outline included) and both are drawn onto the image.
+ *
+ * @param ctx - 2D canvas context of the image.
+ * @param rock - The rock.
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ * @param amount - How big the snow is, 0-1.
+ * @param layers - How strongly the dusting and the full cap show, 0-1.
+ */
+function paintRockWithSnow(
+  ctx: CanvasRenderingContext2D,
+  rock: Rock,
+  cx: number,
+  baseY: number,
+  amount: number,
+  layers: { thin: number; full: number },
+): void {
+  if (amount < 0.04 || layers.thin < 0.02) {
+    paintRock(ctx, rock, cx, baseY)
+    return
+  }
+  const res = ctx.getTransform().a
+  const pad = 6
+  const width = rock.rx * 3 + pad * 2
+  const above = rock.ry * 1.8 + pad
+  const height = above + rock.ry * 0.9 + pad
+  const rockCanvas = newCanvas()
+  rockCanvas.width = Math.max(1, Math.ceil(width * res))
+  rockCanvas.height = Math.max(1, Math.ceil(height * res))
+  const rctx = rockCanvas.getContext('2d') as CanvasRenderingContext2D | null
+  const snowCanvas = newCanvas()
+  snowCanvas.width = rockCanvas.width
+  snowCanvas.height = rockCanvas.height
+  const sctx = snowCanvas.getContext('2d') as CanvasRenderingContext2D | null
+  if (!rctx || !sctx) {
+    paintRock(ctx, rock, cx, baseY)
+    return
+  }
+  const phase = snowPhase(rock)
+  rctx.scale(res, res)
+  rctx.translate(width / 2, above)
+  paintRock(rctx, rock, 0, 0)
+  sctx.scale(res, res)
+  sctx.translate(width / 2, above)
+  paintSnowShapes(sctx, 0, 0, rock.rx, rock.ry, phase, amount, layers, rock.fog)
+  // Keep the snow only where the rock was painted.
+  sctx.setTransform(1, 0, 0, 1, 0, 0)
+  sctx.globalCompositeOperation = 'destination-in'
+  sctx.drawImage(rockCanvas, 0, 0)
+  ctx.drawImage(rockCanvas, cx - width / 2, baseY - above, width, height)
+  ctx.drawImage(snowCanvas, cx - width / 2, baseY - above, width, height)
+  paintSnowHeap(ctx, rockShape(rock, cx, baseY).outline, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
+}
+
+type RockSnowOverlay = { canvas: HTMLCanvasElement; thin: number; full: number; size: number }
+
+const rockSnowOverlays = new WeakMap<Rock, RockSnowOverlay>()
+
+/**
+ * Draws the snow on a rock from its bitmap: an overlay the shape of the rock's silhouette (moss that hangs
+ * over the outline included), made by cutting the snow shapes to the bitmap and kept until the snow changes a
+ * step, and the heap over the top edge.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param rock - The rock.
+ * @param sprite - The rock's bitmap (its silhouette).
+ * @param baseY - Y of the rock's base line.
+ * @param amount - How big the snow is, 0-1.
+ * @param layers - How strongly the dusting and the full cap show, 0-1.
+ */
+function drawRockSnow(
+  ctx: CanvasRenderingContext2D,
+  rock: Rock,
+  sprite: RockSprite,
+  baseY: number,
+  amount: number,
+  layers: { thin: number; full: number },
+): void {
+  if (amount < 0.04 || layers.thin < 0.02) {
+    rockSnowOverlays.delete(rock)
+    return
+  }
+  const quantize = (x: number): number => Math.round(x * 24) / 24
+  const thin = quantize(layers.thin)
+  const full = quantize(layers.full)
+  const size = quantize(amount)
+  let overlay = rockSnowOverlays.get(rock)
+  if (!overlay || overlay.thin !== thin || overlay.full !== full || overlay.size !== size) {
+    const canvas = overlay?.canvas ?? document.createElement('canvas')
+    // Half the bitmap's size is plenty for a soft white shape (and keeps the overlay small).
+    const w = Math.max(1, Math.ceil(sprite.canvas.width * 0.5))
+    const h = Math.max(1, Math.ceil(sprite.canvas.height * 0.5))
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+    const sctx = canvas.getContext('2d')
+    if (!sctx) {
+      return
+    }
+    sctx.setTransform(1, 0, 0, 1, 0, 0)
+    sctx.globalCompositeOperation = 'source-over'
+    sctx.clearRect(0, 0, w, h)
+    const k = w / sprite.width
+    sctx.scale(k, k)
+    sctx.translate(-sprite.offsetX, -sprite.offsetY)
+    paintSnowShapes(sctx, 0, 0, rock.rx, rock.ry, snowPhase(rock), size, { thin, full }, rock.fog)
+    sctx.setTransform(1, 0, 0, 1, 0, 0)
+    sctx.globalCompositeOperation = 'destination-in'
+    sctx.drawImage(sprite.canvas, 0, 0, w, h)
+    sctx.globalCompositeOperation = 'source-over'
+    overlay = { canvas, thin, full, size }
+    rockSnowOverlays.set(rock, overlay)
+  }
+  ctx.drawImage(overlay.canvas, rock.x + sprite.offsetX, baseY + sprite.offsetY, sprite.width, sprite.height)
+  paintSnowHeap(ctx, rockShape(rock, rock.x, baseY).outline, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full, rock.fog)
+}
+
+/**
+ * Lays a cap of snow over the upper part of a simple (little, hazy) rock's outline: clipped to the outline
+ * (these rocks have no moss over their edge), plus the heap over the top.
+ *
+ * @param ctx - 2D canvas context.
+ * @param outline - The rock's outline.
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ * @param rx - Half width.
+ * @param ry - Height.
+ * @param phase - Shape of the lumps.
+ * @param amount - How big the snow is, 0-1.
+ * @param layers - How strongly the dusting and the full cap show, 0-1.
+ * @param fog - The rock's distance haze.
  */
 function paintSnowCap(
   ctx: CanvasRenderingContext2D,
@@ -3777,77 +4038,14 @@ function paintSnowCap(
   layers: { thin: number; full: number },
   fog: number,
 ): void {
-  const topColor = fog > 0 ? mixHex(SNOW_TOP, WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)) : SNOW_TOP
-  const bottomColor = mixHex('#d4e3f3', WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7))
-  const [tr, tg, tb] = parseRgb(topColor)
-  const top = baseY - ry * 1.2
-  // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
-  const depth = rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)
-  const lumps = (x: number): number => ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
-  const edgeY = (x: number): number => baseY - ry * 1.15 + depth + lumps(x)
-  const dustDepth = ry * 0.6
-  const dustY = (x: number): number => baseY - ry * 1.15 + dustDepth + lumps(x) * 0.6
-  const across = (edge: (x: number) => number): void => {
-    ctx.beginPath()
-    ctx.moveTo(cx - rx * 1.4, baseY - ry * 1.5)
-    for (let k = 0; k <= 24; k += 1) {
-      const x = cx - rx * 1.4 + (rx * 2.8 * k) / 24
-      ctx.lineTo(x, edge(x))
-    }
-    ctx.lineTo(cx + rx * 1.4, baseY - ry * 1.5)
-    ctx.closePath()
-  }
   ctx.save()
   ctx.beginPath()
   outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
   ctx.closePath()
   ctx.clip()
-  // First a dusting along the upper boundary that thins out downward (no hard line where it ends).
-  if (layers.thin > 0.02) {
-    ctx.globalAlpha = layers.thin * Math.min(1, amount * 3)
-    const dust = ctx.createLinearGradient(0, top, 0, baseY - ry * 1.15 + dustDepth + ry * 0.12)
-    dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 0.95)`)
-    dust.addColorStop(0.55, `rgba(${tr}, ${tg}, ${tb}, 0.55)`)
-    dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
-    ctx.fillStyle = dust
-    across(dustY)
-    ctx.fill()
-  }
-  // Then the full cap, inside the rock (it comes in over the dusting, not out of the air).
-  if (layers.full > 0.02) {
-    ctx.globalAlpha = layers.full
-    const cap = ctx.createLinearGradient(0, top, 0, baseY - ry * 1.15 + depth + ry * 0.2)
-    cap.addColorStop(0, topColor)
-    cap.addColorStop(1, bottomColor)
-    ctx.fillStyle = cap
-    across(edgeY)
-    ctx.fill()
-  }
+  paintSnowShapes(ctx, cx, baseY, rx, ry, phase, amount, layers, fog)
   ctx.restore()
-  // The snow heaped over the top edge of the outline rises from the rock as the full cap comes in.
-  if (layers.full > 0.02) {
-    ctx.save()
-    ctx.strokeStyle = topColor
-    ctx.lineWidth = Math.max(1.5, ry * 0.14) * layers.full
-    ctx.lineCap = 'round'
-    ctx.lineJoin = 'round'
-    ctx.beginPath()
-    let pen = false
-    for (const [x, y] of outline) {
-      if (y < edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
-        if (pen) {
-          ctx.lineTo(x, y - ctx.lineWidth * 0.25)
-        } else {
-          ctx.moveTo(x, y - ctx.lineWidth * 0.25)
-          pen = true
-        }
-      } else {
-        pen = false
-      }
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
+  paintSnowHeap(ctx, outline, cx, baseY, rx, ry, phase, amount, layers.full, fog)
 }
 
 /**
@@ -4084,7 +4282,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, fa
       queueRockWinter(rock, res)
     }
   }
-  paintRockSnow(ctx, rock, rock.x, y, rockSnowSize(rock, seasonNow), snowCapLayers(seasonNow))
+  drawRockSnow(ctx, rock, summer, y, rockSnowSize(rock, seasonNow), snowCapLayers(seasonNow))
 }
 
 /**
@@ -4142,8 +4340,7 @@ function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numb
   const snowSize = rockSnowSize(rock, seasonNow)
   const snowLayers = snowCapLayers(seasonNow)
   if (snowSize > 0.04 && snowLayers.thin > 0.02) {
-    const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
-    paintSnowCap(ctx, outline, rock.x, baseY, rock.rx, rock.ry, phase, snowSize, snowLayers, rock.fog)
+    paintSnowCap(ctx, outline, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), snowSize, snowLayers, rock.fog)
   }
   // A few fallen leaves over the base, as if the rock were settled into the litter.
   if (rock.rx < 7) {
