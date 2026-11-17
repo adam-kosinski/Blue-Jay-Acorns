@@ -31,65 +31,97 @@ export type SeasonClock = {
   phases: [number, number, number]
 }
 
-/**
- * Times (in segments, 1 = the start of early fall) at which the trees' leaves change, so a bounded number
- * of distinct looks exists: a quarter, half, three quarters and all of the trees turn color at 1.5, 2, 2.5
- * and 3 (half of them by the end of early fall, all of them by the end of mid fall); a quarter, half and
- * all of them have lost their leaves at 3.33, 3.67 and 4 (the start of winter).
- */
-const LEAF_STEPS = [1.5, 2, 2.5, 3, 10 / 3, 11 / 3, 4]
-const COLORED_AT = [0.25, 0.5, 0.75, 1]
-const BARE_AT = [0.25, 0.5, 1]
+/** How long each tree's, bush's, fern's and moss's change from summer to winter lasts, in segments (two subseasons). */
+export const TRANSITION_SEGMENTS = 2
 
 /**
- * The leaf stage at a time: how many of the steps have passed (0 is summer, all green). The trees only
- * look different when the stage changes.
+ * How far along its change an object is: 0 before it starts and 1 after it ends. Each object starts at its
+ * own time somewhere in early fall (`start` is the share of early fall) so that it ends somewhere in late fall.
  *
+ * @param start - The object's start, 0-1.
  * @param time - Seconds along the timeline.
  */
-export function leafStageAt(time: number): number {
+export function transitionProgress(start: number, time: number): number {
   const u = time / SEGMENT_SECONDS
-  return LEAF_STEPS.filter((step) => u >= step).length
+  return Math.max(0, Math.min(1, (u - (1 + start)) / TRANSITION_SEGMENTS))
+}
+
+/** Where along its change (0-1) a tree or bush is green, half colorful, fully colorful, half bare, and bare. */
+const LEAF_KEYS = [0, 1 / 6, 1 / 2, 5 / 6, 1]
+/** The share of its leaves that are there at each of those moments. */
+const LEAF_PRESENCE = [1, 1, 1, 0.5, 0]
+/** The share of the leaves there that are in fall color at each of those moments. */
+const LEAF_FALL = [0, 0.5, 1, 1, 1]
+
+/**
+ * Linear interpolation along a list of keyed values.
+ *
+ * @param keys - Increasing positions.
+ * @param values - The value at each position.
+ * @param at - Where to read.
+ */
+function along(keys: number[], values: number[], at: number): number {
+  for (let i = 1; i < keys.length; i += 1) {
+    const k1 = keys[i] ?? 1
+    if (at <= k1) {
+      const k0 = keys[i - 1] ?? 0
+      const v0 = values[i - 1] ?? 0
+      const v1 = values[i] ?? 0
+      return v0 + ((v1 - v0) * (at - k0)) / (k1 - k0)
+    }
+  }
+  return values[values.length - 1] ?? 0
 }
 
 /**
- * What a tree's leaves look like at a time: green in summer, in its fall color once its rank has come
- * up (a quarter of the trees at 1.5 segments, half by the end of early fall, all by the end of mid
- * fall), and gone once its other rank has (a quarter, then half of the trees in late fall, all of them
- * from the start of winter, through spring for now).
+ * The look of a tree's or bush's leaves at a point of its change: green, then half colorful, then fully
+ * colorful (a third of the change each), then half of the leaves gone, then all of them gone.
  *
- * @param leaf - The tree's seasonal traits.
- * @param time - Seconds along the timeline.
+ * @param progress - Its progress, 0-1 (see `transitionProgress`).
  */
-export function leafStateAt(leaf: { colorRank: number; bareRank: number }, time: number): 'green' | 'fall' | 'bare' {
-  const stage = leafStageAt(time)
-  const colored = stage >= 1 ? (COLORED_AT[Math.min(stage, 4) - 1] ?? 0) : 0
-  const bare = stage >= 5 ? (BARE_AT[stage - 5] ?? 1) : 0
-  if (leaf.bareRank < bare) {
-    return 'bare'
-  }
-  return leaf.colorRank < colored ? 'fall' : 'green'
+export function leafLook(progress: number): { presence: number; fall: number } {
+  return { presence: along(LEAF_KEYS, LEAF_PRESENCE, progress), fall: along(LEAF_KEYS, LEAF_FALL, progress) }
 }
 
 /**
- * How far into its winter look the undergrowth (ferns and moss) is, from 0 (summer and spring) to 1: it
- * darkens over the first half of early winter, stays through the winter, and fades back over the second
- * half of late winter.
+ * The same look as the opacity of a green and of a fall-colored crown drawn over each other (for
+ * objects drawn from ready-made images).
+ *
+ * @param progress - Its progress, 0-1.
+ */
+export function leafAlphas(progress: number): { green: number; fall: number } {
+  const { presence, fall } = leafLook(progress)
+  return { green: presence * (1 - fall), fall: presence * fall }
+}
+
+/** The number of moments along the timeline that images of the far layers are made for. */
+export const SAMPLE_COUNT = 7
+
+/**
+ * The time of one of the sample moments: the first is the start of early fall (all summer before it), the
+ * last the start of winter, with one every half segment (all winter after it).
+ *
+ * @param index - 0 to `SAMPLE_COUNT` - 1.
+ */
+export function sampleTime(index: number): number {
+  return SEGMENT_SECONDS * (1 + 0.5 * index)
+}
+
+/**
+ * The two sample moments a time lies between and how far (0-1) it is from the first to the second.
  *
  * @param time - Seconds along the timeline.
  */
-export function winterAmountAt(time: number): number {
-  const u = time / SEGMENT_SECONDS
-  if (u < 4 || u >= 7) {
-    return 0
+export function sampleAt(time: number): { k: number; t: number } {
+  const x = (time / SEGMENT_SECONDS - 1) / 0.5
+  if (x <= 0) {
+    return { k: 0, t: 0 }
   }
-  if (u < 4.5) {
-    return (u - 4) / 0.5
+  if (x >= SAMPLE_COUNT - 1) {
+    return { k: SAMPLE_COUNT - 2, t: 1 }
   }
-  if (u > 6.5) {
-    return (7 - u) / 0.5
-  }
-  return 1
+  const k = Math.floor(x)
+  return { k, t: x - k }
 }
 
 /** Greatest relative wobble of the drop rate around the seasonal trend. */

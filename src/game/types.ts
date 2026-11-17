@@ -176,10 +176,10 @@ export type TreeLobe = {
 export type LeafSeason = {
   /** Its fall color's hue in degrees: 0 is red, about 55 yellow. */
   hue: number
-  /** Where it ranks (0-1) among the trees for turning color: the lowest ranks turn first. */
-  colorRank: number
-  /** Where it ranks (0-1) among the trees for losing its leaves in late fall. */
-  bareRank: number
+  /** Its fall color's saturation (0-1): some trees and bushes are duller than others. */
+  sat: number
+  /** When its change starts, as a share (0-1) of early fall; the change lasts two segments (see `transitionProgress`). */
+  start: number
 }
 
 /** Generated oak: trunk and branches plus many leaf lobes. */
@@ -292,6 +292,8 @@ export type Log = {
   flip: number
   /** Whether moss grows along the top. */
   moss: boolean
+  /** When its moss starts to fade into its winter color, as a share (0-1) of early fall. */
+  fadeStart: number
 }
 
 /** Boulder or small rock: a jittered half-ellipse polygon. */
@@ -307,6 +309,8 @@ export type Rock = {
   litter: string[]
   /** Whether moss grows on top of the rock. */
   moss: boolean
+  /** When its moss starts to fade into its winter color, as a share (0-1) of early fall. */
+  fadeStart: number
   /** Haze blended into its colors (background layers); 0 in the foreground. */
   fog: number
 }
@@ -317,6 +321,8 @@ export type Fern = {
   size: number
   /** Index into a few green tones. */
   tone: number
+  /** When it starts to fade into its winter color, as a share (0-1) of early fall. */
+  fadeStart: number
   /** Each frond rises from its own point (`base`, in fern sizes from the center): the crown is below the ground. */
   fronds: { angle: number; length: number; bend: number; base: number }[]
 }

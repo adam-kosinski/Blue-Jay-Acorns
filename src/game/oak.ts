@@ -1,8 +1,30 @@
-import { fallTones } from './leafColors'
+import { fallTones, newLeafSeason } from './leafColors'
+import { enqueueJob } from './work'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
 
-/** What a tree's leaves look like: green, in fall color, or gone. `haze` blends fall colors toward the haze for distant trees. */
-export type TreeLook = { state: 'green' | 'fall' | 'bare'; haze?: { color: string; amount: number } }
+/**
+ * What a tree's leaves look like: `presence` is the share of its leaves still there (0 is bare), `fall` the
+ * share of those in their fall color (the rest are green). `haze` blends fall colors toward the haze for
+ * distant trees.
+ */
+export type TreeLook = { presence: number; fall: number; haze?: { color: string; amount: number } }
+
+/** How some leaves of a clump differ from the green ones: which are missing and which are in fall color. */
+export type LeafMix = { tonesB: string[]; fall: number; presence: number; seed: number }
+
+/**
+ * A repeatable pseudo-random number in [0, 1) from two integers.
+ *
+ * @param a - First integer.
+ * @param b - Second integer.
+ */
+function hash01(a: number, b: number): number {
+  let h = Math.imul(a ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(b + 0x7f4a7c15, 0xc2b2ae35)
+  h ^= h >>> 15
+  h = Math.imul(h, 0x2c1b3c6d)
+  h ^= h >>> 12
+  return (h >>> 0) / 4294967296
+}
 
 /** Number of leaf tones (dark to light) a tree's lobes pick from. */
 export const OAK_TONE_COUNT = 4
@@ -24,11 +46,7 @@ type TreeSprite = {
   height: number
 }
 
-const spriteCache = new Map<string, TreeSprite>()
 
-/** The latest bitmap built or used for each tree, and how many more may be built for a changed look this frame. */
-const latestSprite = new Map<string, TreeSprite>()
-let treeBuildsLeft = 1
 
 /**
  * Random number in `[min, max)`.
@@ -216,9 +234,8 @@ export function generateOak(
     top = Math.min(top, lobe.y - lobe.r)
   }
   nextShapeId += 1
-  // Fall color: anywhere from red (0) to yellow (55 degrees); the ranks decide when this tree turns and
-  // when it drops its leaves relative to the other trees.
-  const leaf = { hue: randRange(0, 55), colorRank: Math.random(), bareRank: Math.random() }
+  // Fall color: anywhere from red (0) to yellow (55 degrees), with its own saturation and its own start.
+  const leaf = newLeafSeason()
   return { id: nextShapeId, segments, lobes, halfWidth, top, flare, leaf }
 }
 
@@ -296,7 +313,7 @@ function fillBlob(
   x: number,
   y: number,
   r: number,
-  color: string,
+  color: string | null,
   rand: () => number,
 ): [number, number][] {
   const corners = 8
@@ -310,6 +327,9 @@ function fillBlob(
     pts.push([x + Math.cos(a) * rad * stretch, y + Math.sin(a) * rad * squash])
   }
   const at = (i: number): [number, number] => pts[((i % corners) + corners) % corners] ?? [x, y]
+  if (color === null) {
+    return pts
+  }
   ctx.fillStyle = color
   ctx.beginPath()
   const startA = at(corners - 1)
@@ -339,6 +359,8 @@ function fillBlob(
  * @param rand - Deterministic random source.
  * @param detail - Leaf density from 0 (single plain blob) to 1 (full).
  * @param overlap - 0 for airy foliage with gaps (trees); toward 1 the sub-blobs pack tighter.
+ * @param mix - Some leaves missing and some in a second set of tones (the same ones every time, so a leaf
+ *   that is gone stays gone as more of them go).
  */
 export function drawLeafyDisk(
   ctx: CanvasRenderingContext2D,
@@ -350,13 +372,36 @@ export function drawLeafyDisk(
   rand: () => number,
   detail: number,
   overlap = 0,
+  mix?: LeafMix,
 ): void {
-  const last = tones.length - 1
-  const tone = (i: number): string => tones[Math.max(0, Math.min(last, Math.round(i)))] ?? '#2f7a3a'
-  const base = tone(baseTone)
+  const toneIn = (set: string[], i: number): string =>
+    set[Math.max(0, Math.min(set.length - 1, Math.round(i)))] ?? '#2f7a3a'
+  // The solid mass under the leaves thins out before the leaves do, so a half-bare crown shows branches.
+  const blobShare = mix ? Math.max(0, Math.min(1, (mix.presence - 0.15) / 0.55)) : 1
+  const blobColor = (j: number): string | null => {
+    if (!mix) {
+      return toneIn(tones, baseTone)
+    }
+    if (hash01(mix.seed, 100 + j) >= blobShare) {
+      return null
+    }
+    return toneIn(hash01(mix.seed, 200 + j) < mix.fall ? mix.tonesB : tones, baseTone)
+  }
+  // Each leaf is there or not, and green or in fall color, by its own fixed draw.
+  let leafCount = 0
+  const leafSet = (): string[] | null => {
+    leafCount += 1
+    if (!mix) {
+      return tones
+    }
+    if (hash01(mix.seed, leafCount) >= mix.presence) {
+      return null
+    }
+    return hash01(mix.seed + 7, leafCount) < mix.fall ? mix.tonesB : tones
+  }
 
   if (detail < 0.12) {
-    fillBlob(ctx, x, y, r * 0.95, base, rand)
+    fillBlob(ctx, x, y, r * 0.95, blobColor(0), rand)
     return
   }
 
@@ -369,7 +414,7 @@ export function drawLeafyDisk(
     const dist = r * (0.5 + rand() * 0.18 - overlap * 0.2)
     const cx = x + Math.cos(a) * dist
     const cy = y + Math.sin(a) * dist
-    blobs.push({ cx, cy, pts: fillBlob(ctx, cx, cy, r * (0.42 + rand() * 0.1 + overlap * 0.12), base, rand) })
+    blobs.push({ cx, cy, pts: fillBlob(ctx, cx, cy, r * (0.42 + rand() * 0.1 + overlap * 0.12), blobColor(j + 1), rand) })
   }
 
   const leafLen = r * 0.25
@@ -395,15 +440,13 @@ export function drawLeafyDisk(
       const lx = blob.cx + u * (p[0] - blob.cx) + v * (q[0] - blob.cx)
       const ly = blob.cy + u * (p[1] - blob.cy) + v * (q[1] - blob.cy)
       const light = (-(lx - x) - (ly - y)) / (r * 1.1)
-      drawLeaf(
-        ctx,
-        lx,
-        ly,
-        leafLen * (0.8 + rand() * 0.5),
-        Math.PI + (rand() - 0.5) * 1.5,
-        tone(baseTone + light * 1.5 + (rand() - 0.5) * 1.4),
-        detail >= 0.6,
-      )
+      const len = leafLen * (0.8 + rand() * 0.5)
+      const angle = Math.PI + (rand() - 0.5) * 1.5
+      const shade = baseTone + light * 1.5 + (rand() - 0.5) * 1.4
+      const set = leafSet()
+      if (set) {
+        drawLeaf(ctx, lx, ly, len, angle, toneIn(set, shade), detail >= 0.6)
+      }
     }
 
     // A few leaves centered on the outline, so they stick partly outside for a fluffy edge.
@@ -415,15 +458,13 @@ export function drawLeafyDisk(
       const ex = p[0] + (q[0] - p[0]) * t
       const ey = p[1] + (q[1] - p[1]) * t
       const light = (-(ex - x) - (ey - y)) / (r * 1.1)
-      drawLeaf(
-        ctx,
-        ex,
-        ey,
-        leafLen * (0.9 + rand() * 0.4),
-        Math.PI + (rand() - 0.5) * 2 + (ex - blob.cx > 0 ? 0.4 : -0.4),
-        tone(baseTone + light * 1.1 + (rand() - 0.5) * 1.2),
-        detail >= 0.6,
-      )
+      const len = leafLen * (0.9 + rand() * 0.4)
+      const angle = Math.PI + (rand() - 0.5) * 2 + (ex - blob.cx > 0 ? 0.4 : -0.4)
+      const shade = baseTone + light * 1.1 + (rand() - 0.5) * 1.2
+      const set = leafSet()
+      if (set) {
+        drawLeaf(ctx, ex, ey, len, angle, toneIn(set, shade), detail >= 0.6)
+      }
     }
   }
 }
@@ -752,7 +793,8 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
 }
 
 /**
- * Draws a generated oak with its base at (x, y), vector by vector.
+ * Draws a generated oak with its base at (x, y), vector by vector, in steps: a generator that yields after
+ * the trunk and then every few leaf lobes, so that a big tree can be drawn a little each frame.
  *
  * @param ctx - 2D canvas context.
  * @param shape - Generated tree.
@@ -761,8 +803,10 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
  * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
  * @param trunkColor - Trunk and branch fill.
  * @param leafDetail - Leaf density from 0 to 1.
+ * @param crownOnly - Draw only the leaves.
+ * @param look - How many leaves there are and how many of those are in fall color.
  */
-export function drawOakVector(
+export function* drawOakSteps(
   ctx: CanvasRenderingContext2D,
   shape: TreeShape,
   x: number,
@@ -771,8 +815,8 @@ export function drawOakVector(
   trunkColor: string,
   leafDetail = 1,
   crownOnly = false,
-  look: TreeLook = { state: 'green' },
-): void {
+  look: TreeLook = { presence: 1, fall: 0 },
+): Generator<void> {
   ctx.save()
   ctx.translate(x, y)
 
@@ -801,39 +845,88 @@ export function drawOakVector(
       drawBark(ctx, shape)
     }
   }
-  if (look.state !== 'bare') {
+  yield
+  if (look.presence > 0) {
     const rand = seededRandom(shape.id * 7919 + 13)
-    shape.lobes.forEach((lobe, index) => {
-      // In fall every lobe has the tree's color with its own small shift in hue.
-      const lobeTones =
-        look.state === 'fall'
-          ? fallTones(shape.leaf.hue, (seededRandom(shape.id * 31 + index)() - 0.5) * 18, look.haze ?? null)
-          : tones
-      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, lobeTones, lobe.tone, rand, leafDetail)
-    })
+    for (let index = 0; index < shape.lobes.length; index += 1) {
+      const lobe = shape.lobes[index]
+      if (!lobe) {
+        continue
+      }
+      // Every lobe has the tree's fall color with its own small shift in hue.
+      const mix: LeafMix | undefined =
+        look.fall > 0 || look.presence < 1
+          ? {
+              tonesB:
+                look.fall > 0
+                  ? fallTones(shape.leaf.hue, (seededRandom(shape.id * 31 + index)() - 0.5) * 18, look.haze ?? null, shape.leaf.sat)
+                  : tones,
+              fall: look.fall,
+              presence: look.presence,
+              seed: shape.id * 131 + index,
+            }
+          : undefined
+      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail, 0, mix)
+      yield
+    }
   }
   ctx.restore()
 }
 
 /**
- * Renders a tree once into an offscreen canvas.
+ * Draws a generated oak with its base at (x, y), vector by vector.
+ *
+ * @param ctx - 2D canvas context.
+ * @param shape - Generated tree.
+ * @param x - Base X.
+ * @param y - Base Y.
+ * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
+ * @param trunkColor - Trunk and branch fill.
+ * @param leafDetail - Leaf density from 0 to 1.
+ * @param crownOnly - Draw only the leaves.
+ * @param look - How many leaves there are and how many of those are in fall color.
+ */
+export function drawOakVector(
+  ctx: CanvasRenderingContext2D,
+  shape: TreeShape,
+  x: number,
+  y: number,
+  tones: string[],
+  trunkColor: string,
+  leafDetail = 1,
+  crownOnly = false,
+  look: TreeLook = { presence: 1, fall: 0 },
+): void {
+  for (const step of drawOakSteps(ctx, shape, x, y, tones, trunkColor, leafDetail, crownOnly, look)) {
+    void step
+  }
+}
+
+/** The parts a foreground tree is drawn from: the trunk and branches, and its crown in green or in fall color. */
+export type OakPart = 'trunk' | 'green' | 'fall'
+
+const PART_LOOKS: Record<OakPart, TreeLook> = {
+  trunk: { presence: 0, fall: 0 },
+  green: { presence: 1, fall: 0 },
+  fall: { presence: 1, fall: 1 },
+}
+
+/**
+ * Renders a tree part into an offscreen canvas in steps.
  *
  * @param shape - Generated tree.
  * @param tones - Leaf fill colors.
  * @param trunkColor - Trunk and branch fill.
  * @param resolution - Bitmap pixels per CSS pixel.
- * @param crownOnly - Draw only the leaves (same size and position as the whole tree's bitmap).
+ * @param part - Which part.
  */
-function buildSprite(
+function* buildPartSteps(
   shape: TreeShape,
   tones: string[],
   trunkColor: string,
   resolution: number,
-  crownOnly = false,
-  state: TreeLook['state'] = 'green',
-  leafDetail = 1,
-  haze?: TreeLook['haze'],
-): TreeSprite {
+  part: OakPart,
+): Generator<void, TreeSprite> {
   let minY = 0
   let maxY = 14
   for (const lobe of shape.lobes) {
@@ -854,129 +947,103 @@ function buildSprite(
   const ctx = canvas.getContext('2d')
   if (ctx) {
     ctx.scale(scale, scale)
-    drawOakVector(ctx, shape, -minX, -minY, tones, trunkColor, leafDetail, crownOnly, { state, haze })
+    yield* drawOakSteps(ctx, shape, -minX, -minY, tones, trunkColor, 1, part !== 'trunk', PART_LOOKS[part])
   }
   return { canvas, offsetX: minX, offsetY: minY, width, height }
 }
 
+const partCache = new Map<string, TreeSprite>()
+
 /**
- * Returns an oak's cached bitmap, building it if needed (the expensive part).
+ * The key of a tree part's bitmap.
  *
- * @param shape - Generated tree.
- * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
- * @param trunkColor - Trunk and branch fill.
+ * @param shape - Tree.
+ * @param trunkColor - Trunk color.
  * @param resolution - Bitmap pixels per CSS pixel.
- * @param crownOnly - The bitmap of just the leaves.
- * @param state - Green leaves, fall colors or bare.
+ * @param part - Which part.
  */
-export function getOakSprite(
+export function oakPartKey(shape: TreeShape, trunkColor: string, resolution: number, part: OakPart): string {
+  return `${shape.id}|${trunkColor}|${resolution}|${part}`
+}
+
+/**
+ * Builds a tree part's bitmap in steps and stores it (nothing happens if it is already there).
+ *
+ * @param shape - Tree.
+ * @param tones - Leaf fill colors.
+ * @param trunkColor - Trunk color.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ * @param part - Which part.
+ */
+export function* oakPartJob(
   shape: TreeShape,
   tones: string[],
   trunkColor: string,
   resolution: number,
-  crownOnly = false,
-  state: TreeLook['state'] = 'green',
-): TreeSprite {
-  const treeKey = `${shape.id}|${trunkColor}|${resolution}${crownOnly ? '|crown' : ''}`
-  const key = `${treeKey}|${state}`
-  let sprite = spriteCache.get(key)
-  if (sprite) {
-    spriteCache.delete(key)
-    latestSprite.set(treeKey, sprite)
-  } else {
-    // A tree whose look changed keeps showing its previous bitmap while a new one is built (one a frame).
-    const previous = latestSprite.get(treeKey)
-    if (previous && treeBuildsLeft <= 0) {
-      return previous
-    }
-    if (previous) {
-      treeBuildsLeft -= 1
-    }
-    sprite = buildSprite(shape, tones, trunkColor, resolution, crownOnly, state)
-    latestSprite.set(treeKey, sprite)
-    if (spriteCache.size >= SPRITE_CACHE_LIMIT) {
-      const oldest = spriteCache.keys().next().value
-      if (oldest !== undefined) {
-        spriteCache.delete(oldest)
-      }
-    }
+  part: OakPart,
+): Generator<void> {
+  const key = oakPartKey(shape, trunkColor, resolution, part)
+  if (partCache.has(key)) {
+    return
   }
-  spriteCache.set(key, sprite)
-  return sprite
-}
-
-/** Bitmaps of the trees of the backdrop layers, by layer, tree and look; and the latest one built for each tree. */
-const layerSprites = new Map<string, TreeSprite>()
-const layerLatest = new Map<string, TreeSprite>()
-
-/** Most backdrop tree bitmaps kept. */
-const LAYER_SPRITE_LIMIT = 360
-
-/** How many more backdrop tree bitmaps may be built this frame (trees without any bitmap yet are always built). */
-let layerBuildsLeft = 2
-
-/**
- * Sets how many backdrop tree bitmaps may be rebuilt for a new look in the frame about to be drawn.
- *
- * @param count - Builds allowed.
- */
-export function setLayerSpriteBudget(count: number): void {
-  layerBuildsLeft = count
-  treeBuildsLeft = 1
-}
-
-/**
- * The bitmap of a backdrop layer's tree in a given look, built on first use. When the look has changed
- * and the frame's budget for building is used up, the tree keeps its previous bitmap for now, so a change
- * of season spreads over a few frames (and over the trees) instead of stalling one frame.
- *
- * @param shape - The tree.
- * @param layerKey - Which layer it stands in.
- * @param tones - The layer's green tones.
- * @param trunkColor - The layer's trunk color.
- * @param leafDetail - The layer's leaf density.
- * @param look - What its leaves look like.
- * @param resolution - Bitmap pixels per CSS pixel.
- */
-export function getLayerTreeSprite(
-  shape: TreeShape,
-  layerKey: string,
-  tones: string[],
-  trunkColor: string,
-  leafDetail: number,
-  look: TreeLook,
-  resolution: number,
-): TreeSprite {
-  const treeKey = `${layerKey}|${shape.id}`
-  const key = `${treeKey}|${look.state}|${resolution}`
-  const cached = layerSprites.get(key)
-  if (cached) {
-    layerSprites.delete(key)
-    layerSprites.set(key, cached)
-    layerLatest.set(treeKey, cached)
-    return cached
-  }
-  const previous = layerLatest.get(treeKey)
-  if (previous && layerBuildsLeft <= 0) {
-    return previous
-  }
-  if (previous) {
-    layerBuildsLeft -= 1
-  }
-  const sprite = buildSprite(shape, tones, trunkColor, resolution, false, look.state, leafDetail, look.haze)
-  if (layerSprites.size >= LAYER_SPRITE_LIMIT) {
-    const oldest = layerSprites.keys().next().value
+  const sprite = yield* buildPartSteps(shape, tones, trunkColor, resolution, part)
+  if (partCache.size >= SPRITE_CACHE_LIMIT) {
+    const oldest = partCache.keys().next().value
     if (oldest !== undefined) {
-      layerSprites.delete(oldest)
+      partCache.delete(oldest)
     }
   }
-  layerSprites.set(key, sprite)
-  layerLatest.set(treeKey, sprite)
-  return sprite
+  partCache.set(key, sprite)
 }
 
 /**
- * Draws an oak from a cached bitmap (built on first use) with its base at (x, y).
+ * A tree part's bitmap if it has been built.
+ *
+ * @param shape - Tree.
+ * @param trunkColor - Trunk color.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ * @param part - Which part.
+ */
+export function peekOakPart(shape: TreeShape, trunkColor: string, resolution: number, part: OakPart): TreeSprite | null {
+  return partCache.get(oakPartKey(shape, trunkColor, resolution, part)) ?? null
+}
+
+/**
+ * A tree part's bitmap, built now if need be (the summer parts are built before play starts).
+ *
+ * @param shape - Tree.
+ * @param tones - Leaf fill colors.
+ * @param trunkColor - Trunk color.
+ * @param resolution - Bitmap pixels per CSS pixel.
+ * @param part - Which part.
+ */
+export function getOakPart(shape: TreeShape, tones: string[], trunkColor: string, resolution: number, part: OakPart): TreeSprite {
+  let sprite = peekOakPart(shape, trunkColor, resolution, part)
+  if (!sprite) {
+    for (const step of oakPartJob(shape, tones, trunkColor, resolution, part)) {
+      void step
+    }
+    sprite = peekOakPart(shape, trunkColor, resolution, part)
+  }
+  return sprite ?? buildNow(shape, tones, trunkColor, resolution, part)
+}
+
+/**
+ * Builds a part without storing it (a fallback if the cache dropped it at once).
+ */
+function buildNow(shape: TreeShape, tones: string[], trunkColor: string, resolution: number, part: OakPart): TreeSprite {
+  const steps = buildPartSteps(shape, tones, trunkColor, resolution, part)
+  let result = steps.next()
+  while (!result.done) {
+    result = steps.next()
+  }
+  return result.value
+}
+
+/**
+ * Draws an oak from its prebuilt parts with its base at (x, y): the trunk, then the green crown and the fall
+ * crown each faded by its own amount (so a tree can be partly one and partly the other). A part that is not
+ * built yet is queued; until the fall crown exists the green one stands in for it.
  *
  * @param ctx - 2D canvas context.
  * @param shape - Generated tree.
@@ -984,6 +1051,7 @@ export function getLayerTreeSprite(
  * @param y - Base Y.
  * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
  * @param trunkColor - Trunk and branch fill.
+ * @param alphas - Opacity of the green and of the fall crown.
  */
 export function drawOak(
   ctx: CanvasRenderingContext2D,
@@ -992,15 +1060,34 @@ export function drawOak(
   y: number,
   tones: string[],
   trunkColor: string,
-  state: TreeLook['state'] = 'green',
+  alphas: { green: number; fall: number },
 ): void {
-  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, false, state)
-  ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+  const res = ctx.getTransform().a
+  const place = (sprite: TreeSprite, alpha: number): void => {
+    ctx.globalAlpha = alpha
+    ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+    ctx.globalAlpha = 1
+  }
+  place(getOakPart(shape, tones, trunkColor, res, 'trunk'), 1)
+  if (alphas.green <= 0 && alphas.fall <= 0) {
+    return
+  }
+  const fall = peekOakPart(shape, trunkColor, res, 'fall')
+  if (!fall && alphas.fall > 0) {
+    enqueueJob(oakPartKey(shape, trunkColor, res, 'fall'), 1, oakPartJob(shape, tones, trunkColor, res, 'fall'))
+  }
+  const greenAlpha = fall ? alphas.green : Math.min(1, alphas.green + alphas.fall)
+  if (greenAlpha > 0) {
+    place(getOakPart(shape, tones, trunkColor, res, 'green'), greenAlpha)
+  }
+  if (fall && alphas.fall > 0) {
+    place(fall, alphas.fall)
+  }
 }
 
 /**
- * Draws just the leaves of an oak (from their own cached bitmap), over whatever is already there, so
- * that a climbing squirrel can pass behind them.
+ * Draws just the leaves of an oak (from the prebuilt crowns), over whatever is already there, so that a
+ * climbing squirrel can pass behind them.
  *
  * @param ctx - 2D canvas context.
  * @param shape - Generated tree.
@@ -1008,6 +1095,7 @@ export function drawOak(
  * @param y - Base Y.
  * @param tones - Leaf fill colors from dark to light.
  * @param trunkColor - Trunk color (only part of the cache key).
+ * @param alphas - Opacity of the green and of the fall crown.
  */
 export function drawOakCrown(
   ctx: CanvasRenderingContext2D,
@@ -1016,8 +1104,19 @@ export function drawOakCrown(
   y: number,
   tones: string[],
   trunkColor: string,
-  state: TreeLook['state'] = 'green',
+  alphas: { green: number; fall: number },
 ): void {
-  const sprite = getOakSprite(shape, tones, trunkColor, ctx.getTransform().a, true, state)
-  ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+  const res = ctx.getTransform().a
+  const fall = peekOakPart(shape, trunkColor, res, 'fall')
+  const greenAlpha = fall ? alphas.green : Math.min(1, alphas.green + alphas.fall)
+  if (greenAlpha > 0) {
+    const sprite = getOakPart(shape, tones, trunkColor, res, 'green')
+    ctx.globalAlpha = greenAlpha
+    ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+  }
+  if (fall && alphas.fall > 0) {
+    ctx.globalAlpha = alphas.fall
+    ctx.drawImage(fall.canvas, x + fall.offsetX, y + fall.offsetY, fall.width, fall.height)
+  }
+  ctx.globalAlpha = 1
 }

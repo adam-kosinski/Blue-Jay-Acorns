@@ -4,14 +4,28 @@ import { OAK_TONES } from './constants'
 type Hsl = { h: number; s: number; l: number }
 
 /**
- * Converts `#rrggbb` to hue, saturation and lightness.
+ * Reads a `#rrggbb` or `rgb(r,g,b)` color as three numbers 0-255.
+ *
+ * @param color - The color.
+ */
+export function parseRgb(color: string): [number, number, number] {
+  if (color.startsWith('#')) {
+    return [parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16)]
+  }
+  const parts = color.replace(/[^\d.,]/g, '').split(',').map(Number)
+  return [parts[0] ?? 0, parts[1] ?? 0, parts[2] ?? 0]
+}
+
+/**
+ * Converts `#rrggbb` or `rgb(r,g,b)` to hue, saturation and lightness.
  *
  * @param hex - Color.
  */
 function hexToHsl(hex: string): Hsl {
-  const r = parseInt(hex.slice(1, 3), 16) / 255
-  const g = parseInt(hex.slice(3, 5), 16) / 255
-  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const [r8, g8, b8] = parseRgb(hex)
+  const r = r8 / 255
+  const g = g8 / 255
+  const b = b8 / 255
   const max = Math.max(r, g, b)
   const min = Math.min(r, g, b)
   const l = (max + min) / 2
@@ -72,7 +86,7 @@ function hslToHex(h: number, s: number, l: number): string {
  * @param amount - Share of the second (0-1).
  */
 export function mixHex(a: string, b: string, amount: number): string {
-  const ch = (hex: string, i: number): number => parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16)
+  const ch = (color: string, i: number): number => parseRgb(color)[i] ?? 0
   const part = (i: number): string =>
     Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * amount)
       .toString(16)
@@ -91,7 +105,8 @@ const SHADE_OFFSETS: number[] = (() => {
 const SHADE_STRENGTH = 1.3
 
 /** Saturation and lightness of the base fall color (hue decides red, orange or yellow). */
-const FALL_SATURATION = 0.615
+const FALL_SATURATION_MAX = 0.615
+const FALL_SATURATION_MIN = 0.41
 const FALL_LIGHTNESS = 0.5
 
 /**
@@ -102,10 +117,11 @@ const FALL_LIGHTNESS = 0.5
  * @param hue - The tree's fall hue in degrees (0 red to about 55 yellow).
  * @param hueShift - Hue shift in degrees for this lobe.
  * @param haze - Blend toward this color by this amount (distant trees), or null.
+ * @param saturation - The tree's own saturation (see `newLeafSeason`).
  */
-export function fallTones(hue: number, hueShift: number, haze: { color: string; amount: number } | null): string[] {
+export function fallTones(hue: number, hueShift: number, haze: { color: string; amount: number } | null, saturation = FALL_SATURATION_MAX): string[] {
   return SHADE_OFFSETS.map((offset) => {
-    const tone = hslToHex(hue + hueShift, FALL_SATURATION, FALL_LIGHTNESS + offset * SHADE_STRENGTH)
+    const tone = hslToHex(hue + hueShift, saturation, FALL_LIGHTNESS + offset * SHADE_STRENGTH)
     return haze ? mixHex(tone, haze.color, haze.amount) : tone
   })
 }
@@ -126,4 +142,16 @@ export function winterGreen(hex: string, amount: number): string {
   }
   const { h, s, l } = hexToHsl(hex)
   return hslToHex(h, s * (1 - WINTER_DESATURATE * amount), l * (1 - WINTER_DARKEN * amount))
+}
+
+/**
+ * A new tree's or bush's seasonal traits: a hue from red (0) to yellow (55 degrees), a saturation
+ * between half the original (0.41) and the present maximum (0.615), and a random start within early fall.
+ */
+export function newLeafSeason(): { hue: number; sat: number; start: number } {
+  return {
+    hue: Math.random() * 55,
+    sat: FALL_SATURATION_MIN + Math.random() * (FALL_SATURATION_MAX - FALL_SATURATION_MIN),
+    start: Math.random(),
+  }
 }

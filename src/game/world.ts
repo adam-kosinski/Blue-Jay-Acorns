@@ -1,4 +1,5 @@
 import { createSeasonClock } from './seasons'
+import { newLeafSeason } from './leafColors'
 import {
   ACORN_COUNT,
   LEAF_COLORS,
@@ -442,7 +443,7 @@ function spawnBushes(
                 ? extent * randRange(0.2, 0.65)
                 : extent + Math.random() * bank.width * 0.85))
         : pickBushX(worldWidth, playerSize, treeXs, keepOut, extent)
-    bushes.push({ x, lobes, leaf: { hue: randRange(0, 55), colorRank: Math.random(), bareRank: Math.random() } })
+    bushes.push({ x, lobes, leaf: newLeafSeason() })
   }
   return bushes
 }
@@ -480,6 +481,7 @@ function spawnFerns(
         x,
         size,
         tone: Math.floor(Math.random() * 3),
+        fadeStart: Math.random(),
         fronds: Array.from({ length: frondCount }, (_, i) => {
           const angle = (i / (frondCount - 1) - 0.5) * 1.9 + randRange(-0.1, 0.1)
           return {
@@ -609,6 +611,7 @@ function spawnLogs(
       tilt,
       flip: Math.random() < 0.5 ? 1 : -1,
       moss: Math.random() < 0.4,
+      fadeStart: Math.random(),
     })
   }
   return logs
@@ -632,7 +635,7 @@ function makeRock(x: number, rx: number, ry: number, fog = 0, moss = false): Roc
   const color = fog > 0 ? mixColor(base, FOREST_HAZE_COLOR, fog) : base
   const highlight = fog > 0 ? mixColor(baseHighlight, FOREST_HAZE_COLOR, fog) : baseHighlight
   const jitter = Array.from({ length: 9 }, () => randRange(0.84, 1.08))
-  return { x, rx, ry, jitter, color, highlight, litter, moss, fog }
+  return { x, rx, ry, jitter, color, highlight, litter, moss, fadeStart: Math.random(), fog }
 }
 
 /**
@@ -805,6 +808,7 @@ function spawnForest(
         tilt: 0,
         flip: Math.random() < 0.5 ? 1 : -1,
         moss: Math.random() < 0.4,
+        fadeStart: Math.random(),
       })
     }
     // Rocks on the layer's surface, plus a lining along the creek's edges.
