@@ -2261,65 +2261,53 @@ function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string):
   const rand = seededRandom(Math.floor(bush.x * 7) + 3)
   ctx.strokeStyle = color
   ctx.lineCap = 'round'
-  // Branches end well inside the leaves: a tip may not reach farther out than 0.55 of a lobe's radius from
-  // its center, so no wood sticks out past the leaf edge in summer.
+  // A bare bush: many stems rise from one spot, fan out like a vase and fork again and again into fine
+  // twigs that fill the bush's outline. The wood stays inside the leaves (a tip may not pass 0.85 of a
+  // lobe's radius from its center), so none shows past the leaf edge in summer.
   const inside = (x: number, y: number): boolean =>
-    bush.lobes.some((lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.55)
+    bush.lobes.some((lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.85)
+  let radiusSum = 0
+  let reach = 0
+  for (const lobe of bush.lobes) {
+    radiusSum += lobe.radius
+    reach = Math.max(reach, Math.abs(lobe.dx) + lobe.radius)
+  }
+  const meanRadius = radiusSum / Math.max(1, bush.lobes.length)
+  const segment = meanRadius * 0.26
   /**
-   * Grows a branch from a point in a direction (radians from straight up): a few slightly bending pieces,
-   * and from its middle and end two or three thinner branches, like the trees', until it is thin or would
-   * leave the leaves.
+   * Grows a stem or twig from a point in a direction (radians from straight up): short pieces that bend a
+   * little and are pulled back toward the vertical, getting thinner, and each piece has a chance to fork.
    */
-  const grow = (x: number, y: number, angle: number, length: number, width: number, depth: number): void => {
+  const grow = (x: number, y: number, heading: number, width: number, depth: number, pieceLength: number): void => {
     let px = x
     let py = y
-    let heading = angle
-    const pieces = 3
-    const forks: [number, number, number][] = []
-    for (let i = 0; i < pieces; i += 1) {
-      heading += (rand() - 0.5) * 0.5
-      const nx = px + Math.sin(heading) * (length / pieces)
-      const ny = py - Math.cos(heading) * (length / pieces)
-      if (!inside(nx, ny)) {
+    let h = heading
+    for (let i = 0; i < 16; i += 1) {
+      h += (rand() - 0.5) * 0.4 - h * 0.05
+      const nx = px + Math.sin(h) * pieceLength
+      const ny = py - Math.cos(h) * pieceLength
+      // The first pieces rise from the ground and may be below the leaves.
+      if (i >= 2 && !inside(nx, ny)) {
         break
       }
-      ctx.lineWidth = Math.max(0.8, width * (1 - i * 0.18))
+      ctx.lineWidth = Math.max(0.7, width * (1 - i * 0.05))
       ctx.beginPath()
       ctx.moveTo(px, py)
       ctx.lineTo(nx, ny)
       ctx.stroke()
       px = nx
       py = ny
-      if (i >= 1) {
-        forks.push([px, py, heading])
-      }
-    }
-    if (depth <= 0 || width < 1.2) {
-      return
-    }
-    for (const [fx, fy, fh] of forks) {
-      const count = 1 + Math.floor(rand() * 2)
-      for (let k = 0; k < count; k += 1) {
+      if (depth > 0 && i >= 1 && rand() < 0.34) {
         const side = rand() < 0.5 ? -1 : 1
-        grow(fx, fy, fh + side * (0.45 + rand() * 0.5), length * (0.5 + rand() * 0.2), width * 0.65, depth - 1)
+        grow(px, py, h + side * (0.35 + rand() * 0.55), width * 0.62, depth - 1, pieceLength * 0.82)
       }
     }
   }
-  for (const lobe of bush.lobes) {
-    const sx = lobe.dx * 0.25 + (rand() - 0.5) * lobe.radius * 0.2
-    const width = Math.max(2.2, lobe.radius * 0.09)
-    // The stem bends on its way up from the base to the middle of the lobe.
-    const midX = sx + (lobe.dx - sx) * 0.45 + (rand() - 0.5) * lobe.radius * 0.35
-    const midY = lobe.dy * 0.5
-    ctx.lineWidth = width * 1.3
-    ctx.beginPath()
-    ctx.moveTo(sx, 4)
-    ctx.quadraticCurveTo(midX, midY, lobe.dx, lobe.dy)
-    ctx.stroke()
-    // From the middle of the lobe three main branches fan out and fork again and again.
-    for (const spread of [-1.2, -0.65, -0.2, 0.25, 0.7, 1.2]) {
-      grow(lobe.dx, lobe.dy, spread + (rand() - 0.5) * 0.3, lobe.radius * 0.55, width, 3)
-    }
+  const stems = 7 + bush.lobes.length * 2
+  for (let s = 0; s < stems; s += 1) {
+    const t = s / (stems - 1) - 0.5
+    const x = t * reach * 0.35 + (rand() - 0.5) * meanRadius * 0.15
+    grow(x, 4, t * 1.7 + (rand() - 0.5) * 0.3, Math.max(2.4, meanRadius * 0.075), 4, segment)
   }
 }
 
