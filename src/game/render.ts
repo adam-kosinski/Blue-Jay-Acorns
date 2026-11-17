@@ -3818,10 +3818,10 @@ function snowGeometry(
   // shrinking to nothing; at a size of 1 all of it is as thick as it was.
   const pattern = (x: number): number => {
     const u = (x - cx) / rx
-    return Math.max(0, Math.min(1, 0.5 + 0.28 * Math.sin(u * 4.3 + phase) + 0.17 * Math.sin(u * 10.7 + phase * 2.1) + 0.1 * Math.sin(u * 23 + phase * 3.3)))
+    return Math.max(0, Math.min(1, 0.5 + 0.2 * Math.sin(u * 3.4 + phase) + 0.08 * Math.sin(u * 8 + phase * 2.1)))
   }
   const thick = (x: number): number => {
-    const t = Math.max(0, Math.min(1, (amount - 0.5 * pattern(x)) / 0.5))
+    const t = Math.max(0, Math.min(1, (amount - 0.4 * pattern(x)) / 0.6))
     return t * t * (3 - 2 * t)
   }
   return {

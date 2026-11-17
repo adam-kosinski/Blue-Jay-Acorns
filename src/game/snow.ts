@@ -72,10 +72,13 @@ export function snowCapLayers(time: number): { thin: number; full: number } {
  * @param key - A number 0-1 of its own (its moment of the melt).
  */
 export function snowCapSize(time: number, key: number): number {
-  // Each rock's snow melts over 0.6 of a segment starting a little before the ground's snow does (between
-  // 5.85 and 6.15), so that all of it is gone long before the ground's patches are.
+  // Each rock's snow melts slowly, starting a little before the ground's does (between 5.9 and 6.1) and
+  // finishing between 6.7 and 7.05, when the ground is still half or three quarters bare of snow (its patches
+  // are gone at 7.4: cover 0.5 at 6.7, 0.25 at 7.05).
   const u = time / SEGMENT_SECONDS
-  return 1 - smooth((u - (5.85 + 0.3 * key)) / 0.6)
+  const start = 5.9 + 0.2 * key
+  const end = 6.7 + 0.35 * key
+  return 1 - smooth((u - start) / (end - start))
 }
 
 /**
