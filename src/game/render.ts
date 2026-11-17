@@ -512,8 +512,38 @@ function drawForest(
     // The ground bitmap, then a mask of it in the haze's color over it, as strong as this layer's haze (drawn
     // over the bitmap itself, so a soft edge of the ground is not drawn twice).
     blit(strip.canvas, true, 1, layer.groundColor)
-    if (winter > 0 && strip.winterCanvas) {
-      blit(strip.winterCanvas, false, winterAmount(layer, winter), layer.groundColor)
+    if (winter > 0 && strip.winterCanvas && !hidden && strip.winterCanvas.width > 0) {
+      // In one piece (cut to the slabs' cull lines by a clip), since slabs that overlap by a pixel would
+      // tint that pixel twice and show a vertical line every slab.
+      const mask = strip.winterCanvas
+      ctx.save()
+      ctx.beginPath()
+      let deepest = topRow
+      for (let sl = 0; sl < slabs; sl += 1) {
+        const bottomRow = Math.min(stripHeight, (layerLimits[sl] ?? viewHeight) - base + strip.originY)
+        if (bottomRow > topRow) {
+          ctx.rect(sl * FOREST_SLAB, base - strip.originY + topRow, FOREST_SLAB, bottomRow - topRow)
+          deepest = Math.max(deepest, bottomRow)
+        }
+      }
+      ctx.clip()
+      ctx.globalAlpha = winterAmount(layer, winter)
+      const srcX = Math.max(0, camera.x * p * strip.resolution)
+      const srcW = Math.min(viewWidth * strip.resolution, mask.width - srcX)
+      if (srcW > 0 && deepest > topRow) {
+        ctx.drawImage(
+          mask,
+          srcX,
+          topRow * strip.resolution,
+          srcW,
+          (deepest - topRow) * strip.resolution,
+          0,
+          base - strip.originY + topRow,
+          srcW / strip.resolution,
+          deepest - topRow,
+        )
+      }
+      ctx.restore()
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
