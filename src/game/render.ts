@@ -524,11 +524,11 @@ function drawForest(
     // In winter the ground has its layer's share of the light blue haze: its summer bitmap first, then the
     // hazed copy over it as the haze comes in.
     if (winter > 0 && !hidden && !strip.winterCanvas && stripsMade < 2) {
-      strip.winterCanvas = makeMask(strip, WINTER_HAZE_COLOR, 1)
+      strip.winterCanvas = makeMask(strip, WINTER_HAZE_COLOR, 1, 0)
       stripsMade += 1
     }
     if (snow > 0 && !hidden && !strip.snowCanvas && stripsMade < 2) {
-      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5, 0.5)
+      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5, 0)
       stripsMade += 1
     }
     // Draws a mask of the ground (the same shape in one color) over it, in one piece (cut to the slabs' cull
@@ -563,7 +563,7 @@ function drawForest(
     // that color is drawn alone, instead of the bitmap and the snow and haze masks over it.
     if (snowedIn && !hidden && !strip.frozenCanvas && stripsMade < 2) {
       strip.frozenColor = winterHazed(mixHex(layer.groundColor, SNOW_TOP, 0.92), layer, 1)
-      strip.frozenCanvas = makeMask(strip, strip.frozenColor, 0.75, 0.75)
+      strip.frozenCanvas = makeMask(strip, strip.frozenColor, 0.75, 0)
       stripsMade += 1
     }
     if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
@@ -733,7 +733,10 @@ function makeMask(strip: ForestStrip, color: string, scale: number, grow = 1): H
   if (copyCtx && strip.canvas.width > 0 && strip.canvas.height > 0) {
     // The shape a pixel wider all round (so the soft edge of the ground, which is brownish, never peeks out
     // from under the mask as a line along the surface).
-    for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+    // (Drawn once when it is not to grow: soft edge pixels drawn several times would get more opaque and make
+    // a blue or white outline along the ridges against the sky.)
+    const offsets: (readonly [number, number])[] = grow > 0 ? [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] : [[0, 0]]
+    for (const [dx, dy] of offsets) {
       copyCtx.drawImage(strip.canvas, dx * grow, dy * grow, copy.width, copy.height)
     }
     // Keep the shape (the opaque and soft-edged pixels) and make all of it one color.
