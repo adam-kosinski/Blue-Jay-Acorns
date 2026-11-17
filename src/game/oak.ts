@@ -1,5 +1,6 @@
 import { fallTones, newLeafSeason } from './leafColors'
 import { enqueueJob } from './work'
+import { STAGE_LOOKS } from './seasons'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
 
 /**
@@ -902,13 +903,24 @@ export function drawOakVector(
   }
 }
 
-/** The parts a foreground tree is drawn from: the trunk and branches, and its crown in green or in fall color. */
-export type OakPart = 'trunk' | 'green' | 'fall'
+/** The parts a foreground tree is drawn from: the trunk and branches, and its crown in each of the looks it holds (`STAGE_LOOKS`). */
+export type OakPart = 'trunk' | 'c0' | 'c1' | 'c2' | 'c3'
 
 const PART_LOOKS: Record<OakPart, TreeLook> = {
   trunk: { presence: 0, fall: 0 },
-  green: { presence: 1, fall: 0 },
-  fall: { presence: 1, fall: 1 },
+  c0: { ...(STAGE_LOOKS[0] ?? { presence: 1, fall: 0 }) },
+  c1: { ...(STAGE_LOOKS[1] ?? { presence: 1, fall: 0.5 }) },
+  c2: { ...(STAGE_LOOKS[2] ?? { presence: 1, fall: 1 }) },
+  c3: { ...(STAGE_LOOKS[3] ?? { presence: 0.5, fall: 1 }) },
+}
+
+/**
+ * The part of a crown for one of the looks.
+ *
+ * @param stage - 0-3.
+ */
+export function crownPart(stage: number): OakPart | null {
+  return stage === 0 ? 'c0' : stage === 1 ? 'c1' : stage === 2 ? 'c2' : stage === 3 ? 'c3' : null
 }
 
 /**
@@ -1041,9 +1053,9 @@ function buildNow(shape: TreeShape, tones: string[], trunkColor: string, resolut
 }
 
 /**
- * Draws an oak from its prebuilt parts with its base at (x, y): the trunk, then the green crown and the fall
- * crown each faded by its own amount (so a tree can be partly one and partly the other). A part that is not
- * built yet is queued; until the fall crown exists the green one stands in for it.
+ * Draws an oak from its prebuilt parts with its base at (x, y): the trunk, then the crown of the look it
+ * holds, and while it passes to the next look (over a few seconds) the two faded against each other. A crown
+ * that is not built yet is queued; until then the nearest one built stands in.
  *
  * @param ctx - 2D canvas context.
  * @param shape - Generated tree.
@@ -1051,7 +1063,7 @@ function buildNow(shape: TreeShape, tones: string[], trunkColor: string, resolut
  * @param y - Base Y.
  * @param tones - Leaf fill colors from dark to light (length `OAK_TONE_COUNT`).
  * @param trunkColor - Trunk and branch fill.
- * @param alphas - Opacity of the green and of the fall crown.
+ * @param mix - Which look (`a`), which look it passes to (`b`) and how far (`w`).
  */
 export function drawOak(
   ctx: CanvasRenderingContext2D,
@@ -1060,29 +1072,59 @@ export function drawOak(
   y: number,
   tones: string[],
   trunkColor: string,
-  alphas: { green: number; fall: number },
+  mix: { a: number; b: number; w: number },
 ): void {
   const res = ctx.getTransform().a
-  const place = (sprite: TreeSprite, alpha: number): void => {
+  const trunk = getOakPart(shape, tones, trunkColor, res, 'trunk')
+  ctx.drawImage(trunk.canvas, x + trunk.offsetX, y + trunk.offsetY, trunk.width, trunk.height)
+  drawCrowns(ctx, shape, x, y, tones, trunkColor, res, mix)
+}
+
+/**
+ * Draws the crown part(s) of a tree for a look.
+ *
+ * @param ctx - 2D canvas context.
+ * @param shape - Tree.
+ * @param x - Base X.
+ * @param y - Base Y.
+ * @param tones - Leaf fill colors.
+ * @param trunkColor - Trunk color (part of the cache key).
+ * @param res - Bitmap pixels per CSS pixel.
+ * @param mix - The look and the fade to the next.
+ */
+function drawCrowns(
+  ctx: CanvasRenderingContext2D,
+  shape: TreeShape,
+  x: number,
+  y: number,
+  tones: string[],
+  trunkColor: string,
+  res: number,
+  mix: { a: number; b: number; w: number },
+): void {
+  const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
+  for (const [stage, alpha] of stages) {
+    const part = crownPart(stage)
+    if (!part || alpha <= 0) {
+      continue
+    }
+    let sprite = peekOakPart(shape, trunkColor, res, part)
+    if (!sprite) {
+      enqueueJob(oakPartKey(shape, trunkColor, res, part), 1, oakPartJob(shape, tones, trunkColor, res, part))
+      // The nearest look that is built stands in for it.
+      for (const other of [stage - 1, stage + 1, stage - 2, stage + 2, 0]) {
+        const alt = crownPart(other)
+        sprite = alt ? peekOakPart(shape, trunkColor, res, alt) : null
+        if (sprite) {
+          break
+        }
+      }
+      sprite = sprite ?? getOakPart(shape, tones, trunkColor, res, 'c0')
+    }
     ctx.globalAlpha = alpha
     ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
-    ctx.globalAlpha = 1
   }
-  place(getOakPart(shape, tones, trunkColor, res, 'trunk'), 1)
-  if (alphas.green <= 0 && alphas.fall <= 0) {
-    return
-  }
-  const fall = peekOakPart(shape, trunkColor, res, 'fall')
-  if (!fall && alphas.fall > 0) {
-    enqueueJob(oakPartKey(shape, trunkColor, res, 'fall'), 1, oakPartJob(shape, tones, trunkColor, res, 'fall'))
-  }
-  const greenAlpha = fall ? alphas.green : Math.min(1, alphas.green + alphas.fall)
-  if (greenAlpha > 0) {
-    place(getOakPart(shape, tones, trunkColor, res, 'green'), greenAlpha)
-  }
-  if (fall && alphas.fall > 0) {
-    place(fall, alphas.fall)
-  }
+  ctx.globalAlpha = 1
 }
 
 /**
@@ -1095,7 +1137,7 @@ export function drawOak(
  * @param y - Base Y.
  * @param tones - Leaf fill colors from dark to light.
  * @param trunkColor - Trunk color (only part of the cache key).
- * @param alphas - Opacity of the green and of the fall crown.
+ * @param mix - The look and the fade to the next.
  */
 export function drawOakCrown(
   ctx: CanvasRenderingContext2D,
@@ -1104,19 +1146,7 @@ export function drawOakCrown(
   y: number,
   tones: string[],
   trunkColor: string,
-  alphas: { green: number; fall: number },
+  mix: { a: number; b: number; w: number },
 ): void {
-  const res = ctx.getTransform().a
-  const fall = peekOakPart(shape, trunkColor, res, 'fall')
-  const greenAlpha = fall ? alphas.green : Math.min(1, alphas.green + alphas.fall)
-  if (greenAlpha > 0) {
-    const sprite = getOakPart(shape, tones, trunkColor, res, 'green')
-    ctx.globalAlpha = greenAlpha
-    ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
-  }
-  if (fall && alphas.fall > 0) {
-    ctx.globalAlpha = alphas.fall
-    ctx.drawImage(fall.canvas, x + fall.offsetX, y + fall.offsetY, fall.width, fall.height)
-  }
-  ctx.globalAlpha = 1
+  drawCrowns(ctx, shape, x, y, tones, trunkColor, ctx.getTransform().a, mix)
 }

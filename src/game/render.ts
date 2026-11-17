@@ -11,13 +11,14 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, oakPartJob, paintBark, seededRandom, drawOak } from './oak'
+import { drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, oakPartJob, oakPartKey, paintBark, seededRandom, drawOak } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { burialQuality } from './burial'
 import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
-  leafAlphas,
+  leafStageMix,
+  STAGE_LOOKS,
   leafLook,
   sampleAt,
   sampleTime,
@@ -143,8 +144,8 @@ export function renderScene(
   // (More when the frame is cheap, less when it is not.)
   runWork(lastSceneMs < 6 ? 4 : 1.5)
   const sceneStart = performance.now()
-  planVegetation(world)
-  fadeBuildsLeft = 6
+  planVegetation(world, camera.x, viewWidth)
+  fadeBuildsLeft = 4
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
   haze.addColorStop(0, backdropTop)
@@ -566,36 +567,55 @@ const FOREST_SLAB = 64
 
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
-/** Bitmap pixels per layer pixel of the images the layers' trees, logs, rocks, ferns and bushes are drawn onto. */
-const VEG_RES = 0.4
-
-/** Width, in layer pixels, of the pieces the cross-fade between two moments of the seasons is composed in. */
-const VEG_SLAB = 512
-
-/** An image of one kind of a layer's vegetation at one moment of the seasons, and the first strip row it covers. */
-type VegImage = { canvas: HTMLCanvasElement; rowTop: number }
-
-/** The images of a layer's vegetation at one moment: trees and logs (behind the ground), rocks, ferns and bushes (in front of it). */
-type VegSample = { back?: VegImage; front?: VegImage }
-
-const vegSamples = new WeakMap<ForestLayer, Map<number, VegSample>>()
-
 /**
- * A layer's images by moment.
+ * Bitmap pixels per layer pixel of a layer's vegetation images: the same as the layer's ground (the far,
+ * hazy layers are drawn at half size, the near ones at three quarters), so nothing is softer than before.
  *
  * @param layer - Forest layer.
  */
-function vegMap(layer: ForestLayer): Map<number, VegSample> {
-  let map = vegSamples.get(layer)
+function vegRes(layer: ForestLayer): number {
+  return layer.parallax < 0.4 ? 0.5 : 0.75
+}
+
+/** Width, in layer pixels, of the chunks the layers' vegetation images are made in (only those near the camera exist). */
+const VEG_CHUNK = 1024
+
+/** Layer pixels each chunk image reaches into the next chunk, so that no seam shows between them. */
+const VEG_OVERLAP = 3
+
+/** An image of one kind of a layer's vegetation at one moment of the seasons over one chunk, and the first strip row it covers. */
+type VegImage = { canvas: HTMLCanvasElement; rowTop: number }
+
+/** The images of a layer by moment, kind and chunk (`k|part|chunk`). */
+const vegImages = new WeakMap<ForestLayer, Map<string, VegImage>>()
+
+/**
+ * A layer's images.
+ *
+ * @param layer - Forest layer.
+ */
+function vegMap(layer: ForestLayer): Map<string, VegImage> {
+  let map = vegImages.get(layer)
   if (!map) {
     map = new Map()
-    vegSamples.set(layer, map)
+    vegImages.set(layer, map)
   }
   return map
 }
 
 /**
- * Draws one kind of a layer's vegetation as it is at one moment of the seasons onto an image the size of
+ * The key of an image of a layer's vegetation.
+ *
+ * @param k - Moment.
+ * @param part - Kind.
+ * @param chunk - Chunk.
+ */
+function vegKey(k: number, part: 'back' | 'front', chunk: number): string {
+  return `${k}|${part}|${chunk}`
+}
+
+/**
+ * Draws one kind of a layer's vegetation as it is at one moment of the seasons onto an image of one chunk of
  * the layer, in steps (a generator that yields every object or so, so it can be done a little each frame).
  * Every object is at its own point of its change at that moment: trees and bushes have each of their leaves
  * there or not and green or in fall color (the same ones every time), ferns and moss have their own shade.
@@ -604,34 +624,45 @@ function vegMap(layer: ForestLayer): Map<number, VegSample> {
  * @param strip - Its strip (where things stand).
  * @param k - Which moment (see `sampleTime`).
  * @param part - Trees and logs, or rocks, ferns and bushes.
+ * @param chunk - Which chunk of the layer.
  */
-function* buildVegImage(layer: ForestLayer, strip: ForestStrip, k: number, part: 'back' | 'front'): Generator<void, VegImage> {
+function* buildVegImage(
+  layer: ForestLayer,
+  strip: ForestStrip,
+  k: number,
+  part: 'back' | 'front',
+  chunk: number,
+): Generator<void, VegImage> {
   const time = sampleTime(k)
+  const res = vegRes(layer)
   const veg = strip.veg
   const stripHeight = strip.canvas.height / strip.resolution
   const rowTop = part === 'back' ? 0 : veg.frontTop
   const rowBottom = part === 'back' ? veg.backBottom : stripHeight
+  const left = chunk * VEG_CHUNK
+  const right = Math.min(layer.span + 8, left + VEG_CHUNK + VEG_OVERLAP)
   const canvas = document.createElement('canvas')
-  canvas.width = Math.ceil(layer.span * VEG_RES)
-  canvas.height = Math.max(1, Math.ceil((rowBottom - rowTop) * VEG_RES))
+  canvas.width = Math.max(1, Math.ceil((right - left) * res))
+  canvas.height = Math.max(1, Math.ceil((rowBottom - rowTop) * res))
   const ctx = canvas.getContext('2d')
   if (!ctx) {
     return { canvas, rowTop }
   }
-  ctx.scale(VEG_RES, VEG_RES)
-  ctx.translate(0, -rowTop)
+  ctx.scale(res, res)
+  ctx.translate(-left, -rowTop)
+  const near = (x: number, reach: number): boolean => x + reach >= left && x - reach <= right
   const haze = { color: FOREST_HAZE_COLOR, amount: layer.fog }
   if (part === 'back') {
     for (const [index, tree] of layer.trees.entries()) {
       const at = veg.trees[index]
-      if (at) {
+      if (at && near(at.x, tree.shape.halfWidth)) {
         const look = leafLook(transitionProgress(tree.shape.leaf.start, time))
         yield* drawOakSteps(ctx, tree.shape, at.x, at.y, layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4, false, { ...look, haze })
       }
     }
     for (const [index, log] of layer.logs.entries()) {
       const at = veg.logs[index]
-      if (at) {
+      if (at && near(at.x, log.length)) {
         ctx.save()
         ctx.translate(at.x, at.y)
         ctx.rotate(at.angle)
@@ -644,14 +675,14 @@ function* buildVegImage(layer: ForestLayer, strip: ForestStrip, k: number, part:
     for (const prop of veg.props) {
       if (prop.kind === 'rock') {
         const rock = layer.rocks[prop.index]
-        if (rock) {
+        if (rock && near(rock.x, rock.rx * 1.5)) {
           mossFade = transitionProgress(rock.fadeStart, time)
           paintRock(ctx, rock, rock.x, prop.y + rock.ry * 0.4)
           mossFade = 0
         }
       } else if (prop.kind === 'fern') {
         const fern = layer.ferns[prop.index]
-        if (fern) {
+        if (fern && near(fern.x, fern.size * 1.4)) {
           const fade = transitionProgress(fern.fadeStart, time)
           const summerLeaf = layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor
           const summerStem = layer.tones[0] ?? layer.trunkColor
@@ -671,7 +702,11 @@ function* buildVegImage(layer: ForestLayer, strip: ForestStrip, k: number, part:
         }
       } else {
         const bush = layer.bushes[prop.index]
-        if (bush) {
+        let reach = 0
+        for (const lobe of bush?.lobes ?? []) {
+          reach = Math.max(reach, Math.abs(lobe.dx) + lobe.radius)
+        }
+        if (bush && near(bush.x, reach)) {
           const look = leafLook(transitionProgress(bush.leaf.start, time))
           ctx.save()
           ctx.translate(bush.x, prop.y)
@@ -692,7 +727,7 @@ function* buildVegImage(layer: ForestLayer, strip: ForestStrip, k: number, part:
     mask.addColorStop(0.7, 'rgba(0, 0, 0, 1)')
     mask.addColorStop(1, 'rgba(0, 0, 0, 0)')
     ctx.fillStyle = mask
-    ctx.fillRect(0, rowTop, layer.span + 8, rowBottom - rowTop + 10)
+    ctx.fillRect(left, rowTop, right - left, rowBottom - rowTop + 10)
     ctx.globalCompositeOperation = 'source-over'
   }
   return { canvas, rowTop }
@@ -704,22 +739,41 @@ function* buildVegImage(layer: ForestLayer, strip: ForestStrip, k: number, part:
  * @param layer - Forest layer.
  * @param strip - Its strip.
  * @param k - Which moment.
- * @param part - Which image.
+ * @param part - Which kind.
+ * @param chunk - Which chunk.
  */
-function* vegJob(layer: ForestLayer, strip: ForestStrip, k: number, part: 'back' | 'front'): Generator<void> {
-  const image = yield* buildVegImage(layer, strip, k, part)
-  const map = vegMap(layer)
-  map.set(k, { ...map.get(k), [part]: image })
+function* vegJob(layer: ForestLayer, strip: ForestStrip, k: number, part: 'back' | 'front', chunk: number): Generator<void> {
+  const image = yield* buildVegImage(layer, strip, k, part, chunk)
+  vegMap(layer).set(vegKey(k, part, chunk), image)
 }
 
 /**
- * Queues the images the layers' vegetation needs for the time now and next: the two moments the time is
- * between first, and the moments after them (so they are ready by the time they are wanted) with less
- * urgency; images of moments long gone are dropped.
+ * The chunks of a layer that the camera sees or will soon see (one more each side).
+ *
+ * @param layer - Forest layer.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ * @param margin - Chunks to add each side.
+ */
+function visibleChunks(layer: ForestLayer, cameraX: number, viewWidth: number, margin = 1): { first: number; last: number } {
+  const x0 = cameraX * layer.parallax
+  const lastChunk = Math.max(0, Math.floor((layer.span + 8) / VEG_CHUNK))
+  return {
+    first: Math.max(0, Math.floor(x0 / VEG_CHUNK) - margin),
+    last: Math.min(lastChunk, Math.floor((x0 + viewWidth) / VEG_CHUNK) + margin),
+  }
+}
+
+/**
+ * Queues the images the layers' vegetation needs for the time now and next, for the chunks the camera
+ * sees: the two moments the time is between first, then the moments after them (so they are ready by the
+ * time they are wanted) with less urgency; images of moments passed or chunks far away are dropped.
  *
  * @param world - Play space (the season and the layers).
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
  */
-function planVegetation(world: World): void {
+function planVegetation(world: World, cameraX: number, viewWidth: number): void {
   const { k, t } = sampleAt(world.season.time)
   const now = t > 0 ? [k, k + 1] : [k]
   const ahead = [k + 1, k + 2]
@@ -729,21 +783,31 @@ function planVegetation(world: World): void {
       return
     }
     const map = vegMap(layer)
+    const { first, last } = visibleChunks(layer, cameraX, viewWidth)
+    const exact = visibleChunks(layer, cameraX, viewWidth, 0)
     for (const [list, priority] of [[now, 2], [ahead, 7]] as const) {
       for (const moment of list) {
         if (moment >= SAMPLE_COUNT) {
           continue
         }
-        for (const part of ['back', 'front'] as const) {
-          if (!map.get(moment)?.[part]) {
-            enqueueJob(`veg|${index}|${moment}|${part}`, priority - index * 0.01, vegJob(layer, strip, moment, part))
+        // The moments in use get the chunks next to the visible ones too; the ones ahead only the visible ones.
+        for (let chunk = priority === 2 ? first : exact.first; chunk <= (priority === 2 ? last : exact.last); chunk += 1) {
+          for (const part of ['back', 'front'] as const) {
+            if (!map.has(vegKey(moment, part, chunk))) {
+              enqueueJob(
+                `veg|${index}|${moment}|${part}|${chunk}`,
+                priority - index * 0.01 + Math.abs(chunk - Math.floor((cameraX * layer.parallax) / VEG_CHUNK)) * 0.001,
+                vegJob(layer, strip, moment, part, chunk),
+              )
+            }
           }
         }
       }
     }
-    for (const moment of [...map.keys()]) {
-      if (moment < k || moment > k + 2) {
-        map.delete(moment)
+    for (const key of [...map.keys()]) {
+      const [moment, , chunk] = key.split('|').map((piece, position) => (position === 1 ? 0 : Number(piece)))
+      if ((moment ?? 0) < k || (moment ?? 0) > k + 2 || (chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1) {
+        map.delete(key)
       }
     }
   })
@@ -759,20 +823,16 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
   let images = 0
   let pixels = 0
   for (const layer of world.forest) {
-    for (const sample of vegMap(layer).values()) {
-      for (const image of [sample.back, sample.front]) {
-        if (image) {
-          images += 1
-          pixels += image.canvas.width * image.canvas.height
-        }
-      }
+    for (const image of vegMap(layer).values()) {
+      images += 1
+      pixels += image.canvas.width * image.canvas.height
     }
   }
   return { pending: pendingJobs(), images, megapixels: Math.round(pixels / 1e5) / 10 }
 }
 
 /** How many cross-fade pieces may be composed in this frame. */
-let fadeBuildsLeft = 6
+let fadeBuildsLeft = 4
 
 /** How long the last frame's drawing took (the background work is given more time when it was cheap). */
 let lastSceneMs = 0
@@ -781,9 +841,10 @@ type FadePiece = { k: number; q: number; canvas: HTMLCanvasElement }
 const fadePieces = new WeakMap<ForestLayer, Map<string, FadePiece>>()
 
 /**
- * Draws one kind of a layer's vegetation for the time now: the image of the moment the time is just past
- * and the image of the next moment, cross-faded by how far between them it is (composed in pieces of a
- * layer-slab each, quantized to tenths, so the composing is done a few times a minute, not every frame).
+ * Draws one kind of a layer's vegetation for the time now: for each chunk in view, the image of the moment
+ * the time is just past and the image of the next moment, cross-faded by how far between them it is
+ * (composed per chunk and quantized to tenths, so the composing happens a few times a minute, not every
+ * frame). A chunk whose image is not made yet shows the image of another moment, or nothing.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param layer - Forest layer.
@@ -808,73 +869,62 @@ function drawVegetation(
 ): void {
   const { k, t } = sampleAt(world.season.time)
   const map = vegMap(layer)
-  const first = map.get(k)?.[part]
-  const second = map.get(k + 1)?.[part]
+  const res = vegRes(layer)
   const x0 = cameraX * layer.parallax
-  // Images of other moments stand in for ones not built yet.
-  const nearest = first ?? second ?? [...map.values()].map((sample) => sample[part]).find((image) => image !== undefined)
-  if (!nearest) {
-    return
-  }
   const q = Math.round(t * 10)
-  const slabLeft = Math.max(0, Math.floor((x0 - 8) / VEG_SLAB))
-  const slabRight = Math.floor((x0 + viewWidth + 8) / VEG_SLAB)
-  const y = base - strip.originY + nearest.rowTop
-  // Only the rows on the screen and above the cull line are drawn.
-  const firstRow = Math.max(0, Math.floor(-y * VEG_RES))
-  const rows = (height: number): number => Math.max(0, Math.min(height, Math.ceil((limit - y) * VEG_RES)) - firstRow)
-  const piece = (image: VegImage, slab: number): void => {
-    const sx = slab * VEG_SLAB * VEG_RES
-    const sw = Math.min(VEG_SLAB * VEG_RES, image.canvas.width - sx)
-    const sh = rows(image.canvas.height)
-    if (sw > 0 && sh > 0) {
-      ctx.drawImage(image.canvas, sx, firstRow, sw, sh, slab * VEG_SLAB - x0, y + firstRow / VEG_RES, sw / VEG_RES, sh / VEG_RES)
-    }
-  }
-  if (!first || !second || q <= 0 || q >= 10) {
-    const single = !first || !second ? nearest : q <= 0 ? first : second
-    for (let slab = slabLeft; slab <= slabRight; slab += 1) {
-      piece(single, slab)
-    }
-    return
-  }
+  const firstChunk = Math.max(0, Math.floor((x0 - 8) / VEG_CHUNK))
+  const lastChunk = Math.floor((x0 + viewWidth + 8) / VEG_CHUNK)
   let pieces = fadePieces.get(layer)
   if (!pieces) {
     pieces = new Map()
     fadePieces.set(layer, pieces)
   }
-  for (let slab = slabLeft; slab <= slabRight; slab += 1) {
-    const key = `${part}|${slab}`
-    let fade = pieces.get(key)
-    if ((!fade || fade.k !== k || fade.q !== q) && fadeBuildsLeft > 0) {
-      fadeBuildsLeft -= 1
-      const sx = slab * VEG_SLAB * VEG_RES
-      const sw = Math.min(VEG_SLAB * VEG_RES, first.canvas.width - sx)
-      if (sw > 0) {
+  for (let chunk = firstChunk; chunk <= lastChunk; chunk += 1) {
+    const first = map.get(vegKey(k, part, chunk))
+    const second = map.get(vegKey(k + 1, part, chunk))
+    const any =
+      first ??
+      second ??
+      [k - 1, k + 2, k + 3].map((moment) => map.get(vegKey(moment, part, chunk))).find((image) => image !== undefined)
+    if (!any) {
+      continue
+    }
+    const y = base - strip.originY + any.rowTop
+    // Only the rows on the screen and above the cull line are drawn.
+    const firstRow = Math.max(0, Math.floor(-y * res))
+    const rows = Math.max(0, Math.min(any.canvas.height, Math.ceil((limit - y) * res)) - firstRow)
+    if (rows <= 0) {
+      continue
+    }
+    const x = chunk * VEG_CHUNK - x0
+    let source = any.canvas
+    if (first && second && q > 0 && q < 10) {
+      const key = `${part}|${chunk}`
+      let fade = pieces.get(key)
+      if ((!fade || fade.k !== k || fade.q !== q) && fadeBuildsLeft > 0) {
+        fadeBuildsLeft -= 1
         const canvas = fade?.canvas ?? document.createElement('canvas')
-        canvas.width = sw
+        canvas.width = first.canvas.width
         canvas.height = first.canvas.height
         const pctx = canvas.getContext('2d')
         if (pctx) {
           // The two images added up, each at its own share: the leaves of one fade out as the other's fade in.
           pctx.globalAlpha = 1 - q / 10
-          pctx.drawImage(first.canvas, sx, 0, sw, first.canvas.height, 0, 0, sw, first.canvas.height)
+          pctx.drawImage(first.canvas, 0, 0)
           pctx.globalCompositeOperation = 'lighter'
           pctx.globalAlpha = q / 10
-          pctx.drawImage(second.canvas, sx, 0, sw, second.canvas.height, 0, 0, sw, second.canvas.height)
+          pctx.drawImage(second.canvas, 0, 0)
         }
         fade = { k, q, canvas }
         pieces.set(key, fade)
       }
+      source = fade?.canvas ?? first.canvas
+    } else if (second && (q >= 10 || !first)) {
+      source = second.canvas
+    } else if (first) {
+      source = first.canvas
     }
-    if (fade) {
-      const fadeRows = rows(fade.canvas.height)
-      if (fadeRows > 0) {
-        ctx.drawImage(fade.canvas, 0, firstRow, fade.canvas.width, fadeRows, slab * VEG_SLAB - x0, y + firstRow / VEG_RES, fade.canvas.width / VEG_RES, fadeRows / VEG_RES)
-      }
-    } else {
-      piece(first, slab)
-    }
+    ctx.drawImage(source, 0, firstRow, source.width, rows, x, y + firstRow / res, source.width / res, rows / res)
   }
 }
 
@@ -1446,7 +1496,7 @@ function drawTrees(
     if (baseX + tree.shape.halfWidth < left || baseX - tree.shape.halfWidth > right) {
       continue
     }
-    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR, leafAlphas(transitionProgress(tree.shape.leaf.start, seasonTime)))
+    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR, leafStageMix(transitionProgress(tree.shape.leaf.start, seasonTime)))
   }
 }
 
@@ -1461,13 +1511,13 @@ function fadeOf(start: number, world: World): number {
 }
 
 /**
- * The opacity of the green and of the fall-colored leaves of a tree or bush.
+ * The look of the leaves of a tree or bush (which look it holds and the fade to the next).
  *
  * @param start - The object's start, 0-1.
  * @param world - Play space (the season).
  */
-function alphasOf(start: number, world: World): { green: number; fall: number } {
-  return leafAlphas(fadeOf(start, world))
+function alphasOf(start: number, world: World): { a: number; b: number; w: number } {
+  return leafStageMix(fadeOf(start, world))
 }
 
 /**
@@ -2170,8 +2220,8 @@ function fernOverhangsWater(world: World, fern: Fern): boolean {
   return Math.abs(fern.x - creek.x) < creek.halfWidth + fern.size * 1.25
 }
 
-/** The parts a foreground bush is drawn from: its wood, and its leaves in green or in fall color. */
-type BushPart = 'wood' | 'green' | 'fall'
+/** The parts a foreground bush is drawn from: its wood, and its leaves in each look it holds (`STAGE_LOOKS`). */
+type BushPart = 'wood' | 'c0' | 'c1' | 'c2' | 'c3'
 
 /** A bush part drawn once into a bitmap, since its many leaves are expensive to draw every frame. */
 type BushSprite = {
@@ -2310,7 +2360,7 @@ function* buildBushPart(bush: Bush, res: number, part: BushPart): Generator<void
     if (part === 'wood') {
       drawBushWood(ctx, bush, BUSH_WOOD_COLOR)
     } else {
-      yield* paintBushLeaves(ctx, bush, (lobe) => shadeRamp(lobe.color), null, { presence: 1, fall: part === 'fall' ? 1 : 0 }, 2, 0.9)
+      yield* paintBushLeaves(ctx, bush, (lobe) => shadeRamp(lobe.color), null, STAGE_LOOKS[Number(part.slice(1))] ?? { presence: 1, fall: 0 }, 2, 0.9)
     }
   }
   return { canvas, res, offsetX: minX - pad, offsetY: minY - pad, width, height }
@@ -2365,15 +2415,16 @@ function bushPartSprite(bush: Bush, res: number, part: BushPart, now: boolean): 
 }
 
 /**
- * Draws a bush from its prebuilt parts: its wood, then the green and the fall-colored leaves each faded by
- * its own amount. The fall leaves are queued if they are not built yet (until then the green ones stand in).
+ * Draws a bush from its prebuilt parts: its wood, then the leaves of the look it holds, and while it
+ * passes to the next look (over a few seconds) the two faded against each other. Leaves not built yet are
+ * queued (until then the nearest look built stands in).
  *
  * @param ctx - 2D canvas context in world space.
  * @param bush - Bush to draw.
  * @param groundY - Ground Y at the bush.
- * @param alphas - Opacity of the green and of the fall leaves.
+ * @param mix - Which look (`a`), which look it passes to (`b`) and how far (`w`).
  */
-function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, alphas: { green: number; fall: number }): void {
+function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mix: { a: number; b: number; w: number }): void {
   const res = ctx.getTransform().a
   const place = (sprite: BushSprite | null, alpha: number): void => {
     if (!sprite || alpha <= 0) {
@@ -2384,12 +2435,24 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, al
     ctx.globalAlpha = 1
   }
   place(bushPartSprite(bush, res, 'wood', true), 1)
-  const fall = bushPartSprite(bush, res, 'fall', false)
-  if (!fall && alphas.fall > 0) {
-    enqueueJob(bushPartKey(bush, 'fall', res), 1, bushPartJob(bush, res, 'fall'))
+  const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
+  for (const [stage, alpha] of stages) {
+    if (stage > 3 || alpha <= 0) {
+      continue
+    }
+    let sprite = bushPartSprite(bush, res, `c${stage}` as BushPart, false)
+    if (!sprite) {
+      enqueueJob(bushPartKey(bush, `c${stage}` as BushPart, res), 1, bushPartJob(bush, res, `c${stage}` as BushPart))
+      for (const other of [stage - 1, stage + 1, stage - 2, stage + 2]) {
+        sprite = other >= 0 && other <= 3 ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
+        if (sprite) {
+          break
+        }
+      }
+      sprite = sprite ?? bushPartSprite(bush, res, 'c0', true)
+    }
+    place(sprite, alpha)
   }
-  place(bushPartSprite(bush, res, 'green', true), fall ? alphas.green : Math.min(1, alphas.green + alphas.fall))
-  place(fall, alphas.fall)
 }
 
 /** Leaf colors for the foreground ferns: dark glossy greens. */
@@ -4406,7 +4469,7 @@ function drawClimbingSquirrel(ctx: CanvasRenderingContext2D, squirrel: Npc, worl
     groundYAt(world.terrain, home.trunkX),
     OAK_TONES,
     TRUNK_COLOR,
-    leafAlphas(transitionProgress(home.tree.shape.leaf.start, world.season.time)),
+    leafStageMix(transitionProgress(home.tree.shape.leaf.start, world.season.time)),
   )
   off.globalCompositeOperation = 'source-over'
   ctx.drawImage(climbCanvas, ox, oy, span, span)
@@ -4640,45 +4703,51 @@ function drawHungerBar(
  * @param dpr - Device pixel ratio the game renders at.
  */
 export function* warmUpScene(world: World, player: Player, dpr: number): Generator<void> {
-  // Only summer is made before play: each layer's ground and its summer images. The other seasons' images
-  // are made a little at a time while the game is played (see `planVegetation`).
+  // Only summer is made before play: each layer's ground and its summer images for the chunks around the
+  // player. The other seasons' images, and the chunks farther away, are made a little at a time while the
+  // game is played (see `planVegetation`).
+  const startCameraX = Math.max(0, player.x - (world.viewHeight * TYPICAL_ASPECT_RATIO) / 2)
   for (const layer of world.forest) {
     const strip = forestStripFor(layer, world)
     yield
-    for (const part of ['back', 'front'] as const) {
-      const steps = buildVegImage(layer, strip, 0, part)
-      let step = steps.next()
-      let sliceStart = performance.now()
-      while (!step.done) {
-        // A frame at a time, about 30 ms of work each (the steps are far smaller than that).
-        if (performance.now() - sliceStart > 30) {
-          yield
-          sliceStart = performance.now()
+    const { first, last } = visibleChunks(layer, startCameraX, world.viewHeight * TYPICAL_ASPECT_RATIO)
+    for (let chunk = first; chunk <= last; chunk += 1) {
+      for (const part of ['back', 'front'] as const) {
+        const steps = buildVegImage(layer, strip, 0, part, chunk)
+        let step = steps.next()
+        let sliceStart = performance.now()
+        while (!step.done) {
+          // A frame at a time, about 30 ms of work each (the steps are far smaller than that).
+          if (performance.now() - sliceStart > 30) {
+            yield
+            sliceStart = performance.now()
+          }
+          step = steps.next()
         }
-        step = steps.next()
+        vegMap(layer).set(vegKey(0, part, chunk), step.value)
       }
-      const map = vegMap(layer)
-      map.set(0, { ...map.get(0), [part]: step.value })
     }
     yield
   }
   for (const tree of world.trees) {
     getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'trunk')
     yield
-    getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'green')
+    getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'c0')
     yield
   }
   for (const bush of world.bushes) {
     bushPartSprite(bush, dpr, 'wood', true)
-    bushPartSprite(bush, dpr, 'green', true)
+    bushPartSprite(bush, dpr, 'c0', true)
   }
   yield
   // The fall and winter looks of the foreground, queued to be made in the background.
-  for (const tree of world.trees) {
-    enqueueJob(`oak|${tree.shape.id}|${dpr}`, 8, oakPartJob(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'fall'))
-  }
-  for (const bush of world.bushes) {
-    enqueueJob(bushPartKey(bush, 'fall', dpr), 8, bushPartJob(bush, dpr, 'fall'))
+  for (const part of ['c1', 'c2', 'c3'] as const) {
+    for (const tree of world.trees) {
+      enqueueJob(oakPartKey(tree.shape, TRUNK_COLOR, dpr, part), 8, oakPartJob(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, part))
+    }
+    for (const bush of world.bushes) {
+      enqueueJob(bushPartKey(bush, part, dpr), 8, bushPartJob(bush, dpr, part))
+    }
   }
   for (const fern of world.ferns) {
     enqueueJob(`fern|${fern.x}|${dpr.toFixed(2)}`, 9, fernWinterJob(fern, dpr))
