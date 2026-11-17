@@ -23,6 +23,7 @@ import {
   sampleAt,
   sampleTime,
   transitionProgress,
+  winterTintAt,
 } from './seasons'
 import { fallTones, mixHex, parseRgb, winterGreen } from './leafColors'
 import { BACKDROP_FOG, mixColor } from './world'
@@ -73,7 +74,11 @@ const BACKDROP_FALL: BackdropLook = {
   bottom: rgbOf(fallTones(30, 0, { color: FOREST_HAZE_COLOR, amount: BACKDROP_FOG })[3] ?? '#d88a3a'),
 }
 /** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
-const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, FOREST_HAZE_COLOR, BACKDROP_WINTER_FOG))
+/** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
+const WINTER_HAZE_COLOR = '#bcd8ee'
+const WINTER_HAZE_RGB = rgbOf(WINTER_HAZE_COLOR)
+
+const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, WINTER_HAZE_COLOR, BACKDROP_WINTER_FOG))
 const BACKDROP_WINTER: BackdropLook = { top: BACKDROP_WINTER_COLOR, bottom: BACKDROP_WINTER_COLOR }
 const BACKDROP_SPRING: BackdropLook = {
   top: BACKDROP_WINTER_COLOR,
@@ -524,6 +529,14 @@ function drawForest(
     }
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
+    }
+    // In winter the air goes light blue: a wash over everything this layer and the ones behind it show,
+    // stronger for the hazier (farther) layers, so the distance fades into blue.
+    const winter = winterTintAt(world.season.time)
+    if (winter > 0 && !hidden && limit > 0) {
+      const alpha = Math.min(1, winter * layer.fog * 0.85)
+      ctx.fillStyle = `rgba(${WINTER_HAZE_RGB[0]}, ${WINTER_HAZE_RGB[1]}, ${WINTER_HAZE_RGB[2]}, ${alpha.toFixed(3)})`
+      ctx.fillRect(0, 0, viewWidth, limit)
     }
   }
 }
