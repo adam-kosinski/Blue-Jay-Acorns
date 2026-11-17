@@ -15,7 +15,7 @@ import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOa
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
-import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_PARTICLE_TONES, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCover, snowThickness } from './snow'
+import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapAmount, snowCover, snowThickness } from './snow'
 import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
@@ -200,6 +200,7 @@ export function renderScene(
   // darker leaves at the top fading to lighter ones lower down, so layers melt into it.
   // The next seasons' images are prepared a little each frame while the game is played.
   // (More when the frame is cheap, less when it is not.)
+  seasonNow = world.season.time
   runWork(lastSceneMs < 6 ? 4 : 1.5)
   const sceneStart = performance.now()
   settleArrivals(3)
@@ -662,7 +663,11 @@ function makeMask(strip: ForestStrip, color: string, scale: number): HTMLCanvasE
   copy.height = Math.max(1, Math.round(strip.canvas.height * scale))
   const copyCtx = copy.getContext('2d')
   if (copyCtx && strip.canvas.width > 0 && strip.canvas.height > 0) {
-    copyCtx.drawImage(strip.canvas, 0, 0, copy.width, copy.height)
+    // The shape a pixel wider all round (so the soft edge of the ground, which is brownish, never peeks out
+    // from under the mask as a line along the surface).
+    for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      copyCtx.drawImage(strip.canvas, dx, dy, copy.width, copy.height)
+    }
     // Keep the shape (the opaque and soft-edged pixels) and make all of it one color.
     copyCtx.globalCompositeOperation = 'source-in'
     copyCtx.fillStyle = color
@@ -836,6 +841,7 @@ function* buildVegImage(
         if (rock && near(rock.x, rock.rx * 1.5)) {
           mossFade = transitionProgress(rock.fadeStart, time)
           paintRock(ctx, rock, rock.x, prop.y + rock.ry * 0.4)
+          paintRockSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowAmount(rock, time))
           mossFade = 0
         }
       } else if (prop.kind === 'fern') {
@@ -1172,6 +1178,9 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
   }
   return { pending: pendingJobs() + pendingRequests(), images, megapixels: Math.round(pixels / 1e5) / 10 }
 }
+
+/** The season time of the frame being drawn (rocks get their snow from it). */
+let seasonNow = 0
 
 /**
  * Whether everything the first view of the forest needs is made: every layer's images for the chunks in view
@@ -1959,16 +1968,20 @@ function drawMounds(
     }
     // A disturbed leaf shrinks, sinks and fades into the ground's color.
     const f = leaf.fade
-    // Kicked up where there is snow it is a puff of snow, not a leaf.
-    const snowy = snowAt(leaf.restX, leaf.restY - groundYAt(world.terrain, leaf.restX), world.season.time)
-    if (snowy > 0.3) {
-      const tone = SNOW_PARTICLE_TONES[Math.floor((leaf.angle + Math.PI) * 7) % SNOW_PARTICLE_TONES.length] ?? '#ffffff'
-      ctx.fillStyle = f > 0.01 ? mixColor(tone, SNOW_BOTTOM, f) : tone
+    if (leaf.snow) {
+      // A puff of snow: round, and it fades into the snow.
+      ctx.fillStyle = f > 0.01 ? mixColor(leaf.color, SNOW_BOTTOM, f) : leaf.color
       ctx.beginPath()
-      ctx.ellipse(leaf.x, leaf.y + f * leaf.ry * 1.6, leaf.rx * 0.85 * (1 - 0.6 * f), leaf.rx * 0.7 * (1 - 0.9 * f), 0, 0, Math.PI * 2)
+      ctx.ellipse(leaf.x, leaf.y + f * leaf.rx * 0.8, leaf.rx * (1 - 0.5 * f), leaf.rx * 0.8 * (1 - 0.8 * f), 0, 0, Math.PI * 2)
       ctx.fill()
       continue
     }
+    // Leaves under the snow are hidden by it (thin snow lets them show through).
+    const covered = snowAt(leaf.restX, leaf.restY - groundYAt(world.terrain, leaf.restX), world.season.time)
+    if (covered > 0.97) {
+      continue
+    }
+    ctx.globalAlpha = covered > 0 ? 1 - covered * 0.75 : 1
     ctx.fillStyle = f > 0.01 ? mixColor(leaf.color, GROUND_COLOR, f) : leaf.color
     ctx.beginPath()
     ctx.ellipse(
@@ -1981,6 +1994,7 @@ function drawMounds(
       Math.PI * 2,
     )
     ctx.fill()
+    ctx.globalAlpha = 1
   }
 }
 
@@ -2138,6 +2152,8 @@ function drawCreek(
   const farLeft = Math.min(creek.x - creek.halfWidth, frontX - creek.frontHalfWidth)
   const farRight = Math.max(creek.x + creek.halfWidth, frontX + creek.frontHalfWidth)
   if (farRight < cameraX - step || farLeft > cameraX + viewWidth + step) {
+    // The water is off screen, but the shore rocks (up to a bank's width from it) may still be in view.
+    drawShoreRocks(ctx, world, camera, viewWidth)
     return
   }
   const water = ctx.createLinearGradient(0, creek.waterY, 0, creek.waterY + creek.depth)
@@ -2175,6 +2191,20 @@ function drawCreek(
     ctx.fill()
   }
 
+  drawShoreRocks(ctx, world, camera, viewWidth)
+}
+
+/**
+ * Draws the shore rocks (the rocks on the creek's banks) in front of the water.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param camera - View origin.
+ * @param viewWidth - Viewport width.
+ */
+function drawShoreRocks(ctx: CanvasRenderingContext2D, world: World, camera: Camera, viewWidth: number): void {
+  const cameraX = camera.x
+  const { step } = world.terrain
   // Shore rocks are always in front of the water. Clipping to the area above the terrain keeps
   // their sunken bases hidden in the ground instead of showing as slabs over the bank.
   const viewLeft = cameraX - 200
@@ -3590,18 +3620,18 @@ function paintMoss(ctx: CanvasRenderingContext2D, spots: [number, number, number
 }
 
 /**
- * Paints a boulder with its base at (cx, baseY): a blocky, irregular outline (a squared ellipse with
- * smooth bumps), light from the upper left (gradient and two flat planes), cracks, pale lichen
- * blotches and dark speckles, and for mossy rocks a thick blanket of moss clumps over the top and
- * upper left that overhangs the outline a little. A few fallen leaves lie over the base.
+ * The outline of a boulder (a squared ellipse with smooth bumps) and the random stream that goes with it.
  *
- * @param ctx - 2D canvas context.
- * @param rock - Rock to paint (its own x is ignored).
+ * @param rock - The rock.
  * @param cx - Center x.
  * @param baseY - Y of the rock's base line.
  */
-function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY: number): void {
-  const { rx, ry, fog } = rock
+function rockShape(
+  rock: Rock,
+  cx: number,
+  baseY: number,
+): { outline: [number, number][]; rng: () => number; edge: (theta: number, bump: number) => [number, number] } {
+  const { rx, ry } = rock
   const rng = seededRandom(Math.floor(rock.jitter.reduce((a, b) => a + b, 0) * 10000))
   const phase = [rng() * 6.28, rng() * 6.28, rng() * 6.28] as const
   const points = 64
@@ -3624,6 +3654,95 @@ function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY:
     const bump = 1 + 0.07 * Math.sin(3 * theta + phase[0]) + 0.05 * Math.sin(5 * theta + phase[1]) + 0.035 * Math.sin(9 * theta + phase[2])
     outline.push(edge(theta, bump))
   }
+  return { outline, rng, edge }
+}
+
+/**
+ * How much snow lies on a rock now (each melts at its own moment).
+ *
+ * @param rock - The rock.
+ * @param time - Seconds along the timeline.
+ */
+function rockSnowAmount(rock: Rock, time: number): number {
+  const key = (rock.jitter.reduce((a, b) => a + b, 0) * 997) % 1
+  return snowCapAmount(time, key)
+}
+
+/**
+ * Lays snow on the upper part of a rock: a white cap over its top with a lumpy lower edge, and a little
+ * bulge over the outline, thicker the more snow there is.
+ *
+ * @param ctx - 2D canvas context.
+ * @param rock - The rock.
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ * @param amount - How much snow, 0-1.
+ */
+function paintRockSnow(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY: number, amount: number): void {
+  if (amount < 0.04) {
+    return
+  }
+  const { rx, ry } = rock
+  const { outline } = rockShape(rock, cx, baseY)
+  const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
+  // The cap's lower edge: lumps across the rock, lower in the middle, as deep as the snow is thick.
+  const depth = ry * (0.35 + 0.75 * amount)
+  const edgeY = (x: number): number => baseY - ry * 1.15 + depth + ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
+  ctx.save()
+  ctx.beginPath()
+  outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
+  ctx.closePath()
+  ctx.clip()
+  const cap = ctx.createLinearGradient(0, baseY - ry * 1.2, 0, baseY - ry * 1.15 + depth + ry * 0.2)
+  cap.addColorStop(0, SNOW_TOP)
+  cap.addColorStop(1, '#d4e3f3')
+  ctx.fillStyle = cap
+  ctx.beginPath()
+  ctx.moveTo(cx - rx * 1.4, baseY - ry * 1.5)
+  for (let k = 0; k <= 24; k += 1) {
+    const x = cx - rx * 1.4 + (rx * 2.8 * k) / 24
+    ctx.lineTo(x, edgeY(x))
+  }
+  ctx.lineTo(cx + rx * 1.4, baseY - ry * 1.5)
+  ctx.closePath()
+  ctx.fill()
+  ctx.restore()
+  // A little snow heaped over the top edge of the outline.
+  ctx.strokeStyle = SNOW_TOP
+  ctx.lineWidth = Math.max(1.5, ry * 0.14)
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+  ctx.beginPath()
+  let pen = false
+  for (const [x, y] of outline) {
+    if (y < edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
+      if (pen) {
+        ctx.lineTo(x, y - ctx.lineWidth * 0.25)
+      } else {
+        ctx.moveTo(x, y - ctx.lineWidth * 0.25)
+        pen = true
+      }
+    } else {
+      pen = false
+    }
+  }
+  ctx.stroke()
+}
+
+/**
+ * Paints a boulder with its base at (cx, baseY): a blocky, irregular outline (a squared ellipse with
+ * smooth bumps), light from the upper left (gradient and two flat planes), cracks, pale lichen
+ * blotches and dark speckles, and for mossy rocks a thick blanket of moss clumps over the top and
+ * upper left that overhangs the outline a little. A few fallen leaves lie over the base.
+ *
+ * @param ctx - 2D canvas context.
+ * @param rock - Rock to paint (its own x is ignored).
+ * @param cx - Center x.
+ * @param baseY - Y of the rock's base line.
+ */
+function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY: number): void {
+  const { rx, ry, fog } = rock
+  const { outline, rng, edge } = rockShape(rock, cx, baseY)
   const trace = (): void => {
     ctx.beginPath()
     outline.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)))
@@ -3844,6 +3963,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, fa
       queueRockWinter(rock, res)
     }
   }
+  paintRockSnow(ctx, rock, rock.x, y, rockSnowAmount(rock, seasonNow))
 }
 
 /**
@@ -3873,6 +3993,15 @@ function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numb
   })
   ctx.closePath()
   ctx.fill()
+  const snowOn = rockSnowAmount(rock, seasonNow)
+  if (snowOn > 0.04) {
+    // Snow over the upper part, clipped to the outline.
+    ctx.save()
+    ctx.clip()
+    ctx.fillStyle = SNOW_TOP
+    ctx.fillRect(rock.x - rock.rx * 1.3, baseY - rock.ry * 1.4, rock.rx * 2.6, rock.ry * (0.45 + 0.7 * snowOn))
+    ctx.restore()
+  }
   if (rock.moss) {
     // Moss in soft patches on the upper side of the rock, clipped to its outline.
     ctx.save()

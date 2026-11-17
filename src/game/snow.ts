@@ -12,27 +12,55 @@ export const SNOW_BOTTOM = '#c3d8ee'
 /** The tones of the snow a hop kicks up. */
 export const SNOW_PARTICLE_TONES = ['#ffffff', '#eef6ff', '#dcebfa']
 
+/** Length of a quick change of the snow, in segments (about 4.5 seconds). */
+const SNOW_FADE = 0.06
+
 /**
- * How thick the snow is, 0-1 (it decides how much of the litter below shows through): a first dusting at the end of late fall, thin
- * through early winter, a full layer from the middle of mid winter on.
+ * Smoothstep.
+ *
+ * @param x - 0-1 (clamped).
+ */
+function smooth(x: number): number {
+  const c = Math.max(0, Math.min(1, x))
+  return c * c * (3 - 2 * c)
+}
+
+/**
+ * How thick the snow is, 0-1 (it decides how much of the litter below shows through): none until the middle
+ * of early winter, where it quickly comes in thin, then at the start of mid winter it quickly goes to a full
+ * layer.
  *
  * @param time - Seconds along the timeline.
  */
 export function snowThickness(time: number): number {
   const u = time / SEGMENT_SECONDS
-  if (u <= 3.85) {
+  return 0.55 * smooth((u - (4.5 - SNOW_FADE / 2)) / SNOW_FADE) + 0.45 * smooth((u - (5 - SNOW_FADE / 2)) / SNOW_FADE)
+}
+
+/**
+ * The share of the particles a hop kicks up that are snow where there is snow: none before the middle of
+ * early winter, half in its second half, all of them from mid winter on.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function snowKickShare(time: number): number {
+  const u = time / SEGMENT_SECONDS
+  return u < 4.5 ? 0 : u < 5 ? 0.5 : 1
+}
+
+/**
+ * How much snow lies on top of a rock or other object (the same schedule as the ground's, and melting at its
+ * own moment of the melt).
+ *
+ * @param time - Seconds along the timeline.
+ * @param key - A number 0-1 of its own (its moment of the melt).
+ */
+export function snowCapAmount(time: number, key: number): number {
+  const thickness = snowThickness(time)
+  if (thickness <= 0) {
     return 0
   }
-  if (u <= 4) {
-    return (0.3 * (u - 3.85)) / 0.15
-  }
-  if (u <= 5) {
-    return 0.3 + 0.4 * (u - 4)
-  }
-  if (u <= 5.5) {
-    return 0.7 + (0.3 * (u - 5)) / 0.5
-  }
-  return 1
+  return thickness * smooth((snowCover(time) - 0.6 * key) / 0.4)
 }
 
 /**

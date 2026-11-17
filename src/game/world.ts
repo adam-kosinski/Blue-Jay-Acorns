@@ -235,6 +235,8 @@ function spawnKickedLeaves(terrain: Terrain, worldWidth: number, playerSize: num
         color: pick(LEAF_COLORS, '#8a5a2b'),
         landed: true,
         fading: false,
+        snow: false,
+        age: 0,
         fade: 0,
       })
     }

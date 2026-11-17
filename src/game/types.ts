@@ -151,6 +151,10 @@ export type KickedLeaf = {
   fading: boolean
   /** 0 (lying there) to 1 (gone), eased while `fading`. */
   fade: number
+  /** A puff of snow, not a leaf: it fades away by itself soon after it lands. */
+  snow: boolean
+  /** Seconds since it landed (snow puffs only). */
+  age: number
 }
 
 /** One tapered trunk or branch piece, relative to the tree base. */

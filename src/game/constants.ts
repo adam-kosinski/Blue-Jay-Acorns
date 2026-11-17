@@ -153,6 +153,9 @@ export const BURIAL_HOP_RANGE_IN_SIZES = 1.1
  */
 export const KICKED_LEAF_DENSITY_PER_SIZE = 4.1
 
+/** Puffs of snow a hop kicks up where there is snow (all of them in mid winter; a share before). */
+export const SNOW_PUFFS_PER_HOP = 9
+
 /** Most kicked leaves kept lying around. */
 export const KICKED_LEAVES_LIMIT = 600
 

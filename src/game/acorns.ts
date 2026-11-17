@@ -16,8 +16,10 @@ import {
   LEAF_COLORS,
   PICKUP_DURATION,
   REACH_IN_SIZES,
+  SNOW_PUFFS_PER_HOP,
   acornRadiusForPlayer,
 } from './constants'
+import { SNOW_PARTICLE_TONES, snowAt, snowKickShare } from './snow'
 import { groundYAt, inWater } from './terrain'
 import type { Acorn, KeyEdges, Player, World } from './types'
 
@@ -422,7 +424,7 @@ export function trackHops(world: World, birds: Player[]): void {
     const window = range * 1.2
     let alive = 0
     for (const leaf of world.kickedLeaves) {
-      if (Math.abs(leaf.x - cx) >= window || leaf.fading) {
+      if (Math.abs(leaf.x - cx) >= window || leaf.fading || leaf.snow) {
         continue
       }
       if (leaf.landed) {
@@ -431,9 +433,16 @@ export function trackHops(world: World, birds: Player[]): void {
         alive += 1
       }
     }
-    const target = Math.round((KICKED_LEAF_DENSITY_PER_SIZE * 2 * window) / bird.size)
+    // Over snow the hop kicks up snow (all of it in mid winter, half in the second half of early winter, with
+    // leaves for the rest); elsewhere leaves. Puffs of snow are not kept lying around: they fade away.
+    const share = snowAt(cx, 0, world.season.time) > 0 ? snowKickShare(world.season.time) : 0
+    const target = Math.round(((KICKED_LEAF_DENSITY_PER_SIZE * 2 * window) / bird.size) * (1 - share))
     for (let k = alive; k < target; k += 1) {
-      kickLeaf(world, bird, cx + (Math.random() - 0.5) * 2 * window, bird.size * 0.08)
+      kickLeaf(world, bird, cx + (Math.random() - 0.5) * 2 * window, bird.size * 0.08, false)
+    }
+    const puffs = Math.round(SNOW_PUFFS_PER_HOP * share)
+    for (let k = 0; k < puffs; k += 1) {
+      kickLeaf(world, bird, cx + (Math.random() - 0.5) * range * 1.6, bird.size * 0.04, true)
     }
     // A hop near a buried acorn counts toward hiding it (its mound shrinks and fades; no extra leaves).
     for (const acorn of world.acorns) {
@@ -452,14 +461,15 @@ export function trackHops(world: World, birds: Player[]): void {
  * @param bird - The hopping bird.
  * @param restX - World x where it comes to rest.
  * @param lift - How far above the ground surface it may come to rest.
+ * @param snow - A puff of snow instead of a leaf.
  */
-function kickLeaf(world: World, bird: Player, restX: number, lift: number): void {
+function kickLeaf(world: World, bird: Player, restX: number, lift: number, snow: boolean): void {
   const flight = 0.35 + Math.random() * 0.2
   const gravity = ACORN_GRAVITY_IN_SIZES * bird.size
   const x0 = bird.x + bird.size / 2 + bird.facing * bird.size * 0.25
   const y0 = groundYAt(world.terrain, x0) - bird.size * 0.1
   const restY = groundYAt(world.terrain, restX) - Math.random() * lift * 0.45
-  const rx = (0.035 + Math.random() * 0.045) * bird.size * 2
+  const rx = (snow ? 0.025 + Math.random() * 0.03 : 0.035 + Math.random() * 0.045) * bird.size * 2
   world.kickedLeaves.push({
     x: x0,
     y: y0,
@@ -470,10 +480,14 @@ function kickLeaf(world: World, bird: Player, restX: number, lift: number): void
     rx,
     ry: rx * (0.35 + Math.random() * 0.2),
     angle: (Math.random() - 0.5) * Math.PI,
-    color: LEAF_COLORS[Math.floor(Math.random() * LEAF_COLORS.length)] ?? '#8a5a2b',
+    color: snow
+      ? (SNOW_PARTICLE_TONES[Math.floor(Math.random() * SNOW_PARTICLE_TONES.length)] ?? '#ffffff')
+      : (LEAF_COLORS[Math.floor(Math.random() * LEAF_COLORS.length)] ?? '#8a5a2b'),
     landed: false,
     fading: false,
     fade: 0,
+    snow,
+    age: 0,
   })
   while (world.kickedLeaves.length > KICKED_LEAVES_LIMIT) {
     world.kickedLeaves.shift()
@@ -505,6 +519,13 @@ export function updateAcorns(world: World, playerSize: number, dt: number): void
       faded = faded || leaf.fade >= 1
     }
     if (leaf.landed) {
+      // A puff of snow lies there a moment, then fades into the ground.
+      if (leaf.snow && !leaf.fading) {
+        leaf.age += dt
+        if (leaf.age > 0.6) {
+          leaf.fading = true
+        }
+      }
       continue
     }
     leaf.vy += ACORN_GRAVITY_IN_SIZES * playerSize * dt
