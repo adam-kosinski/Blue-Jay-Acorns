@@ -3832,7 +3832,9 @@ function paintSnowShapes(
  * in (the line grows from nothing).
  *
  * @param ctx - 2D canvas context.
- * @param outline - The rock's outline.
+ * @param outline - The top contour to follow (the rock's silhouette, moss included).
+ * @param offX - Added to the contour's x.
+ * @param offY - Added to the contour's y.
  * @param cx - Center x.
  * @param baseY - Y of the rock's base line.
  * @param rx - Half width.
@@ -3845,6 +3847,8 @@ function paintSnowShapes(
 function paintSnowHeap(
   ctx: CanvasRenderingContext2D,
   outline: [number, number][],
+  offX: number,
+  offY: number,
   cx: number,
   baseY: number,
   rx: number,
@@ -3865,7 +3869,9 @@ function paintSnowHeap(
   ctx.lineJoin = 'round'
   ctx.beginPath()
   let pen = false
-  for (const [x, y] of outline) {
+  for (const [px, py] of outline) {
+    const x = px + offX
+    const y = py + offY
     if (y < g.edgeY(x) - ry * 0.05 && y < baseY - ry * 0.1) {
       if (pen) {
         ctx.lineTo(x, y - ctx.lineWidth * 0.25)
@@ -3879,6 +3885,66 @@ function paintSnowHeap(
   }
   ctx.stroke()
   ctx.restore()
+}
+
+/**
+ * The top contour of what a bitmap shows (the topmost painted pixel of each column, a little smoothed), in
+ * world coordinates: so snow can follow a rock with its moss, not just the rock's outline.
+ *
+ * @param source - The bitmap.
+ * @param left - Where its left edge is in the world.
+ * @param top - Where its top edge is.
+ * @param width - Its width in the world.
+ * @param height - Its height in the world.
+ */
+function silhouetteTop(
+  source: CanvasImageSource & { width: number; height: number },
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): [number, number][] {
+  const columns = Math.max(8, Math.min(220, Math.round(source.width)))
+  const rows = Math.max(8, Math.round((columns * source.height) / Math.max(1, source.width)))
+  const probe = newCanvas()
+  probe.width = columns
+  probe.height = rows
+  const pctx = probe.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | null
+  if (!pctx) {
+    return []
+  }
+  pctx.drawImage(source, 0, 0, columns, rows)
+  const data = pctx.getImageData(0, 0, columns, rows).data
+  const raw: (number | null)[] = []
+  for (let c = 0; c < columns; c += 1) {
+    let found: number | null = null
+    for (let row = 0; row < rows; row += 1) {
+      if ((data[(row * columns + c) * 4 + 3] ?? 0) > 60) {
+        found = row
+        break
+      }
+    }
+    raw.push(found)
+  }
+  const points: [number, number][] = []
+  for (let c = 0; c < columns; c += 1) {
+    const here = raw[c]
+    if (here === null || here === undefined) {
+      continue
+    }
+    // Average with the neighbours that are painted too.
+    let sum = 0
+    let count = 0
+    for (let d = -2; d <= 2; d += 1) {
+      const other = raw[c + d]
+      if (other !== null && other !== undefined) {
+        sum += other
+        count += 1
+      }
+    }
+    points.push([left + ((c + 0.5) / columns) * width, top + ((sum / count + 0.5) / rows) * height])
+  }
+  return points
 }
 
 /**
@@ -3944,12 +4010,16 @@ function paintRockWithSnow(
   sctx.drawImage(rockCanvas, 0, 0)
   ctx.drawImage(rockCanvas, cx - width / 2, baseY - above, width, height)
   ctx.drawImage(snowCanvas, cx - width / 2, baseY - above, width, height)
-  paintSnowHeap(ctx, rockShape(rock, cx, baseY).outline, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
+  const contour = silhouetteTop(rockCanvas, cx - width / 2, baseY - above, width, height)
+  paintSnowHeap(ctx, contour, 0, 0, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
 }
 
 type RockSnowOverlay = { canvas: HTMLCanvasElement; thin: number; full: number; size: number }
 
 const rockSnowOverlays = new WeakMap<Rock, RockSnowOverlay>()
+
+/** Each rock's top contour (moss included) relative to its center and base line, found once. */
+const rockContours = new WeakMap<Rock, [number, number][]>()
 
 /**
  * Draws the snow on a rock from its bitmap: an overlay the shape of the rock's silhouette (moss that hangs
@@ -4008,7 +4078,12 @@ function drawRockSnow(
     rockSnowOverlays.set(rock, overlay)
   }
   ctx.drawImage(overlay.canvas, rock.x + sprite.offsetX, baseY + sprite.offsetY, sprite.width, sprite.height)
-  paintSnowHeap(ctx, rockShape(rock, rock.x, baseY).outline, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full, rock.fog)
+  let contour = rockContours.get(rock)
+  if (!contour) {
+    contour = silhouetteTop(sprite.canvas, sprite.offsetX, sprite.offsetY, sprite.width, sprite.height)
+    rockContours.set(rock, contour)
+  }
+  paintSnowHeap(ctx, contour, rock.x, baseY, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), amount, layers.full, rock.fog)
 }
 
 /**
@@ -4045,7 +4120,7 @@ function paintSnowCap(
   ctx.clip()
   paintSnowShapes(ctx, cx, baseY, rx, ry, phase, amount, layers, fog)
   ctx.restore()
-  paintSnowHeap(ctx, outline, cx, baseY, rx, ry, phase, amount, layers.full, fog)
+  paintSnowHeap(ctx, outline, 0, 0, cx, baseY, rx, ry, phase, amount, layers.full, fog)
 }
 
 /**
