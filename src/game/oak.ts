@@ -1257,6 +1257,84 @@ export function drawOak(
   drawCrowns(ctx, shape, x, y, tones, trunkColor, res, mix)
 }
 
+/** A bitmap with a size (a canvas or an image bitmap). */
+type Bitmap = CanvasImageSource & { width: number; height: number }
+
+const fadeScratch = new WeakMap<object, HTMLCanvasElement>()
+
+/**
+ * Draws a cross-fade of two equally sized bitmaps without the picture going see-through in the middle:
+ * the two are first added up (each at its own share) on a canvas of their own, and that is drawn opaque.
+ * (Drawing the two one over the other with their shares as opacity would let the scene show through.)
+ *
+ * @param ctx - 2D canvas context.
+ * @param owner - What the two bitmaps belong to (it keeps the working canvas).
+ * @param from - The look that is passing.
+ * @param to - The look that is coming.
+ * @param share - How far the fade has come, 0-1.
+ * @param dx - Where to draw (left).
+ * @param dy - Where to draw (top).
+ * @param dw - Drawn width.
+ * @param dh - Drawn height.
+ */
+export function drawCrossfade(
+  ctx: CanvasRenderingContext2D,
+  owner: object,
+  from: Bitmap,
+  to: Bitmap,
+  share: number,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+): void {
+  if (from.width !== to.width || from.height !== to.height) {
+    ctx.globalAlpha = 1 - share
+    ctx.drawImage(from, dx, dy, dw, dh)
+    ctx.globalAlpha = share
+    ctx.drawImage(to, dx, dy, dw, dh)
+    ctx.globalAlpha = 1
+    return
+  }
+  let scratch = fadeScratch.get(owner)
+  if (!scratch) {
+    scratch = document.createElement('canvas')
+    fadeScratch.set(owner, scratch)
+  }
+  if (scratch.width !== from.width || scratch.height !== from.height) {
+    scratch.width = from.width
+    scratch.height = from.height
+  }
+  const sctx = scratch.getContext('2d')
+  if (!sctx) {
+    return
+  }
+  sctx.globalCompositeOperation = 'source-over'
+  sctx.clearRect(0, 0, scratch.width, scratch.height)
+  sctx.globalAlpha = 1 - share
+  sctx.drawImage(from, 0, 0)
+  sctx.globalCompositeOperation = 'lighter'
+  sctx.globalAlpha = share
+  sctx.drawImage(to, 0, 0)
+  sctx.globalAlpha = 1
+  sctx.globalCompositeOperation = 'source-over'
+  ctx.drawImage(scratch, dx, dy, dw, dh)
+}
+
+/**
+ * Lets go of an owner's working canvas for cross-fades (when no fade is going on).
+ *
+ * @param owner - What the bitmaps belong to.
+ */
+export function endCrossfade(owner: object): void {
+  const scratch = fadeScratch.get(owner)
+  if (scratch) {
+    scratch.width = 0
+    scratch.height = 0
+    fadeScratch.delete(owner)
+  }
+}
+
 /**
  * Draws the crown part(s) of a tree for a look.
  *
@@ -1280,6 +1358,7 @@ function drawCrowns(
   mix: { a: number; b: number; w: number; soon?: boolean },
 ): void {
   const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
+  const shown: { sprite: TreeSprite; alpha: number }[] = []
   for (const [stage, alpha] of stages) {
     const part = crownPart(stage)
     if (!part || alpha <= 0) {
@@ -1298,11 +1377,18 @@ function drawCrowns(
       }
       sprite = sprite ?? getOakPart(shape, tones, trunkColor, res, 'c0')
     }
-    ctx.globalAlpha = alpha
-    ctx.drawImage(sprite.canvas, x + sprite.offsetX, y + sprite.offsetY, sprite.width, sprite.height)
+    shown.push({ sprite, alpha })
   }
-  ctx.globalAlpha = 1
+  const [first, second] = shown
+  if (first && second) {
+    drawCrossfade(ctx, shape, first.sprite.canvas, second.sprite.canvas, second.alpha, x + first.sprite.offsetX, y + first.sprite.offsetY, first.sprite.width, first.sprite.height)
+  } else if (first) {
+    ctx.globalAlpha = first.alpha
+    ctx.drawImage(first.sprite.canvas, x + first.sprite.offsetX, y + first.sprite.offsetY, first.sprite.width, first.sprite.height)
+    ctx.globalAlpha = 1
+  }
   if (mix.w === 0) {
+    endCrossfade(shape)
     // Holding a look: get the next one ready when its change is near, and let go of the ones that are over (memory).
     const next = mix.soon ? crownPart(mix.a + 1) : null
     if (next) {

@@ -11,9 +11,9 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, settleOakArrivals } from './oak'
+import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
-import { pendingRequests, registerLayer, requestImage, workerUsable } from './vegClient'
+import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import {
   SAMPLE_COUNT,
@@ -78,7 +78,6 @@ const BACKDROP_FALL: BackdropLook = {
 /** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
 /** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
 const WINTER_HAZE_COLOR = '#bcd8ee'
-const WINTER_HAZE_RGB = rgbOf(WINTER_HAZE_COLOR)
 
 /** How far a layer's colors go toward the winter haze at full winter, per unit of the layer's fog (its distance haze). */
 const WINTER_HAZE_STRENGTH = 0.85
@@ -204,6 +203,7 @@ export function renderScene(
   const sceneStart = performance.now()
   settleArrivals(3)
   settleOakArrivals(3)
+  settleProps(2)
   planVegetation(world, camera.x, viewWidth)
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
@@ -506,12 +506,14 @@ function drawForest(
     // In winter the ground has its layer's share of the light blue haze: its summer bitmap first, then the
     // hazed copy over it as the haze comes in.
     if (winter > 0 && !hidden && !strip.winterCanvas && stripsMade < 2) {
-      strip.winterCanvas = makeWinterStrip(strip, layer)
+      strip.winterCanvas = makeWinterStrip(strip)
       stripsMade += 1
     }
+    // The ground bitmap, then a mask of it in the haze's color over it, as strong as this layer's haze (drawn
+    // over the bitmap itself, so a soft edge of the ground is not drawn twice).
     blit(strip.canvas, true, 1, layer.groundColor)
     if (winter > 0 && strip.winterCanvas) {
-      blit(strip.winterCanvas, true, winter, winterHazed(layer.groundColor, layer, winter))
+      blit(strip.winterCanvas, false, winterAmount(layer, winter), layer.groundColor)
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -615,17 +617,17 @@ function drawForest(
  * light blue; the transparent ones stay as they are).
  *
  * @param strip - The layer's ground bitmap.
- * @param layer - Forest layer.
  */
-function makeWinterStrip(strip: ForestStrip, layer: ForestLayer): HTMLCanvasElement {
+function makeWinterStrip(strip: ForestStrip): HTMLCanvasElement {
   const copy = document.createElement('canvas')
   copy.width = strip.canvas.width
   copy.height = strip.canvas.height
   const copyCtx = copy.getContext('2d')
   if (copyCtx && copy.width > 0 && copy.height > 0) {
     copyCtx.drawImage(strip.canvas, 0, 0)
-    copyCtx.globalCompositeOperation = 'source-atop'
-    copyCtx.fillStyle = `rgba(${WINTER_HAZE_RGB[0]}, ${WINTER_HAZE_RGB[1]}, ${WINTER_HAZE_RGB[2]}, ${winterAmount(layer, 1).toFixed(3)})`
+    // Keep the shape (the opaque and soft-edged pixels) and make all of it the haze's color.
+    copyCtx.globalCompositeOperation = 'source-in'
+    copyCtx.fillStyle = WINTER_HAZE_COLOR
     copyCtx.fillRect(0, 0, copy.width, copy.height)
   }
   return copy
@@ -2622,7 +2624,7 @@ type BushPart = 'wood' | 'c0' | 'c1' | 'c2' | 'c3'
 
 /** A bush part drawn once into a bitmap, since its many leaves are expensive to draw every frame. */
 type BushSprite = {
-  canvas: HTMLCanvasElement
+  canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap
   res: number
   offsetX: number
   offsetY: number
@@ -2764,10 +2766,10 @@ function* buildBushPart(bush: Bush, res: number, part: BushPart): Generator<void
   const width = maxX - minX + pad * 2
   const height = maxY - minY + pad * 2
   const scale = Math.min(res, Math.sqrt(3_000_000 / Math.max(1, width * height)))
-  const canvas = document.createElement('canvas')
+  const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(scale, scale)
     ctx.translate(-(minX - pad), -(minY - pad))
@@ -2838,7 +2840,7 @@ function bushPartSprite(bush: Bush, res: number, part: BushPart, now: boolean): 
  * @param groundY - Ground Y at the bush.
  * @param mix - Which look (`a`), which look it passes to (`b`) and how far (`w`).
  */
-function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mix: { a: number; b: number; w: number }): void {
+function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mix: { a: number; b: number; w: number; soon?: boolean }): void {
   const res = ctx.getTransform().a
   const place = (sprite: BushSprite | null, alpha: number): void => {
     if (!sprite || alpha <= 0) {
@@ -2850,13 +2852,14 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
   }
   place(bushPartSprite(bush, res, 'wood', true), 1)
   const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
+  const shown: { sprite: BushSprite; alpha: number }[] = []
   for (const [stage, alpha] of stages) {
     if (stage > 3 || alpha <= 0) {
       continue
     }
     let sprite = bushPartSprite(bush, res, `c${stage}` as BushPart, false)
     if (!sprite) {
-      enqueueJob(bushPartKey(bush, `c${stage}` as BushPart, res), 1, bushPartJob(bush, res, `c${stage}` as BushPart))
+      queueBushPart(bush, res, `c${stage}` as BushPart, 1)
       for (const other of [stage - 1, stage + 1, stage - 2, stage + 2]) {
         sprite = other >= 0 && other <= 3 ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
         if (sprite) {
@@ -2865,7 +2868,22 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
       }
       sprite = sprite ?? bushPartSprite(bush, res, 'c0', true)
     }
-    place(sprite, alpha)
+    if (sprite) {
+      shown.push({ sprite, alpha })
+    }
+  }
+  const [first, second] = shown
+  if (first && second) {
+    drawCrossfade(ctx, bush, first.sprite.canvas, second.sprite.canvas, second.alpha, bush.x + first.sprite.offsetX, groundY + first.sprite.offsetY, first.sprite.width, first.sprite.height)
+  } else {
+    if (first) {
+      place(first.sprite, first.alpha)
+    }
+    endCrossfade(bush)
+    // Holding a look: the next one is made when its change is near.
+    if (mix.soon && mix.a < 3) {
+      queueBushPart(bush, res, `c${mix.a + 1}` as BushPart, 6)
+    }
   }
 }
 
@@ -2951,7 +2969,7 @@ function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem
 }
 
 /** A foreground fern drawn once into a bitmap. */
-type FernSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+type FernSprite = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; res: number; offsetX: number; offsetY: number; width: number; height: number }
 
 const fernSprites = new WeakMap<Fern, Map<string, FernSprite>>()
 
@@ -2968,10 +2986,10 @@ function buildFernSprite(fern: Fern, res: number, winter: boolean): FernSprite {
   const below = fern.size * 0.55
   const height = fern.size * 1.2 + below + 10
   const scale = Math.min(res, Math.sqrt(2_000_000 / (width * height)))
-  const canvas = document.createElement('canvas')
+  const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const sctx = canvas.getContext('2d')
+  const sctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
   if (sctx) {
     sctx.scale(scale, scale)
     sctx.translate(width / 2, height - below - 4)
@@ -3025,9 +3043,176 @@ function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number, fa
       ctx.drawImage(winter.canvas, fern.x + winter.offsetX, groundY + winter.offsetY, winter.width, winter.height)
       ctx.globalAlpha = 1
     } else {
-      enqueueJob(`fern|${fern.x}|${res.toFixed(2)}`, 3, fernWinterJob(fern, res))
+      queueFernWinter(fern, res)
     }
   }
+}
+
+/**
+ * A new canvas (an offscreen one inside the background worker, which has no document).
+ */
+function newCanvas(): HTMLCanvasElement | OffscreenCanvas {
+  return typeof document === 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')
+}
+
+/**
+ * For the background worker: builds a foreground bush part, or a fern's or rock's winter bitmap, in one go
+ * and hands it over as a bitmap.
+ *
+ * @param kind - What to build.
+ * @param item - The bush, fern or rock.
+ * @param res - Bitmap pixels per world pixel.
+ * @param part - For a bush, which part.
+ */
+export function buildPropSync(
+  kind: 'bush' | 'fern' | 'rock',
+  item: Bush | Fern | Rock,
+  res: number,
+  part: string,
+): { bitmap: ImageBitmap; offsetX: number; offsetY: number; width: number; height: number } {
+  let sprite: BushSprite | FernSprite | RockSprite
+  if (kind === 'bush') {
+    const steps = buildBushPart(item as Bush, res, part as BushPart)
+    let step = steps.next()
+    while (!step.done) {
+      step = steps.next()
+    }
+    sprite = step.value
+  } else if (kind === 'fern') {
+    sprite = buildFernSprite(item as Fern, res, true)
+  } else {
+    sprite = buildRockSprite(item as Rock, res, true)
+  }
+  return {
+    bitmap: (sprite.canvas as OffscreenCanvas).transferToImageBitmap(),
+    offsetX: sprite.offsetX,
+    offsetY: sprite.offsetY,
+    width: sprite.width,
+    height: sprite.height,
+  }
+}
+
+/** Foreground bitmaps that came from the worker and are not in use yet. */
+const propArrivals: { bitmap: ImageBitmap; apply: (bitmap: ImageBitmap) => void }[] = []
+
+/**
+ * Puts the bitmaps that came from the worker in use, a few milliseconds' worth a frame (each is first drawn
+ * into a tiny canvas so that the browser takes it up now, not in the middle of a frame).
+ *
+ * @param budgetMs - Time to spend.
+ */
+function settleProps(budgetMs: number): void {
+  const start = performance.now()
+  while (propArrivals.length > 0 && performance.now() - start < budgetMs) {
+    const arrival = propArrivals.shift()
+    if (!arrival) {
+      break
+    }
+    touchBitmap(arrival.bitmap)
+    arrival.apply(arrival.bitmap)
+  }
+}
+
+/**
+ * Has a foreground bush part built in the background (in the worker if there is one).
+ *
+ * @param bush - Bush.
+ * @param res - Bitmap pixels per world pixel.
+ * @param part - Which part.
+ * @param priority - Lower is more urgent.
+ */
+function queueBushPart(bush: Bush, res: number, part: BushPart, priority: number): void {
+  const key = `${part}|${res.toFixed(2)}`
+  if (bushParts.get(bush)?.has(key)) {
+    return
+  }
+  if (!workerUsable()) {
+    enqueueJob(bushPartKey(bush, part, res), priority, bushPartJob(bush, res, part))
+    return
+  }
+  requestWork({
+    key: bushPartKey(bush, part, res),
+    priority,
+    payload: { type: 'prop', kind: 'bush', item: bush, res, part },
+    wanted: () => !bushParts.get(bush)?.has(key),
+    onDone: (bitmap, meta) => {
+      propArrivals.push({
+        bitmap,
+        apply: (ready) => {
+          let map = bushParts.get(bush)
+          if (!map) {
+            map = new Map()
+            bushParts.set(bush, map)
+          }
+          map.set(key, { canvas: ready, res, offsetX: meta['offsetX'] ?? 0, offsetY: meta['offsetY'] ?? 0, width: meta['width'] ?? 0, height: meta['height'] ?? 0 })
+        },
+      })
+    },
+  })
+}
+
+/**
+ * Has a fern's winter bitmap built in the background (in the worker if there is one).
+ *
+ * @param fern - Fern.
+ * @param res - Bitmap pixels per world pixel.
+ */
+function queueFernWinter(fern: Fern, res: number): void {
+  if (!workerUsable()) {
+    enqueueJob(`fern|${fern.x}|${res.toFixed(2)}`, 3, fernWinterJob(fern, res))
+    return
+  }
+  requestWork({
+    key: `fern|${fern.x}|${res.toFixed(2)}`,
+    priority: 3,
+    payload: { type: 'prop', kind: 'fern', item: fern, res, part: 'winter' },
+    wanted: () => !fernSprites.get(fern)?.has(`1|${res.toFixed(2)}`),
+    onDone: (bitmap, meta) => {
+      propArrivals.push({
+        bitmap,
+        apply: (ready) => {
+          let map = fernSprites.get(fern)
+          if (!map) {
+            map = new Map()
+            fernSprites.set(fern, map)
+          }
+          map.set(`1|${res.toFixed(2)}`, { canvas: ready, res, offsetX: meta['offsetX'] ?? 0, offsetY: meta['offsetY'] ?? 0, width: meta['width'] ?? 0, height: meta['height'] ?? 0 })
+        },
+      })
+    },
+  })
+}
+
+/**
+ * Has a mossy rock's winter bitmap built in the background (in the worker if there is one).
+ *
+ * @param rock - Rock.
+ * @param res - Bitmap pixels per world pixel.
+ */
+function queueRockWinter(rock: Rock, res: number): void {
+  if (!workerUsable()) {
+    enqueueJob(`rock|${rock.x}|${res.toFixed(2)}`, 3, rockWinterJob(rock, res))
+    return
+  }
+  requestWork({
+    key: `rock|${rock.x}|${res.toFixed(2)}`,
+    priority: 3,
+    payload: { type: 'prop', kind: 'rock', item: rock, res, part: 'winter' },
+    wanted: () => !rockSprites.get(rock)?.has(`1|${res.toFixed(2)}`),
+    onDone: (bitmap, meta) => {
+      propArrivals.push({
+        bitmap,
+        apply: (ready) => {
+          let map = rockSprites.get(rock)
+          if (!map) {
+            map = new Map()
+            rockSprites.set(rock, map)
+          }
+          map.set(`1|${res.toFixed(2)}`, { canvas: ready, res, offsetX: meta['offsetX'] ?? 0, offsetY: meta['offsetY'] ?? 0, width: meta['width'] ?? 0, height: meta['height'] ?? 0 })
+        },
+      })
+    },
+  })
 }
 
 let touchCanvas: HTMLCanvasElement | null = null
@@ -3465,7 +3650,7 @@ function paintRock(ctx: CanvasRenderingContext2D, rock: Rock, cx: number, baseY:
   }
 }
 
-type RockSprite = { canvas: HTMLCanvasElement; res: number; offsetX: number; offsetY: number; width: number; height: number }
+type RockSprite = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; res: number; offsetX: number; offsetY: number; width: number; height: number }
 
 const rockSprites = new WeakMap<Rock, Map<string, RockSprite>>()
 
@@ -3482,10 +3667,10 @@ function buildRockSprite(rock: Rock, res: number, winter: boolean): RockSprite {
   const above = rock.ry * 1.5 + pad
   const height = above + rock.ry * 0.55 + pad
   const scale = Math.min(res, Math.sqrt(4_000_000 / (width * height)))
-  const canvas = document.createElement('canvas')
+  const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const sctx = canvas.getContext('2d')
+  const sctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
   if (sctx) {
     sctx.scale(scale, scale)
     sctx.translate(width / 2, above)
@@ -3543,7 +3728,7 @@ function drawRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, fa
       ctx.drawImage(winter.canvas, rock.x + winter.offsetX, y + winter.offsetY, winter.width, winter.height)
       ctx.globalAlpha = 1
     } else {
-      enqueueJob(`rock|${rock.x}|${res.toFixed(2)}`, 3, rockWinterJob(rock, res))
+      queueRockWinter(rock, res)
     }
   }
 }
@@ -5262,20 +5447,7 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
     }
   }
   yield
-  // The fall and winter looks of the foreground, queued to be made in the background.
-  for (const part of ['c1', 'c2', 'c3'] as const) {
-    for (const bush of world.bushes) {
-      enqueueJob(bushPartKey(bush, part, dpr), 8, bushPartJob(bush, dpr, part))
-    }
-  }
-  for (const fern of world.ferns) {
-    enqueueJob(`fern|${fern.x}|${dpr.toFixed(2)}`, 9, fernWinterJob(fern, dpr))
-  }
-  for (const rock of world.rocks) {
-    if (rock.moss) {
-      enqueueJob(`rock|${rock.x}|${dpr.toFixed(2)}`, 9, rockWinterJob(rock, dpr))
-    }
-  }
+  // The other looks of the foreground are made in the background as they come near (see `drawBush`, `drawCrowns`).
   // Leaf-litter tiles for the whole ground, one per step (at the usual resolution of 1 px per world px).
   const { top, tiles } = leafTileEntry(world)
   const tileHeight = world.height - top + 12

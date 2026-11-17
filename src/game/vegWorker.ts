@@ -4,13 +4,14 @@
  * never wait for them. It gets each layer's scenery once, then build requests, and answers with bitmaps.
  */
 import { buildOakPartSync, type OakPart } from './oak'
-import { buildVegImageSync, type VegPlan } from './render'
-import type { ForestLayer, TreeShape } from './types'
+import { buildPropSync, buildVegImageSync, type VegPlan } from './render'
+import type { Bush, Fern, ForestLayer, Rock, TreeShape } from './types'
 
 /** Messages to the worker. */
 export type ToWorker =
   | { type: 'layer'; id: number; layer: Partial<ForestLayer>; veg: VegPlan }
   | { type: 'build'; req: number; id: number; k: number; part: 'back' | 'front'; chunk: number }
+  | { type: 'prop'; req: number; kind: 'bush' | 'fern' | 'rock'; item: Bush | Fern | Rock; res: number; part: string }
   | { type: 'oak'; req: number; shape: TreeShape; tones: string[]; trunkColor: string; res: number; part: OakPart }
 
 /** Messages from the worker. */
@@ -25,6 +26,15 @@ scope.onmessage = (event: MessageEvent<ToWorker>): void => {
   const message = event.data
   if (message.type === 'layer') {
     layers.set(message.id, { layer: message.layer as ForestLayer, veg: message.veg })
+    return
+  }
+  if (message.type === 'prop') {
+    try {
+      const { bitmap, ...meta } = buildPropSync(message.kind, message.item, message.res, message.part)
+      scope.postMessage({ type: 'done', req: message.req, bitmap, meta } satisfies FromWorker, [bitmap])
+    } catch (error) {
+      scope.postMessage({ type: 'error', req: message.req, message: String(error) } satisfies FromWorker)
+    }
     return
   }
   if (message.type === 'oak') {
