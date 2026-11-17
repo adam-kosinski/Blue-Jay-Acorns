@@ -15,6 +15,7 @@ import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOa
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
+import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_PARTICLE_TONES, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCover, snowThickness } from './snow'
 import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
@@ -77,10 +78,10 @@ const BACKDROP_FALL: BackdropLook = {
 }
 /** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
 /** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
-const WINTER_HAZE_COLOR = '#bcd8ee'
+const WINTER_HAZE_COLOR = '#8dbdf0'
 
 /** How far a layer's colors go toward the winter haze at full winter, per unit of the layer's fog (its distance haze). */
-const WINTER_HAZE_STRENGTH = 0.85
+const WINTER_HAZE_STRENGTH = 1
 
 /**
  * How far a layer's own colors have gone toward the light blue winter haze: the farther (foggier) the
@@ -222,6 +223,7 @@ export function renderScene(
   drawBuriedProps(ctx, world, camera.x, viewWidth)
   drawGround(ctx, world, camera.x, viewWidth)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
+  drawSnow(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
@@ -406,6 +408,7 @@ function drawForest(
 ): void {
   const maxCamY = Math.max(0, world.height - viewHeight)
   const winter = winterTintAt(world.season.time)
+  const snow = snowThickness(world.season.time) * snowCover(world.season.time)
   let stripsMade = 0
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
@@ -506,16 +509,20 @@ function drawForest(
     // In winter the ground has its layer's share of the light blue haze: its summer bitmap first, then the
     // hazed copy over it as the haze comes in.
     if (winter > 0 && !hidden && !strip.winterCanvas && stripsMade < 2) {
-      strip.winterCanvas = makeWinterStrip(strip)
+      strip.winterCanvas = makeMask(strip, WINTER_HAZE_COLOR, 1)
       stripsMade += 1
     }
-    // The ground bitmap, then a mask of it in the haze's color over it, as strong as this layer's haze (drawn
-    // over the bitmap itself, so a soft edge of the ground is not drawn twice).
-    blit(strip.canvas, true, 1, layer.groundColor)
-    if (winter > 0 && strip.winterCanvas && !hidden && strip.winterCanvas.width > 0) {
-      // In one piece (cut to the slabs' cull lines by a clip), since slabs that overlap by a pixel would
-      // tint that pixel twice and show a vertical line every slab.
-      const mask = strip.winterCanvas
+    if (snow > 0 && !hidden && !strip.snowCanvas && stripsMade < 2) {
+      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5)
+      stripsMade += 1
+    }
+    // Draws a mask of the ground (the same shape in one color) over it, in one piece (cut to the slabs' cull
+    // lines by a clip): slabs that overlap by a pixel would tint that pixel twice and show a vertical line.
+    const drawMask = (mask: HTMLCanvasElement, alpha: number): void => {
+      if (mask.width <= 0 || alpha <= 0) {
+        return
+      }
+      const maskRes = (mask.width / strip.canvas.width) * strip.resolution
       ctx.save()
       ctx.beginPath()
       let deepest = topRow
@@ -527,23 +534,22 @@ function drawForest(
         }
       }
       ctx.clip()
-      ctx.globalAlpha = winterAmount(layer, winter)
-      const srcX = Math.max(0, camera.x * p * strip.resolution)
-      const srcW = Math.min(viewWidth * strip.resolution, mask.width - srcX)
+      ctx.globalAlpha = alpha
+      const srcX = Math.max(0, camera.x * p * maskRes)
+      const srcW = Math.min(viewWidth * maskRes, mask.width - srcX)
       if (srcW > 0 && deepest > topRow) {
-        ctx.drawImage(
-          mask,
-          srcX,
-          topRow * strip.resolution,
-          srcW,
-          (deepest - topRow) * strip.resolution,
-          0,
-          base - strip.originY + topRow,
-          srcW / strip.resolution,
-          deepest - topRow,
-        )
+        ctx.drawImage(mask, srcX, topRow * maskRes, srcW, (deepest - topRow) * maskRes, 0, base - strip.originY + topRow, srcW / maskRes, deepest - topRow)
       }
       ctx.restore()
+    }
+    // The ground bitmap, then snow over it (far layers are all snow or all bare: the share covered is how
+    // strongly it shows), then a mask in the haze's color as strong as this layer's haze.
+    blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor)
+    if (snow > 0 && strip.snowCanvas && !hidden) {
+      drawMask(strip.snowCanvas, snow * 0.92)
+    }
+    if (winter > 0 && strip.winterCanvas && !hidden) {
+      drawMask(strip.winterCanvas, winterAmount(layer, winter))
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -647,17 +653,19 @@ function drawForest(
  * light blue; the transparent ones stay as they are).
  *
  * @param strip - The layer's ground bitmap.
+ * @param color - The color the mask is in.
+ * @param scale - Its size against the bitmap's.
  */
-function makeWinterStrip(strip: ForestStrip): HTMLCanvasElement {
+function makeMask(strip: ForestStrip, color: string, scale: number): HTMLCanvasElement {
   const copy = document.createElement('canvas')
-  copy.width = strip.canvas.width
-  copy.height = strip.canvas.height
+  copy.width = Math.max(1, Math.round(strip.canvas.width * scale))
+  copy.height = Math.max(1, Math.round(strip.canvas.height * scale))
   const copyCtx = copy.getContext('2d')
-  if (copyCtx && copy.width > 0 && copy.height > 0) {
-    copyCtx.drawImage(strip.canvas, 0, 0)
-    // Keep the shape (the opaque and soft-edged pixels) and make all of it the haze's color.
+  if (copyCtx && strip.canvas.width > 0 && strip.canvas.height > 0) {
+    copyCtx.drawImage(strip.canvas, 0, 0, copy.width, copy.height)
+    // Keep the shape (the opaque and soft-edged pixels) and make all of it one color.
     copyCtx.globalCompositeOperation = 'source-in'
-    copyCtx.fillStyle = WINTER_HAZE_COLOR
+    copyCtx.fillStyle = color
     copyCtx.fillRect(0, 0, copy.width, copy.height)
   }
   return copy
@@ -678,6 +686,8 @@ type ForestStrip = {
   veg: VegPlan
   /** The same bitmap with the layer's winter haze over it (made when winter first comes near). */
   winterCanvas?: HTMLCanvasElement
+  /** The ground's shape in snow white at half size (made when snow comes near). */
+  snowCanvas?: HTMLCanvasElement
 }
 
 /** Where a layer's vegetation stands, in the strip's coordinates, and which rows of the strip its images cover. */
@@ -1635,6 +1645,69 @@ function drawGround(
   ctx.fill()
 }
 
+/**
+ * Draws the snow on the foreground ground, over the litter: a whole blanket when it covers everything, else
+ * its patches (grid cells that each hold a patch, which grow from their own moment of the melt).
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space (the terrain and the season).
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
+  const thickness = snowThickness(world.season.time)
+  const cover = snowCover(world.season.time)
+  if (thickness <= 0 || cover <= 0) {
+    return
+  }
+  const { terrain } = world
+  const startX = Math.max(0, Math.floor((cameraX - 16) / terrain.step) * terrain.step)
+  const endX = Math.min(world.width + 64, cameraX + viewWidth + 16 + terrain.step)
+  const bottom = world.height + terrain.creek.depth
+  const gradient = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, bottom)
+  gradient.addColorStop(0, SNOW_TOP)
+  gradient.addColorStop(1, SNOW_BOTTOM)
+  ctx.fillStyle = gradient
+  ctx.globalAlpha = thickness
+  ctx.beginPath()
+  if (cover >= 0.999) {
+    ctx.moveTo(startX, bottom)
+    for (let x = startX; x <= endX; x += terrain.step) {
+      ctx.lineTo(x, groundYAt(terrain, x) - 1)
+    }
+    ctx.lineTo(endX, bottom)
+    ctx.closePath()
+  } else {
+    const rows = Math.ceil((bottom - world.groundY + SNOW_CELL_DEPTH) / SNOW_CELL_DEPTH)
+    const firstColumn = Math.floor((cameraX - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+    const lastColumn = Math.floor((cameraX + viewWidth + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+    const points = 14
+    for (let i = firstColumn; i <= lastColumn; i += 1) {
+      for (let j = 0; j <= rows; j += 1) {
+        const blob = snowBlob(i, j, cover)
+        if (!blob) {
+          continue
+        }
+        for (let k = 0; k < points; k += 1) {
+          const angle = (k / points) * Math.PI * 2
+          const stretch = blobStretch(blob, angle)
+          const x = blob.x + Math.cos(angle) * blob.rx * stretch
+          const depth = Math.max(0, blob.depth + Math.sin(angle) * blob.ry * stretch)
+          const y = groundYAt(terrain, x) + depth - (depth === 0 ? 1 : 0)
+          if (k === 0) {
+            ctx.moveTo(x, y)
+          } else {
+            ctx.lineTo(x, y)
+          }
+        }
+        ctx.closePath()
+      }
+    }
+  }
+  ctx.fill()
+  ctx.globalAlpha = 1
+}
+
 /** Width of a cached leaf-litter tile, in world pixels. */
 const LEAF_TILE_WIDTH = 1024
 
@@ -1886,6 +1959,16 @@ function drawMounds(
     }
     // A disturbed leaf shrinks, sinks and fades into the ground's color.
     const f = leaf.fade
+    // Kicked up where there is snow it is a puff of snow, not a leaf.
+    const snowy = snowAt(leaf.restX, leaf.restY - groundYAt(world.terrain, leaf.restX), world.season.time)
+    if (snowy > 0.3) {
+      const tone = SNOW_PARTICLE_TONES[Math.floor((leaf.angle + Math.PI) * 7) % SNOW_PARTICLE_TONES.length] ?? '#ffffff'
+      ctx.fillStyle = f > 0.01 ? mixColor(tone, SNOW_BOTTOM, f) : tone
+      ctx.beginPath()
+      ctx.ellipse(leaf.x, leaf.y + f * leaf.ry * 1.6, leaf.rx * 0.85 * (1 - 0.6 * f), leaf.rx * 0.7 * (1 - 0.9 * f), 0, 0, Math.PI * 2)
+      ctx.fill()
+      continue
+    }
     ctx.fillStyle = f > 0.01 ? mixColor(leaf.color, GROUND_COLOR, f) : leaf.color
     ctx.beginPath()
     ctx.ellipse(
