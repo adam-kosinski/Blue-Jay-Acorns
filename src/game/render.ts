@@ -125,7 +125,15 @@ function winterLayer(layer: ForestLayer, winter: number): ForestLayer {
   }
 }
 
-const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, WINTER_HAZE_COLOR, BACKDROP_WINTER_FOG))
+// The farthest trunks' color (the trunk color with the layer's haze, then its winter haze) taken one more step
+// of atmospheric perspective back: so the far background is a little hazier than the farthest layer's trunks.
+const BACKDROP_WINTER_COLOR = rgbOf(
+  mixHex(
+    mixHex(TRUNK_COLOR, FOREST_HAZE_COLOR, BACKDROP_WINTER_FOG),
+    WINTER_HAZE_COLOR,
+    Math.min(0.95, BACKDROP_WINTER_FOG * WINTER_HAZE_STRENGTH),
+  ),
+)
 const BACKDROP_WINTER: BackdropLook = { top: BACKDROP_WINTER_COLOR, bottom: BACKDROP_WINTER_COLOR }
 const BACKDROP_SPRING: BackdropLook = {
   top: BACKDROP_WINTER_COLOR,
@@ -193,6 +201,7 @@ export function renderScene(
   // (More when the frame is cheap, less when it is not.)
   runWork(lastSceneMs < 6 ? 4 : 1.5)
   const sceneStart = performance.now()
+  settleArrivals(3)
   planVegetation(world, camera.x, viewWidth)
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
@@ -611,7 +620,7 @@ function makeWinterStrip(strip: ForestStrip, layer: ForestLayer): HTMLCanvasElem
   copy.width = strip.canvas.width
   copy.height = strip.canvas.height
   const copyCtx = copy.getContext('2d')
-  if (copyCtx) {
+  if (copyCtx && copy.width > 0 && copy.height > 0) {
     copyCtx.drawImage(strip.canvas, 0, 0)
     copyCtx.globalCompositeOperation = 'source-atop'
     copyCtx.fillStyle = `rgba(${WINTER_HAZE_RGB[0]}, ${WINTER_HAZE_RGB[1]}, ${WINTER_HAZE_RGB[2]}, ${winterAmount(layer, 1).toFixed(3)})`
@@ -931,7 +940,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     const map = vegMap(layer)
     const { first, last } = visibleChunks(layer, cameraX, viewWidth)
     const exact = visibleChunks(layer, cameraX, viewWidth, 0)
-    vegWanted.set(layer, { first: first - 1, last: last + 1, lo: k - 3, hi: k + 4 })
+    vegWanted.set(layer, { first: first - 1, last: last + 1, lo: k - 1, hi: k + 3 })
     const workerId = workerLayerIds.get(layer)
     for (const [list, priority] of [[now, 2], [ahead, 7]] as const) {
       for (const moment of list) {
@@ -941,7 +950,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
         // The moments in use get the chunks next to the visible ones too; the ones ahead only the visible ones.
         for (let chunk = priority === 2 ? first : exact.first; chunk <= (priority === 2 ? last : exact.last); chunk += 1) {
           for (const part of ['back', 'front'] as const) {
-            if (map.has(vegKey(moment, part, chunk))) {
+            if (map.has(vegKey(moment, part, chunk)) || !chunkHasContent(layer, strip.veg, part, chunk)) {
               continue
             }
             if (workerId !== undefined && workerUsable()) {
@@ -959,7 +968,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
                   if (map.has(key) || !vegStillWanted(layer, moment, chunk)) {
                     releaseVegImage(image)
                   } else {
-                    map.set(key, image)
+                    arrivals.push({ layer, map, key, image, moment, chunk })
                   }
                 },
               })
@@ -976,7 +985,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     }
     for (const key of [...map.keys()]) {
       const [moment, , chunk] = key.split('|').map((piece, position) => (position === 1 ? 0 : Number(piece)))
-      if ((chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1 || (moment ?? 0) < k - 3 || (moment ?? 0) > k + 4) {
+      if ((chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1 || (moment ?? 0) < k - 1 || (moment ?? 0) > k + 3) {
         const old = map.get(key)
         if (old) {
           releaseVegImage(old)
@@ -985,6 +994,96 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
       }
     }
   })
+}
+
+/** Images that came from the worker and are not shown yet (each is given to the graphics card in a frame of its own). */
+const arrivals: { layer: ForestLayer; map: Map<string, VegImage>; key: string; image: VegImage; moment: number; chunk: number }[] = []
+
+let uploadCanvas: HTMLCanvasElement | null = null
+
+/**
+ * Makes the images that arrived from the worker ready, a few milliseconds' worth a frame: the first time a
+ * bitmap is drawn it has to be uploaded to the graphics card, which for a big one is a noticeable stall, so
+ * that is done here, one at a time, before the image goes into the layer's map and is used.
+ *
+ * @param budgetMs - Time to spend.
+ */
+function settleArrivals(budgetMs: number): void {
+  const start = performance.now()
+  while (arrivals.length > 0 && performance.now() - start < budgetMs) {
+    const arrival = arrivals.shift()
+    if (!arrival) {
+      break
+    }
+    if (arrival.map.has(arrival.key) || !vegStillWanted(arrival.layer, arrival.moment, arrival.chunk)) {
+      releaseVegImage(arrival.image)
+      continue
+    }
+    uploadCanvas ??= document.createElement('canvas')
+    uploadCanvas.width = 1
+    uploadCanvas.height = 1
+    const uploadCtx = uploadCanvas.getContext('2d')
+    uploadCtx?.drawImage(arrival.image.canvas, 0, 0, 1, 1)
+    arrival.map.set(arrival.key, arrival.image)
+  }
+}
+
+const contentCache = new WeakMap<ForestLayer, Map<string, boolean>>()
+
+/**
+ * Whether anything of a kind of a layer's vegetation reaches into a chunk (an image is only made for chunks that
+ * have something in them).
+ *
+ * @param layer - Forest layer.
+ * @param veg - Where its vegetation stands.
+ * @param part - Trees and logs, or rocks, ferns and bushes.
+ * @param chunk - Chunk.
+ */
+function chunkHasContent(layer: ForestLayer, veg: VegPlan, part: 'back' | 'front', chunk: number): boolean {
+  let cache = contentCache.get(layer)
+  if (!cache) {
+    cache = new Map()
+    contentCache.set(layer, cache)
+  }
+  const key = `${part}|${chunk}`
+  const known = cache.get(key)
+  if (known !== undefined) {
+    return known
+  }
+  const left = chunk * VEG_CHUNK
+  const right = left + VEG_CHUNK + VEG_OVERLAP
+  const near = (x: number, reach: number): boolean => x + reach >= left && x - reach <= right
+  let has = false
+  if (part === 'back') {
+    has =
+      layer.trees.some((tree, index) => {
+        const at = veg.trees[index]
+        return at !== undefined && near(at.x, tree.shape.halfWidth)
+      }) ||
+      layer.logs.some((log, index) => {
+        const at = veg.logs[index]
+        return at !== undefined && near(at.x, log.length)
+      })
+  } else {
+    has = veg.props.some((prop) => {
+      if (prop.kind === 'rock') {
+        const rock = layer.rocks[prop.index]
+        return rock !== undefined && near(rock.x, rock.rx * 1.5)
+      }
+      if (prop.kind === 'fern') {
+        const fern = layer.ferns[prop.index]
+        return fern !== undefined && near(fern.x, fern.size * 1.4)
+      }
+      const bush = layer.bushes[prop.index]
+      let reach = 0
+      for (const lobe of bush?.lobes ?? []) {
+        reach = Math.max(reach, Math.abs(lobe.dx) + lobe.radius)
+      }
+      return bush !== undefined && near(bush.x, reach)
+    })
+  }
+  cache.set(key, has)
+  return has
 }
 
 /**
@@ -1078,6 +1177,9 @@ function drawVegetation(
     fadePieces.set(layer, pieces)
   }
   for (let chunk = firstChunk; chunk <= lastChunk; chunk += 1) {
+    if (!chunkHasContent(layer, strip.veg, part, chunk)) {
+      continue
+    }
     const first = map.get(vegKey(k, part, chunk))
     const second = map.get(vegKey(k + 1, part, chunk))
     // A chunk whose image for these moments is not made yet shows the nearest moment's image that exists.
