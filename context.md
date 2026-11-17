@@ -411,3 +411,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Far layers were too blurry: `vegRes` is now 0.4 under parallax 0.15, 0.5 under 0.3, 0.6 under 0.4, 0.75 above. The props image reaches the strip bottom again (the crop to the lowest prop was dropped while a vanishing-rock report is investigated; it was never shown to be the cause).
 
 - Winter blue earlier: `winterTintAt` is 0 at the start of late fall and 1 at the start of early winter (was 0 at the start of winter, 1 mid mid winter); the backdrop reaches its winter color at the start of early winter (key 4, was 5.5).
+
+- Winter haze bands: each layer's blue wash was a flat rectangle up to the nearer layers' cull line with the layer's whole haze as alpha, so the creek showed a band at every layer boundary (and far layers were hazed far more than in fall). Now each layer adds only the difference between its haze and the next nearer layer's (so the washes pile up to each layer's own haze), and the wash fades out over its lowest 120 px.

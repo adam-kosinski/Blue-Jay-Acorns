@@ -527,13 +527,24 @@ function drawForest(
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
     }
-    // In winter the air goes light blue: a wash over everything this layer and the ones behind it show,
-    // stronger for the hazier (farther) layers, so the distance fades into blue.
+    // In winter the air goes light blue: a wash over everything this layer and the ones behind it show.
+    // Each layer adds only what its own haze has over the next nearer layer's, so that the washes pile up to
+    // each layer's own haze (nearer layers are clearer) and the water shows no band where one ends; the
+    // wash fades out over its lowest rows for the same reason.
     const winter = winterTintAt(world.season.time)
     if (winter > 0 && !hidden && limit > 0) {
-      const alpha = Math.min(1, winter * layer.fog * 0.85)
-      ctx.fillStyle = `rgba(${WINTER_HAZE_RGB[0]}, ${WINTER_HAZE_RGB[1]}, ${WINTER_HAZE_RGB[2]}, ${alpha.toFixed(3)})`
-      ctx.fillRect(0, 0, viewWidth, limit)
+      const own = Math.min(0.95, winter * layer.fog * 0.85)
+      const nearer = next ? Math.min(0.95, winter * next.fog * 0.85) : 0
+      const alpha = Math.max(0, 1 - (1 - own) / (1 - nearer))
+      const [wr, wg, wb] = WINTER_HAZE_RGB
+      const fade = Math.min(limit, 120)
+      const wash = ctx.createLinearGradient(0, limit - fade, 0, limit)
+      wash.addColorStop(0, `rgba(${wr}, ${wg}, ${wb}, ${alpha.toFixed(3)})`)
+      wash.addColorStop(1, `rgba(${wr}, ${wg}, ${wb}, 0)`)
+      ctx.fillStyle = `rgba(${wr}, ${wg}, ${wb}, ${alpha.toFixed(3)})`
+      ctx.fillRect(0, 0, viewWidth, limit - fade)
+      ctx.fillStyle = wash
+      ctx.fillRect(0, limit - fade, viewWidth, fade)
     }
   }
 }
