@@ -484,15 +484,22 @@ function drawForest(
     const topRow = Math.max(0, strip.originY - base)
     const below = base - strip.originY + stripHeight
     // Blits a strip bitmap in slabs, each cut at its own cull line (the +1 px overlap hides seams).
-    const blit = (source: HTMLCanvasElement, fillBelow: boolean, alpha = 1, groundColor = layer.groundColor, image = true): void => {
-      ctx.globalAlpha = alpha
+    const blit = (
+      source: HTMLCanvasElement,
+      fillBelow: boolean,
+      alpha = 1,
+      groundColor = layer.groundColor,
+      image = true,
+      dst: CanvasRenderingContext2D = ctx,
+    ): void => {
+      dst.globalAlpha = alpha
       for (let s = 0; s < slabs; s += 1) {
         const slabLimit = layerLimits[s] ?? viewHeight
         const bottomRow = Math.min(stripHeight, slabLimit - base + strip.originY)
         const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * strip.resolution)
         const srcW = Math.min((FOREST_SLAB + 1) * strip.resolution, source.width - srcX)
         if (image && bottomRow > topRow && !hidden && srcW > 0) {
-          ctx.drawImage(
+          dst.drawImage(
             source,
             srcX,
             topRow * strip.resolution,
@@ -505,116 +512,133 @@ function drawForest(
           )
         }
         if (fillBelow && below < slabLimit && layer.localRadius === null) {
-          ctx.fillStyle = groundColor
-          ctx.fillRect(s * FOREST_SLAB, below - 1, FOREST_SLAB + 1, slabLimit - below + 1)
+          dst.fillStyle = groundColor
+          dst.fillRect(s * FOREST_SLAB, below - 1, FOREST_SLAB + 1, slabLimit - below + 1)
         }
       }
-      ctx.globalAlpha = 1
+      dst.globalAlpha = 1
     }
     // The ground first; then the creek's water over it (below); then the props, so the water only
     // ever covers the ground and what lies behind it, never a bush or rock standing in front.
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'back')
     }
-    // In winter the ground has its layer's share of the light blue haze: its summer bitmap first, then the
-    // hazed copy over it as the haze comes in.
-    if (winter > 0 && !hidden && !strip.winterCanvas && stripsMade < 2) {
-      strip.winterCanvas = makeMask(strip, WINTER_HAZE_COLOR, 1, 3)
-      stripsMade += 1
-    }
-    if (snow > 0 && !hidden && !strip.snowCanvas && stripsMade < 2) {
-      strip.snowCanvas = makeMask(strip, SNOW_TOP, 0.5, 3)
-      stripsMade += 1
-    }
-    // Draws a mask of the ground (the same shape in one color) over it, in one piece (cut to the slabs' cull
-    // lines by a clip): slabs that overlap by a pixel would tint that pixel twice and show a vertical line.
-    const drawMask = (mask: HTMLCanvasElement, alpha: number): void => {
-      if (mask.width <= 0 || alpha <= 0) {
-        return
-      }
-      const maskRes = (mask.width / strip.canvas.width) * strip.resolution
-      ctx.save()
-      ctx.beginPath()
-      let deepest = topRow
-      for (let sl = 0; sl < slabs; sl += 1) {
-        const bottomRow = Math.min(stripHeight, (layerLimits[sl] ?? viewHeight) - base + strip.originY)
-        if (bottomRow > topRow) {
-          ctx.rect(sl * FOREST_SLAB, base - strip.originY + topRow, FOREST_SLAB, bottomRow - topRow)
-          deepest = Math.max(deepest, bottomRow)
-        }
-      }
-      ctx.clip()
-      ctx.globalAlpha = alpha
-      const srcX = Math.max(0, camera.x * p * maskRes)
-      const srcW = Math.min(viewWidth * maskRes, mask.width - srcX)
-      if (srcW > 0 && deepest > topRow) {
-        ctx.drawImage(mask, srcX, topRow * maskRes, srcW, (deepest - topRow) * maskRes, 0, base - strip.originY + topRow, srcW / maskRes, deepest - topRow)
-      }
-      ctx.restore()
-    }
-    // The ground bitmap, then snow over it (far layers are all snow or all bare: the share covered is how
-    // strongly it shows), then a mask in the haze's color as strong as this layer's haze.
     // Once the snow is complete (and the haze, and nothing is melting) the ground is one flat color: its shape in
-    // that color is drawn alone, instead of the bitmap and the snow and haze masks over it.
+    // that color is drawn alone.
     if (snowedIn && !hidden && !strip.frozenCanvas && stripsMade < 2) {
       strip.frozenColor = winterHazed(mixHex(layer.groundColor, SNOW_TOP, 0.92), layer, 1)
       strip.frozenCanvas = makeMask(strip, strip.frozenColor, 0.75, 1)
       stripsMade += 1
     }
+    const thickness = snowThickness(world.season.time)
+    const cover = snowCover(world.season.time)
     if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
       blit(strip.canvas, true, 1, strip.frozenColor, false)
       if (!hidden) {
-        drawMask(strip.frozenCanvas, 1)
-      }
-    } else {
-    blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor)
-    if (snow > 0 && strip.snowCanvas && !hidden) {
-      const cover = snowCover(world.season.time)
-      const thickness = snowThickness(world.season.time)
-      if (cover >= 0.999) {
-        drawMask(strip.snowCanvas, thickness * 0.92)
-      } else {
-        // While it melts the snow goes in patches here too (the same patches as the foreground's, at this
-        // layer's scale, and not smaller than half of it): the mask is drawn only inside them.
-        const scale = Math.max(0.5, layer.scale)
-        const shift = camera.x * p
-        const firstColumn = Math.floor((shift / scale - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
-        const lastColumn = Math.floor(((shift + viewWidth) / scale + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
-        const rows = Math.ceil(((limit - base) / scale + SNOW_CELL_DEPTH * 2) / SNOW_CELL_DEPTH)
-        // The patches start above the highest ridge of the layer's ground (their depth is measured from 30 px
-        // above the base line), or the ridges would be left bare the moment the melt starts.
-        const firstRow = Math.floor((30 * scale - strip.rise) / scale / SNOW_CELL_DEPTH) - 1
-        const patches = new Path2D()
-        const points = 10
-        for (let i = firstColumn; i <= lastColumn; i += 1) {
-          for (let j = firstRow; j <= rows; j += 1) {
-            const blob = snowBlob(i, j, cover)
-            if (!blob) {
-              continue
-            }
-            for (let k = 0; k < points; k += 1) {
-              const angle = (k / points) * Math.PI * 2
-              const stretch = blobStretch(blob, angle)
-              const x = (blob.x + Math.cos(angle) * blob.rx * stretch) * scale - shift
-              const y = base - 30 * scale + (blob.depth + Math.sin(angle) * blob.ry * stretch) * scale
-              if (k === 0) {
-                patches.moveTo(x, y)
-              } else {
-                patches.lineTo(x, y)
-              }
-            }
-            patches.closePath()
+        // (in one piece: see below)
+        ctx.save()
+        ctx.beginPath()
+        let deepest = topRow
+        for (let sl = 0; sl < slabs; sl += 1) {
+          const bottomRow = Math.min(stripHeight, (layerLimits[sl] ?? viewHeight) - base + strip.originY)
+          if (bottomRow > topRow) {
+            ctx.rect(sl * FOREST_SLAB, base - strip.originY + topRow, FOREST_SLAB, bottomRow - topRow)
+            deepest = Math.max(deepest, bottomRow)
           }
         }
-        ctx.save()
-        ctx.clip(patches)
-        drawMask(strip.snowCanvas, thickness * 0.92)
+        ctx.clip()
+        const maskRes = (strip.frozenCanvas.width / strip.canvas.width) * strip.resolution
+        const srcX = Math.max(0, camera.x * p * maskRes)
+        const srcW = Math.min(viewWidth * maskRes, strip.frozenCanvas.width - srcX)
+        if (srcW > 0 && deepest > topRow) {
+          ctx.drawImage(strip.frozenCanvas, srcX, topRow * maskRes, srcW, (deepest - topRow) * maskRes, 0, base - strip.originY + topRow, srcW / maskRes, deepest - topRow)
+        }
         ctx.restore()
       }
-    }
-    if (winter > 0 && strip.winterCanvas && !hidden) {
-      drawMask(strip.winterCanvas, winterAmount(layer, winter))
-    }
+    } else if ((snow > 0 || winter > 0) && !hidden) {
+      // While the snow and the haze come in, and while the snow melts, the ground bitmap is drawn onto a
+      // scratch canvas and tinted there (the tint only goes onto the pixels the ground painted, edge pixels
+      // included, in the same share as the rest: tinted by a mask drawn over it instead, a soft edge pixel
+      // kept its own brownish color and showed as a thin dark line along the ridge), then drawn as one.
+      blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
+      const deviceScale = ctx.getTransform().a
+      const sw = Math.ceil(viewWidth * deviceScale)
+      const sh = Math.ceil(viewHeight * deviceScale)
+      if (!tintCanvas) {
+        tintCanvas = document.createElement('canvas')
+      }
+      if (tintCanvas.width !== sw || tintCanvas.height !== sh) {
+        tintCanvas.width = sw
+        tintCanvas.height = sh
+      }
+      const tctx = tintCanvas.getContext('2d')
+      let regionBottom = topRow
+      for (let sl = 0; sl < slabs; sl += 1) {
+        regionBottom = Math.max(regionBottom, Math.min(stripHeight, (layerLimits[sl] ?? viewHeight) - base + strip.originY))
+      }
+      const regionTop = Math.max(0, base - strip.originY + topRow)
+      const regionHeight = Math.min(viewHeight, base - strip.originY + regionBottom) - regionTop
+      if (tctx && regionHeight > 0) {
+        tctx.setTransform(deviceScale, 0, 0, deviceScale, 0, 0)
+        tctx.imageSmoothingQuality = 'high'
+        tctx.globalCompositeOperation = 'source-over'
+        tctx.globalAlpha = 1
+        tctx.clearRect(0, regionTop - 1, viewWidth, regionHeight + 2)
+        blit(strip.canvas, false, 1, layer.groundColor, true, tctx)
+        tctx.globalCompositeOperation = 'source-atop'
+        if (snow > 0) {
+          tctx.save()
+          if (cover < 0.999) {
+            // While it melts the snow goes in patches here too (the same patches as the foreground's, at this
+            // layer's scale, and not smaller than half of it).
+            const scale = Math.max(0.5, layer.scale)
+            const shift = camera.x * p
+            const firstColumn = Math.floor((shift / scale - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+            const lastColumn = Math.floor(((shift + viewWidth) / scale + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+            const rows = Math.ceil(((limit - base) / scale + SNOW_CELL_DEPTH * 2) / SNOW_CELL_DEPTH)
+            // The patches start above the highest ridge of the layer's ground (their depth is measured from 30 px
+            // above the base line), or the ridges would be left bare the moment the melt starts.
+            const firstRow = Math.floor((30 * scale - strip.rise) / scale / SNOW_CELL_DEPTH) - 1
+            const patches = new Path2D()
+            const points = 10
+            for (let i = firstColumn; i <= lastColumn; i += 1) {
+              for (let j = firstRow; j <= rows; j += 1) {
+                const blob = snowBlob(i, j, cover)
+                if (!blob) {
+                  continue
+                }
+                for (let k = 0; k < points; k += 1) {
+                  const angle = (k / points) * Math.PI * 2
+                  const stretch = blobStretch(blob, angle)
+                  const x = (blob.x + Math.cos(angle) * blob.rx * stretch) * scale - shift
+                  const y = base - 30 * scale + (blob.depth + Math.sin(angle) * blob.ry * stretch) * scale
+                  if (k === 0) {
+                    patches.moveTo(x, y)
+                  } else {
+                    patches.lineTo(x, y)
+                  }
+                }
+                patches.closePath()
+              }
+            }
+            tctx.clip(patches)
+          }
+          tctx.globalAlpha = thickness * 0.92
+          tctx.fillStyle = SNOW_TOP
+          tctx.fillRect(0, regionTop, viewWidth, regionHeight)
+          tctx.restore()
+        }
+        if (winter > 0) {
+          tctx.globalAlpha = winterAmount(layer, winter)
+          tctx.fillStyle = WINTER_HAZE_COLOR
+          tctx.fillRect(0, regionTop, viewWidth, regionHeight)
+        }
+        tctx.globalAlpha = 1
+        tctx.globalCompositeOperation = 'source-over'
+        ctx.drawImage(tintCanvas, 0, regionTop * deviceScale, sw, regionHeight * deviceScale, 0, regionTop, viewWidth, regionHeight)
+      }
+    } else {
+      blit(strip.canvas, true, 1, layer.groundColor)
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -743,6 +767,9 @@ function makeMask(strip: ForestStrip, color: string, scale: number, repeats = 1)
   return copy
 }
 
+/** A screen-sized scratch canvas where a far layer's ground is tinted before it is drawn (see `drawForest`). */
+let tintCanvas: HTMLCanvasElement | null = null
+
 /** Pre-rendered forest layer: horizon, trees, bushes and logs drawn once into a wide bitmap. */
 type ForestStrip = {
   canvas: HTMLCanvasElement
@@ -756,12 +783,8 @@ type ForestStrip = {
   columnGround: Float32Array
   /** Where the layer's trees, logs, rocks, ferns and bushes stand (they are drawn onto images of their own). */
   veg: VegPlan
-  /** The same bitmap with the layer's winter haze over it (made when winter first comes near). */
-  winterCanvas?: HTMLCanvasElement
   /** How far the layer's ground rises above its base line at the highest (the melting snow's patches reach that high). */
   rise: number
-  /** The ground's shape in snow white at half size (made when snow comes near). */
-  snowCanvas?: HTMLCanvasElement
   /** The ground's shape in its final color once the snow is complete (drawn alone then, instead of the bitmap and two masks). */
   frozenCanvas?: HTMLCanvasElement
   /** That color. */
@@ -1301,7 +1324,7 @@ export function memoryReport(world: World): Record<string, number | { count: num
     const strip = forestStrips.get(layer)
     if (strip) {
       strips += strip.canvas.width * strip.canvas.height
-      winterStrips += strip.winterCanvas ? strip.winterCanvas.width * strip.winterCanvas.height : 0
+      winterStrips += strip.frozenCanvas ? strip.frozenCanvas.width * strip.frozenCanvas.height : 0
     }
     for (const image of vegMap(layer).values()) {
       veg += image.canvas.width * image.canvas.height
@@ -3779,12 +3802,16 @@ function snowGeometry(
   const depth = rx > 120 ? ry * (0.3 + 0.45 * amount) : ry * (0.35 + 0.7 * amount)
   const lumps = (x: number): number => ry * 0.16 * Math.sin(((x - cx) / rx) * 7 + phase) - ry * 0.2 * ((x - cx) / rx) ** 2
   const dustDepth = ry * 0.6
+  // While it melts the snow also draws in from the sides, into a patch over the top of the rock (like the
+  // ground's patches shrink): it only reaches `reach` either side of the middle, and is thinner toward its ends.
+  const reach = rx * (0.15 + 1.4 * amount)
+  const squash = (x: number): number => Math.max(0, 1 - (Math.abs(x - cx) / reach) ** 8)
   return {
     top: baseY - ry * 1.2,
     depth,
     dustDepth,
-    edgeY: (x) => baseY - ry * 1.15 + depth + lumps(x),
-    dustY: (x) => baseY - ry * 1.15 + dustDepth + lumps(x) * 0.6,
+    edgeY: (x) => baseY - ry * 1.15 + (depth + lumps(x)) * squash(x),
+    dustY: (x) => baseY - ry * 1.15 + (dustDepth + lumps(x) * 0.6) * squash(x),
   }
 }
 
@@ -4126,10 +4153,10 @@ function drawRockSnow(
     rockSnowOverlays.delete(rock)
     return
   }
-  const quantize = (x: number): number => Math.round(x * 24) / 24
-  const thin = quantize(layers.thin)
-  const full = quantize(layers.full)
-  const size = quantize(amount)
+  const thin = Math.round(layers.thin * 48) / 48
+  const full = Math.round(layers.full * 48) / 48
+  // (the melt's shrinking in fine steps, about a pixel or two on the biggest rocks, so it looks continuous)
+  const size = Math.round(amount * 160) / 160
   let overlay = rockSnowOverlays.get(rock)
   if (!overlay || overlay.thin !== thin || overlay.full !== full || overlay.size !== size) {
     const canvas = overlay?.canvas ?? document.createElement('canvas')
