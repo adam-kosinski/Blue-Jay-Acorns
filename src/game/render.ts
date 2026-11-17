@@ -15,6 +15,7 @@ import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOa
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
+import { ICE_BOTTOM, ICE_CELL_X, ICE_CELL_Y, ICE_TOP, floeStretch, iceCover, iceFloe, iceFreeze, iceHash } from './ice'
 import { drawSnowfall } from './snowfall'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
@@ -604,6 +605,7 @@ function drawForest(
       ctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
       ctx.closePath()
       ctx.fill()
+      drawIce(ctx, world.season.time, 0, top, viewWidth, bottom + 2, camera.x * p, top, Math.max(0.15, layer.scale), layer.fog)
 
       // Rocks on the ground between this layer and the next: thickest along the creek's banks
       // (placed from the ribbon's side so never in the water), plus free ones anywhere on the ground.
@@ -1663,6 +1665,119 @@ function drawGround(
 }
 
 /**
+ * Lays ice over the water shape that is the current path (after it was filled): a sheet when the creek is
+ * frozen over, floes with open water between them while it melts; lighter and bluer than the water, with a
+ * sheen and a few glints.
+ *
+ * @param ctx - 2D canvas context (the water's path is the current path).
+ * @param time - Seconds along the timeline.
+ * @param minX - Left of the area the path covers (where the ice is drawn).
+ * @param minY - Top of it.
+ * @param maxX - Right of it.
+ * @param maxY - Bottom of it.
+ * @param shiftX - Added to x to get the floes' pattern x (so they stay with the layer as the camera moves).
+ * @param refY - The y the floes' pattern starts from.
+ * @param scale - The floes' size against the foreground's.
+ * @param fog - The layer's distance haze (the ice takes some of it and shines less).
+ */
+function drawIce(
+  ctx: CanvasRenderingContext2D,
+  time: number,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number,
+  shiftX: number,
+  refY: number,
+  scale: number,
+  fog: number,
+): void {
+  const freeze = iceFreeze(time)
+  const cover = iceCover(time)
+  if (freeze <= 0 || cover <= 0) {
+    return
+  }
+  ctx.save()
+  ctx.clip()
+  ctx.globalAlpha = freeze
+  const sheet = ctx.createLinearGradient(0, minY, 0, maxY)
+  // (A nearly flat color, so ribbons of different layers do not show a band where they meet.)
+  const iceTop = mixHex(ICE_TOP, ICE_BOTTOM, 0.25)
+  const iceBottom = mixHex(ICE_TOP, ICE_BOTTOM, 0.45)
+  sheet.addColorStop(0, fog > 0 ? mixHex(iceTop, WINTER_HAZE_COLOR, Math.min(0.75, fog * 0.75)) : iceTop)
+  sheet.addColorStop(1, fog > 0 ? mixHex(iceBottom, WINTER_HAZE_COLOR, Math.min(0.75, fog * 0.75)) : iceBottom)
+  const cellX = ICE_CELL_X * scale
+  const cellY = ICE_CELL_Y * scale
+  const firstColumn = Math.floor((minX + shiftX) / cellX) - 1
+  const lastColumn = Math.floor((maxX + shiftX) / cellX) + 1
+  const firstRow = Math.floor((minY - refY) / cellY) - 1
+  const lastRow = Math.floor((maxY - refY) / cellY) + 1
+  const floes = new Path2D()
+  if (cover >= 0.999) {
+    floes.rect(minX - 2, minY - 2, maxX - minX + 4, maxY - minY + 4)
+  } else {
+    const points = 11
+    for (let i = firstColumn; i <= lastColumn; i += 1) {
+      for (let j = firstRow; j <= lastRow; j += 1) {
+        const floe = iceFloe(i, j, cover)
+        if (!floe) {
+          continue
+        }
+        for (let k = 0; k < points; k += 1) {
+          const angle = (k / points) * Math.PI * 2
+          const stretch = floeStretch(floe, angle)
+          const x = (floe.x + Math.cos(angle) * floe.rx * stretch) * cellX - shiftX
+          const y = refY + (floe.y + Math.sin(angle) * floe.ry * stretch * 0.7) * cellY
+          if (k === 0) {
+            floes.moveTo(x, y)
+          } else {
+            floes.lineTo(x, y)
+          }
+        }
+        floes.closePath()
+      }
+    }
+  }
+  ctx.fillStyle = sheet
+  ctx.fill(floes)
+  // A sheen across the ice and a few glints (short slanted lines of light), kept inside the floes.
+  ctx.save()
+  ctx.clip(floes)
+  const sheen = ctx.createLinearGradient(minX, minY, minX + (maxX - minX) * 0.6, maxY)
+  const shine = 1 - Math.min(0.8, fog)
+  sheen.addColorStop(0, `rgba(255, 255, 255, ${(0.35 * shine).toFixed(3)})`)
+  sheen.addColorStop(0.5, 'rgba(255, 255, 255, 0)')
+  sheen.addColorStop(1, `rgba(255, 255, 255, ${(0.18 * shine).toFixed(3)})`)
+  ctx.fillStyle = sheen
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY)
+  ctx.strokeStyle = `rgba(255, 255, 255, ${(0.7 * shine).toFixed(3)})`
+  ctx.lineWidth = Math.max(1, 1.4 * scale)
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  for (let i = firstColumn; i <= lastColumn; i += 1) {
+    for (let j = firstRow; j <= lastRow; j += 1) {
+      if (iceHash(i, j, 7) < 0.55) {
+        continue
+      }
+      const gx = (i + iceHash(i, j, 8)) * cellX - shiftX
+      const gy = refY + (j + iceHash(i, j, 9)) * cellY
+      const length = (10 + iceHash(i, j, 10) * 18) * scale
+      ctx.moveTo(gx, gy)
+      ctx.lineTo(gx + length, gy - length * 0.28)
+    }
+  }
+  ctx.stroke()
+  ctx.restore()
+  // The floes' edges, a little paler.
+  if (cover < 0.999) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)'
+    ctx.lineWidth = Math.max(1, 1.6 * scale)
+    ctx.stroke(floes)
+  }
+  ctx.restore()
+}
+
+/**
  * Draws the snow on the foreground ground, over the litter: a whole blanket when it covers everything, else
  * its patches (grid cells that each hold a patch, which grow from their own moment of the melt).
  *
@@ -2185,6 +2300,7 @@ function drawCreek(
   ctx.lineTo(left, Math.max(creek.waterY, groundYAt(world.terrain, left)))
   ctx.closePath()
   ctx.fill()
+  drawIce(ctx, world.season.time, left, creek.waterY, right, creek.waterY + creek.depth, 0, creek.waterY, 1, 0)
 
   // From the water's edges the creek widens to the front layer's creek (above), then runs straight down
   // that layer's banks to the bottom of the screen.
@@ -2205,6 +2321,7 @@ function drawCreek(
     ctx.bezierCurveTo(frontX - creek.frontHalfWidth, mid, creek.x - creek.halfWidth, mid, creek.x - creek.halfWidth, creek.waterY)
     ctx.closePath()
     ctx.fill()
+    drawIce(ctx, world.season.time, Math.min(creek.x - creek.halfWidth, frontX - creek.frontHalfWidth), creek.waterY, Math.max(creek.x + creek.halfWidth, frontX + creek.frontHalfWidth), bottom, 0, creek.waterY, 1.5, 0)
   }
 
   drawShoreRocks(ctx, world, camera, viewWidth)
