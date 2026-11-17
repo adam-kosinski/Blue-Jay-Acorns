@@ -3824,13 +3824,19 @@ function snowGeometry(
     const t = Math.max(0, Math.min(1, (amount - 0.42 * pattern(x)) / 0.58))
     return t * t * (3 - 2 * t)
   }
+  // The thin outlines (the dusting along the top and the heap) must be gone before the main cap is: they
+  // fade out earlier, while the cap there is still some way from nothing.
+  const ramp = (value: number, from: number, to: number): number => {
+    const t = Math.max(0, Math.min(1, (value - from) / (to - from)))
+    return t * t * (3 - 2 * t)
+  }
   return {
     top: baseY - ry * 1.2,
     depth,
     dustDepth,
-    thick,
-    edgeY: (x) => baseY - ry * 1.15 + (depth + lumps(x)) * thick(x),
-    dustY: (x) => baseY - ry * 1.15 + (dustDepth + lumps(x) * 0.6) * thick(x),
+    thick: (x) => ramp(thick(x), 0.4, 0.8),
+    edgeY: (x) => baseY - ry * 1.15 + (depth + lumps(x)) * ramp(thick(x), 0.02, 1),
+    dustY: (x) => baseY - ry * 1.15 + (dustDepth + lumps(x) * 0.6) * ramp(thick(x), 0.3, 0.7),
   }
 }
 

@@ -511,3 +511,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Boulder snow now melts over about the ground patches' timeline: from 5.95-6.05 to 7.0-7.2 (the patches finish at 7.4; the last boulders about 15 s before).
 
 - Boulder snow patch pattern a little less flat (amplitudes 0.22 / 0.095, range 0.42 / 0.58): edges about 25% steeper than the flat version, far gentler than the first one.
+
+- The thin white outlines of a melting boulder (the dusting along the top, and the heap ribbon) fade out earlier than the cap: `snowGeometry`'s `dustY` reaches nothing when the cap's thickness at that spot is at 0.3-0.7 of its melt range, and the heap's width (`thick`) at 0.4-0.8, while the cap goes on to 0.02.
