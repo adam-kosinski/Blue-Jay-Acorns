@@ -94,21 +94,21 @@ export function leafAlphas(progress: number): { green: number; fall: number } {
   return { green: presence * (1 - fall), fall: presence * fall }
 }
 
-/** The number of moments along the timeline that images of the far layers are made for. */
-export const SAMPLE_COUNT = 7
+/** The number of moments along the timeline that images of the far layers are made for (one every quarter segment). */
+export const SAMPLE_COUNT = 13
 
 /**
  * The time of one of the sample moments: the first is the start of early fall (all summer before it), the
- * last the start of winter, with one every half segment (all winter after it).
+ * last the start of winter, with one every quarter segment (all winter after it).
  *
  * @param index - 0 to `SAMPLE_COUNT` - 1.
  */
 export function sampleTime(index: number): number {
-  return SEGMENT_SECONDS * (1 + 0.5 * index)
+  return SEGMENT_SECONDS * (1 + 0.25 * index)
 }
 
 /** How long, in seconds, a change from one look of the leaves to the next takes: they stay as they are, then fade over this. */
-export const FADE_SECONDS = 4
+export const FADE_SECONDS = 3
 
 /**
  * Smoothstep.
@@ -128,7 +128,7 @@ function smooth(x: number): number {
  * @param time - Seconds along the timeline.
  */
 export function sampleAt(time: number): { k: number; t: number } {
-  const x = (time / SEGMENT_SECONDS - 1) / 0.5
+  const x = (time / SEGMENT_SECONDS - 1) / 0.25
   if (x <= 0) {
     return { k: 0, t: 0 }
   }
@@ -136,7 +136,7 @@ export function sampleAt(time: number): { k: number; t: number } {
     return { k: SAMPLE_COUNT - 2, t: 1 }
   }
   const k = Math.floor(x)
-  const half = FADE_SECONDS / (0.5 * SEGMENT_SECONDS) / 2
+  const half = FADE_SECONDS / (0.25 * SEGMENT_SECONDS) / 2
   return { k, t: smooth((x - k - (0.5 - half)) / (2 * half)) }
 }
 

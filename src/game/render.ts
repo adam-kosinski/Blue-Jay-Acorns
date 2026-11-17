@@ -145,7 +145,6 @@ export function renderScene(
   runWork(lastSceneMs < 6 ? 4 : 1.5)
   const sceneStart = performance.now()
   planVegetation(world, camera.x, viewWidth)
-  fadeBuildsLeft = 4
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
   haze.addColorStop(0, backdropTop)
@@ -806,7 +805,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     }
     for (const key of [...map.keys()]) {
       const [moment, , chunk] = key.split('|').map((piece, position) => (position === 1 ? 0 : Number(piece)))
-      if ((moment ?? 0) < k || (moment ?? 0) > k + 2 || (chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1) {
+      if ((chunk ?? 0) < first - 1 || (chunk ?? 0) > last + 1 || (moment ?? 0) < k - 3 || (moment ?? 0) > k + 4) {
         map.delete(key)
       }
     }
@@ -830,9 +829,6 @@ export function seasonWorkStatus(world: World): { pending: number; images: numbe
   }
   return { pending: pendingJobs(), images, megapixels: Math.round(pixels / 1e5) / 10 }
 }
-
-/** How many cross-fade pieces may be composed in this frame. */
-let fadeBuildsLeft = 4
 
 /** How long the last frame's drawing took (the background work is given more time when it was cheap). */
 let lastSceneMs = 0
@@ -871,7 +867,6 @@ function drawVegetation(
   const map = vegMap(layer)
   const res = vegRes(layer)
   const x0 = cameraX * layer.parallax
-  const q = Math.round(t * 10)
   const firstChunk = Math.max(0, Math.floor((x0 - 8) / VEG_CHUNK))
   const lastChunk = Math.floor((x0 + viewWidth + 8) / VEG_CHUNK)
   let pieces = fadePieces.get(layer)
@@ -882,10 +877,11 @@ function drawVegetation(
   for (let chunk = firstChunk; chunk <= lastChunk; chunk += 1) {
     const first = map.get(vegKey(k, part, chunk))
     const second = map.get(vegKey(k + 1, part, chunk))
-    const any =
-      first ??
-      second ??
-      [k - 1, k + 2, k + 3].map((moment) => map.get(vegKey(moment, part, chunk))).find((image) => image !== undefined)
+    // A chunk whose image for these moments is not made yet shows the nearest moment's image that exists.
+    let any = first ?? second
+    for (let distance = 1; !any && distance < SAMPLE_COUNT; distance += 1) {
+      any = map.get(vegKey(k - distance, part, chunk)) ?? map.get(vegKey(k + 1 + distance, part, chunk))
+    }
     if (!any) {
       continue
     }
@@ -898,28 +894,33 @@ function drawVegetation(
     }
     const x = chunk * VEG_CHUNK - x0
     let source = any.canvas
-    if (first && second && q > 0 && q < 10) {
+    if (first && second && t > 0 && t < 1) {
+      // During the short fade the two images are added up every frame, each at its own share (the
+      // leaves of one fade out as the other's fade in), onto a canvas kept for the chunk.
       const key = `${part}|${chunk}`
       let fade = pieces.get(key)
-      if ((!fade || fade.k !== k || fade.q !== q) && fadeBuildsLeft > 0) {
-        fadeBuildsLeft -= 1
-        const canvas = fade?.canvas ?? document.createElement('canvas')
-        canvas.width = first.canvas.width
-        canvas.height = first.canvas.height
-        const pctx = canvas.getContext('2d')
-        if (pctx) {
-          // The two images added up, each at its own share: the leaves of one fade out as the other's fade in.
-          pctx.globalAlpha = 1 - q / 10
-          pctx.drawImage(first.canvas, 0, 0)
-          pctx.globalCompositeOperation = 'lighter'
-          pctx.globalAlpha = q / 10
-          pctx.drawImage(second.canvas, 0, 0)
-        }
-        fade = { k, q, canvas }
+      if (!fade) {
+        fade = { k, q: 0, canvas: document.createElement('canvas') }
         pieces.set(key, fade)
       }
-      source = fade?.canvas ?? first.canvas
-    } else if (second && (q >= 10 || !first)) {
+      if (fade.canvas.width !== first.canvas.width || fade.canvas.height !== first.canvas.height) {
+        fade.canvas.width = first.canvas.width
+        fade.canvas.height = first.canvas.height
+      }
+      const pctx = fade.canvas.getContext('2d')
+      if (pctx) {
+        pctx.globalCompositeOperation = 'source-over'
+        pctx.clearRect(0, 0, fade.canvas.width, fade.canvas.height)
+        pctx.globalAlpha = 1 - t
+        pctx.drawImage(first.canvas, 0, 0)
+        pctx.globalCompositeOperation = 'lighter'
+        pctx.globalAlpha = t
+        pctx.drawImage(second.canvas, 0, 0)
+        pctx.globalAlpha = 1
+        pctx.globalCompositeOperation = 'source-over'
+      }
+      source = fade.canvas
+    } else if (second && (t >= 1 || !first)) {
       source = second.canvas
     } else if (first) {
       source = first.canvas
@@ -1552,7 +1553,7 @@ function drawBuriedProps(
     }
   }
   for (const rock of world.rocks) {
-    if (rock.x > left && rock.x < right && !isCreekRock(world, rock)) {
+    if (rock.x + rock.rx * 1.5 > left && rock.x - rock.rx * 1.5 < right && !isCreekRock(world, rock)) {
       // A big rock sits on the lowest ground under it so no side hangs in the air.
       const reach = rock.rx * 0.7
       drawRock(
@@ -1677,7 +1678,7 @@ function drawCreek(
   ctx.closePath()
   ctx.clip()
   for (const rock of world.rocks) {
-    if (isCreekRock(world, rock) && rock.x > viewLeft && rock.x < viewRight) {
+    if (isCreekRock(world, rock) && rock.x + rock.rx * 1.5 > viewLeft && rock.x - rock.rx * 1.5 < viewRight) {
       drawRock(ctx, rock, groundYAt(world.terrain, rock.x), fadeOf(rock.fadeStart, world))
     }
   }
@@ -1704,7 +1705,7 @@ function drawFrontProps(
   // Back to front: the lower a prop stands, the nearer it is.
   const items: { y: number; draw: () => void }[] = []
   for (const front of world.frontRocks) {
-    if (front.rock.x > left && front.rock.x < right) {
+    if (front.rock.x + front.rock.rx * 1.5 > left && front.rock.x - front.rock.rx * 1.5 < right) {
       items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y, fadeOf(front.rock.fadeStart, world)) })
     }
   }
