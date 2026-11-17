@@ -171,14 +171,14 @@ export function leafStageMix(progress: number): { a: number; b: number; w: numbe
 }
 
 /**
- * How far the air has gone to its winter look (light blue haze): 0 until the start of winter, 1 after the
- * first half of early winter (it stays through spring for now).
+ * How far the air has gone to its winter look (light blue haze): 0 until the start of winter, then a
+ * linear fade to 1 in the middle of mid winter (it stays through spring for now).
  *
  * @param time - Seconds along the timeline.
  */
 export function winterTintAt(time: number): number {
   const u = time / SEGMENT_SECONDS
-  return Math.max(0, Math.min(1, (u - 4) / 0.5))
+  return Math.max(0, Math.min(1, (u - 4) / 1.5))
 }
 
 /** Greatest relative wobble of the drop rate around the seasonal trend. */

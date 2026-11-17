@@ -87,12 +87,9 @@ const BACKDROP_SPRING: BackdropLook = {
 
 /** The backdrop's looks along the timeline: green in summer, orange in fall, the far trunk color in winter, that with light green below in spring. */
 const BACKDROP_KEYS: [number, BackdropLook][] = [
-  [0, BACKDROP_GREEN],
-  [1.5, BACKDROP_GREEN],
+  [0.5, BACKDROP_GREEN],
   [2.5, BACKDROP_FALL],
-  [3.5, BACKDROP_FALL],
-  [4.5, BACKDROP_WINTER],
-  [7, BACKDROP_WINTER],
+  [5.5, BACKDROP_WINTER],
   [7.5, BACKDROP_SPRING],
 ]
 
@@ -2262,10 +2259,12 @@ function drawBushWood(ctx: CanvasRenderingContext2D, bush: Bush, color: string):
   ctx.strokeStyle = color
   ctx.lineCap = 'round'
   // A bare bush: many stems rise from one spot, fan out like a vase and fork again and again into fine
-  // twigs that fill the bush's outline. The wood stays inside the leaves (a tip may not pass 0.85 of a
-  // lobe's radius from its center), so none shows past the leaf edge in summer.
+  // twigs that fill the bush's outline. The wood stays well inside the leaves (a tip may not pass 0.68 of a
+  // lobe's radius from its center, nor rise more than 0.45 above it: the leaf clumps are thin on top), so none shows past the leaf edge in summer.
   const inside = (x: number, y: number): boolean =>
-    bush.lobes.some((lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.85)
+    bush.lobes.some(
+      (lobe) => Math.hypot(x - lobe.dx, y - lobe.dy) < lobe.radius * 0.68 && y > lobe.dy - lobe.radius * 0.45,
+    )
   let radiusSum = 0
   let reach = 0
   for (const lobe of bush.lobes) {
