@@ -515,3 +515,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - The thin white outlines of a melting boulder (the dusting along the top, and the heap ribbon) fade out earlier than the cap: `snowGeometry`'s `dustY` reaches nothing when the cap's thickness at that spot is at 0.3-0.7 of its melt range, and the heap's width (`thick`) at 0.4-0.8, while the cap goes on to 0.02.
 
 - Boulder snow ends 15 s later: it finishes between 7.2 and 7.4 segments (the ground's patches finish at 7.4).
+
+## Notice lines
+- `drawNoticeLines(ctx, world, player)`: the dashed line from an NPC's eye to a burial site it noticed is drawn white only when it has to do with the player (`site.owner === player`: the player's own burial, or a bury or dig the player was seen doing, since `perceiveDigging` records the performing bird as the owner). The lines to anything else (other birds' burials, squirrels' sites) are drawn only with debug on (`showMinimap`, which follows the debug panel), in gray (`rgba(150, 150, 150)`); with debug off they are not drawn.

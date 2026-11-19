@@ -260,7 +260,7 @@ export function renderScene(
   // never look like they sit on a bush.
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
   drawFrontProps(ctx, world, camera.x, viewWidth)
-  drawNoticeLines(ctx, world)
+  drawNoticeLines(ctx, world, player)
   if (showMinimap) {
     drawFollowArrows(ctx, world)
   }
@@ -5855,14 +5855,17 @@ function drawMinimapStatic(
 }
 
 /**
- * Draws a dashed white line from each NPC's eye to every burial site it recently noticed, with a
- * little padding at both ends, fading out over `NOTICE_LINE_FADE_SECONDS`. The line is redrawn from
- * the bird's current position every frame, so it stays connected as the bird moves.
+ * Draws a dashed white line from each NPC's eye to every burial site it recently noticed that has to do with
+ * the player (the player's own burial, or the player burying or digging), with a little padding at both
+ * ends, fading out over `NOTICE_LINE_FADE_SECONDS`. With debug on, the lines to what has nothing to do with the
+ * player are drawn too, in gray; with debug off they are not drawn. The line is redrawn from the bird's current
+ * position every frame, so it stays connected as the bird moves.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - NPCs, their sites, terrain, and the game clock.
+ * @param player - The player (a site is the player's if the player buried it or was seen digging there).
  */
-function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
+function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World, player: Player): void {
   ctx.save()
   ctx.setLineDash([10, 8])
   ctx.lineWidth = 3
@@ -5883,6 +5886,11 @@ function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
       if (fade <= 0) {
         continue
       }
+      // Only what has to do with the player is shown (white); the rest only with debug on (gray).
+      const aboutPlayer = site.owner === player
+      if (!aboutPlayer && !showMinimap) {
+        continue
+      }
       const toX = site.x
       const toY = groundYAt(world.terrain, site.x)
       const dx = toX - eyeX
@@ -5894,7 +5902,7 @@ function drawNoticeLines(ctx: CanvasRenderingContext2D, world: World): void {
       if (length <= padStart + padEnd) {
         continue
       }
-      ctx.strokeStyle = `rgba(255, 255, 255, ${0.9 * fade})`
+      ctx.strokeStyle = aboutPlayer ? `rgba(255, 255, 255, ${0.9 * fade})` : `rgba(150, 150, 150, ${0.85 * fade})`
       ctx.beginPath()
       ctx.moveTo(eyeX + (dx / length) * padStart, eyeY + (dy / length) * padStart)
       ctx.lineTo(toX - (dx / length) * padEnd, toY - (dy / length) * padEnd)
