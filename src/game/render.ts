@@ -660,27 +660,53 @@ function drawForest(
     bottom = Math.max(bottom, top + 1)
     const topX = layer.creek.x - camera.x * p
     if (top < limit && bottom > 0) {
-      const water = ctx.createLinearGradient(0, top, 0, bottom)
-      water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
-      water.addColorStop(1, bottomColor)
-      ctx.fillStyle = water
-      // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
+      // The ribbon is painted at the layer's resolution (on a scratch canvas) and drawn up to size, so that its
+      // edges are as soft as the layer's ground is: the farther back, the fuzzier.
+      const ribbonRes = vegRes(layer)
       const mid = (top + bottom) / 2
       const topHalf = layer.creek.halfWidth
-      ctx.beginPath()
-      ctx.moveTo(topX - topHalf, top)
-      if (index === 0) {
-        // The farthest creek ends in a rounded head rather than a flat edge.
-        ctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
-      } else {
-        ctx.lineTo(topX + topHalf, top)
+      const left0 = Math.max(Math.min(topX - topHalf, bottomX - bottomHalf) - 3, -4)
+      const right0 = Math.min(Math.max(topX + topHalf, bottomX + bottomHalf) + 3, viewWidth + 4)
+      const top0 = Math.max(top - (index === 0 ? topHalf * 0.2 : 0) - 3, -4)
+      const bottom0 = Math.min(bottom + 4, viewHeight + 4)
+      if (right0 > left0 && bottom0 > top0) {
+        const rw = Math.ceil((right0 - left0) * ribbonRes)
+        const rh = Math.ceil((bottom0 - top0) * ribbonRes)
+        if (!ribbonCanvas) {
+          ribbonCanvas = document.createElement('canvas')
+        }
+        // (Only ever grown: resizing a canvas clears and reallocates it.)
+        if (ribbonCanvas.width < rw || ribbonCanvas.height < rh) {
+          ribbonCanvas.width = Math.max(ribbonCanvas.width, rw)
+          ribbonCanvas.height = Math.max(ribbonCanvas.height, rh)
+        }
+        const rctx = ribbonCanvas.getContext('2d')
+        if (rctx) {
+          rctx.setTransform(1, 0, 0, 1, 0, 0)
+          rctx.clearRect(0, 0, rw + 1, rh + 1)
+          rctx.setTransform(ribbonRes, 0, 0, ribbonRes, -left0 * ribbonRes, -top0 * ribbonRes)
+          const water = rctx.createLinearGradient(0, top, 0, bottom)
+          water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
+          water.addColorStop(1, bottomColor)
+          rctx.fillStyle = water
+          // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
+          rctx.beginPath()
+          rctx.moveTo(topX - topHalf, top)
+          if (index === 0) {
+            // The farthest creek ends in a rounded head rather than a flat edge.
+            rctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
+          } else {
+            rctx.lineTo(topX + topHalf, top)
+          }
+          // Two pixels past the end, so neighbouring ribbons overlap and no hairline shows between them.
+          rctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom + 2)
+          rctx.lineTo(bottomX - bottomHalf, bottom + 2)
+          rctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
+          rctx.closePath()
+          rctx.fill()
+          ctx.drawImage(ribbonCanvas, 0, 0, rw, rh, left0, top0, rw / ribbonRes, rh / ribbonRes)
+        }
       }
-      // Two pixels past the end, so neighbouring ribbons overlap and no hairline shows between them.
-      ctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom + 2)
-      ctx.lineTo(bottomX - bottomHalf, bottom + 2)
-      ctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
-      ctx.closePath()
-      ctx.fill()
 
       // Rocks on the ground between this layer and the next: thickest along the creek's banks
       // (placed from the ribbon's side so never in the water), plus free ones anywhere on the ground.
@@ -715,21 +741,15 @@ function drawForest(
         edge.rock.rx = rx
         edge.rock.ry = rx * 0.7
         edge.rock.x = px
-        if (winter > 0) {
-          const { color, highlight } = edge.rock
-          edge.rock.color = winterHazed(color, layer, winter)
-          edge.rock.highlight = winterHazed(highlight, layer, winter)
-          drawRockSimple(ctx, edge.rock, py)
-          edge.rock.color = color
-          edge.rock.highlight = highlight
-        } else {
-          drawRockSimple(ctx, edge.rock, py)
-        }
+        // Its resolution runs from this layer's to the next one's (the foreground's, full, after the last).
+        const here = vegRes(layer)
+        const nextRes = next ? vegRes(next) : ctx.getTransform().a
+        drawFuzzyRock(ctx, edge.rock, py, here + (nextRes - here) * t, layer, winter)
       }
     }
     if (!hidden) {
-      // The layer's own rocks, drawn like the rocks between the layers (vectors at the screen's resolution, so
-      // they match them, with their snow), before the ferns and bushes that stand in front of them.
+      // The layer's own rocks, drawn at the layer's resolution (like its images), with their snow, before the
+      // ferns and bushes that stand in front of them.
       const shift = camera.x * p
       for (const prop of strip.veg.props) {
         const rock = prop.kind === 'rock' ? layer.rocks[prop.index] : undefined
@@ -743,22 +763,72 @@ function drawForest(
         }
         ctx.save()
         ctx.translate(-shift, 0)
-        if (winter > 0) {
-          const { color, highlight } = rock
-          rock.color = winterHazed(color, layer, winter)
-          rock.highlight = winterHazed(highlight, layer, winter)
-          drawRockSimple(ctx, rock, groundY)
-          rock.color = color
-          rock.highlight = highlight
-        } else {
-          drawRockSimple(ctx, rock, groundY)
-        }
+        drawFuzzyRock(ctx, rock, groundY, vegRes(layer), layer, winter)
         ctx.restore()
       }
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
     }
   }
   ctx.imageSmoothingQuality = 'low'
+}
+
+/** A screen-sized scratch canvas the creek ribbons between the layers are painted on at the layers' resolution. */
+let ribbonCanvas: HTMLCanvasElement | null = null
+
+/** A small scratch canvas the far rocks are painted on at their layer's resolution. */
+let rockScratch: HTMLCanvasElement | null = null
+
+/**
+ * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel on a small scratch canvas and
+ * drawn up to size (smoothed), so that it is as soft as the layer's images are, and as soft as the rocks
+ * and ground next to it. A resolution at or above the screen's is drawn directly.
+ *
+ * @param ctx - 2D canvas context (the rock's coordinates are its coordinates).
+ * @param rock - The rock (it is drawn by `drawRockSimple`).
+ * @param groundY - Ground Y at the rock.
+ * @param res - Bitmap pixels per world pixel it is painted at.
+ * @param layer - The layer it belongs to (for its winter haze).
+ * @param winter - How far the air is in its winter look, 0-1.
+ */
+function drawFuzzyRock(
+  ctx: CanvasRenderingContext2D,
+  rock: Rock,
+  groundY: number,
+  res: number,
+  layer: ForestLayer,
+  winter: number,
+): void {
+  const { color, highlight } = rock
+  if (winter > 0) {
+    rock.color = winterHazed(color, layer, winter)
+    rock.highlight = winterHazed(highlight, layer, winter)
+  }
+  const pad = 3
+  const halfWidth = rock.rx * 1.4 + pad
+  const above = rock.ry * 1.7 + pad
+  const below = rock.ry * 0.6 + pad
+  const width = Math.ceil(halfWidth * 2 * res)
+  const height = Math.ceil((above + below) * res)
+  if (res >= ctx.getTransform().a * 0.97 || width > 640 || height > 320) {
+    drawRockSimple(ctx, rock, groundY)
+  } else {
+    if (!rockScratch) {
+      rockScratch = document.createElement('canvas')
+      rockScratch.width = 640
+      rockScratch.height = 320
+    }
+    const sctx = rockScratch.getContext('2d')
+    if (sctx) {
+      const baseY = groundY + rock.ry * 0.4
+      sctx.setTransform(1, 0, 0, 1, 0, 0)
+      sctx.clearRect(0, 0, width + 1, height + 1)
+      sctx.setTransform(res, 0, 0, res, (halfWidth - rock.x) * res, (above - baseY) * res)
+      drawRockSimple(sctx, rock, groundY)
+      ctx.drawImage(rockScratch, 0, 0, width, height, rock.x - halfWidth, baseY - above, width / res, height / res)
+    }
+  }
+  rock.color = color
+  rock.highlight = highlight
 }
 
 /**
