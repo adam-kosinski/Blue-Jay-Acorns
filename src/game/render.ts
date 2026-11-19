@@ -13,13 +13,15 @@ import {
 } from './constants'
 import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
-import { pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
+import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import { drawSnowfall } from './snowfall'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
+  BUILD_HOLD_END,
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
+  buildHoldAt,
   leafStageMix,
   STAGE_LOOKS,
   leafLook,
@@ -420,6 +422,8 @@ function drawForest(
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
   const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999 && winter >= 0.999
   let stripsMade = 0
+  tintBuildsLeft = 1
+  patchBuildsLeft = 1
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
 
@@ -532,7 +536,13 @@ function drawForest(
     }
     const thickness = snowThickness(world.season.time)
     const cover = snowCover(world.season.time)
+    // While the snow and the haze lie evenly over the ground, the tinted ground is kept as a bitmap of its own.
+    const evenTint =
+      !snowedIn && !hidden && (snow > 0 || winter > 0) && (snow <= 0 || cover >= 0.999)
+        ? tintedStrip(strip, snow > 0 ? thickness * 0.92 : 0, winter > 0 ? winterAmount(layer, winter) : 0)
+        : null
     if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
+      dropTintedStrip(strip)
       blit(strip.canvas, true, 1, strip.frozenColor, false)
       if (!hidden) {
         // (in one piece: see below)
@@ -555,6 +565,9 @@ function drawForest(
         }
         ctx.restore()
       }
+    } else if (evenTint) {
+      blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
+      blit(evenTint, false)
     } else if ((snow > 0 || winter > 0) && !hidden) {
       // While the snow and the haze come in, and while the snow melts, the ground bitmap is drawn onto a
       // scratch canvas and tinted there (the tint only goes onto the pixels the ground painted, edge pixels
@@ -599,29 +612,9 @@ function drawForest(
             // The patches start above the highest ridge of the layer's ground (their depth is measured from 30 px
             // above the base line), or the ridges would be left bare the moment the melt starts.
             const firstRow = Math.floor((30 * scale - strip.rise) / scale / SNOW_CELL_DEPTH) - 1
-            const patches = new Path2D()
-            const points = 10
-            for (let i = firstColumn; i <= lastColumn; i += 1) {
-              for (let j = firstRow; j <= rows; j += 1) {
-                const blob = snowBlob(i, j, cover)
-                if (!blob) {
-                  continue
-                }
-                for (let k = 0; k < points; k += 1) {
-                  const angle = (k / points) * Math.PI * 2
-                  const stretch = blobStretch(blob, angle)
-                  const x = (blob.x + Math.cos(angle) * blob.rx * stretch) * scale - shift
-                  const y = base - 30 * scale + (blob.depth + Math.sin(angle) * blob.ry * stretch) * scale
-                  if (k === 0) {
-                    patches.moveTo(x, y)
-                  } else {
-                    patches.lineTo(x, y)
-                  }
-                }
-                patches.closePath()
-              }
-            }
-            tctx.clip(patches)
+            tctx.translate(-shift, base - 30 * scale)
+            tctx.clip(meltPatches(strip, scale, cover, firstColumn, lastColumn, firstRow, rows))
+            tctx.setTransform(deviceScale, 0, 0, deviceScale, 0, 0)
           }
           tctx.globalAlpha = thickness * 0.92
           tctx.fillStyle = SNOW_TOP
@@ -639,6 +632,9 @@ function drawForest(
       }
     } else {
       blit(strip.canvas, true, 1, layer.groundColor)
+    }
+    if (!evenTint && !hidden) {
+      dropTintedStrip(strip)
     }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
@@ -789,7 +785,146 @@ type ForestStrip = {
   frozenCanvas?: HTMLCanvasElement
   /** That color. */
   frozenColor?: string
+  /** The ground bitmap with the even snow and haze of the moment on it, and those two as steps of 1/255. */
+  tinted?: { canvas: HTMLCanvasElement; snow: number; haze: number }
+  /** The melting snow's patches in the layer's own coordinates: for which cover, and which grid cells they reach over. */
+  patches?: { path: Path2D; cover: number; firstColumn: number; lastColumn: number; firstRow: number; lastRow: number }
 }
+
+/** How many layers may have their tinted ground or their melt patches remade in the current frame. */
+let tintBuildsLeft = 0
+let patchBuildsLeft = 0
+
+/** How many steps of 1/255 a tinted ground may lag behind while it waits for its turn to be remade (too little to see). */
+const TINT_STALE_STEPS = 2
+
+/**
+ * A layer's ground bitmap with an even tint over it (the tint only goes onto the pixels the ground painted), remade
+ * only when the tint has changed by a step that can show, one layer per frame.
+ *
+ * @param strip - The layer's ground bitmap.
+ * @param snowAlpha - Opacity of the snow's color.
+ * @param hazeAlpha - Opacity of the winter haze's color.
+ * @returns The tinted bitmap, or null if it is not ready for this tint yet.
+ */
+function tintedStrip(strip: ForestStrip, snowAlpha: number, hazeAlpha: number): HTMLCanvasElement | null {
+  const snow = Math.round(snowAlpha * 255)
+  const haze = Math.round(hazeAlpha * 255)
+  const held = strip.tinted
+  if (held && held.snow === snow && held.haze === haze) {
+    return held.canvas
+  }
+  if (tintBuildsLeft <= 0) {
+    return held && Math.abs(held.snow - snow) <= TINT_STALE_STEPS && Math.abs(held.haze - haze) <= TINT_STALE_STEPS ? held.canvas : null
+  }
+  const canvas = held?.canvas ?? document.createElement('canvas')
+  if (canvas.width !== strip.canvas.width || canvas.height !== strip.canvas.height) {
+    canvas.width = strip.canvas.width
+    canvas.height = strip.canvas.height
+  }
+  const tctx = canvas.getContext('2d')
+  if (!tctx) {
+    return null
+  }
+  tintBuildsLeft -= 1
+  tctx.globalCompositeOperation = 'source-over'
+  tctx.globalAlpha = 1
+  tctx.clearRect(0, 0, canvas.width, canvas.height)
+  tctx.drawImage(strip.canvas, 0, 0)
+  tctx.globalCompositeOperation = 'source-atop'
+  if (snowAlpha > 0) {
+    tctx.globalAlpha = snowAlpha
+    tctx.fillStyle = SNOW_TOP
+    tctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  if (hazeAlpha > 0) {
+    tctx.globalAlpha = hazeAlpha
+    tctx.fillStyle = WINTER_HAZE_COLOR
+    tctx.fillRect(0, 0, canvas.width, canvas.height)
+  }
+  tctx.globalAlpha = 1
+  tctx.globalCompositeOperation = 'source-over'
+  strip.tinted = { canvas, snow, haze }
+  return canvas
+}
+
+/**
+ * Frees a layer's tinted ground when no even tint is showing.
+ *
+ * @param strip - The layer's ground bitmap.
+ */
+function dropTintedStrip(strip: ForestStrip): void {
+  if (strip.tinted) {
+    strip.tinted.canvas.width = 0
+    strip.tinted.canvas.height = 0
+    strip.tinted = undefined
+  }
+}
+
+/**
+ * The melting snow's patches on a layer's ground, in the layer's own coordinates (from its left end, and from 30 px
+ * above its base line at the layer's scale), reused from frame to frame until the melt has moved them by a fraction
+ * of a pixel, one layer per frame.
+ *
+ * @param strip - The layer's ground bitmap (it keeps the patches).
+ * @param scale - The patches' scale on this layer.
+ * @param cover - Share of the ground covered, 0-1.
+ * @param firstColumn - First grid column in view.
+ * @param lastColumn - Last grid column in view.
+ * @param firstRow - First grid row in view.
+ * @param lastRow - Last grid row in view.
+ */
+function meltPatches(
+  strip: ForestStrip,
+  scale: number,
+  cover: number,
+  firstColumn: number,
+  lastColumn: number,
+  firstRow: number,
+  lastRow: number,
+): Path2D {
+  const held = strip.patches
+  const step = Math.min(0.004, MELT_COVER_STEP / scale)
+  if (held && firstColumn >= held.firstColumn && lastColumn <= held.lastColumn && firstRow >= held.firstRow && lastRow <= held.lastRow) {
+    const behind = Math.abs(held.cover - cover)
+    if (behind < step || (patchBuildsLeft <= 0 && behind < step * 3)) {
+      return held.path
+    }
+  }
+  patchBuildsLeft -= 1
+  const path = new Path2D()
+  const points = 10
+  const columnFrom = firstColumn - MELT_COLUMN_MARGIN
+  const columnTo = lastColumn + MELT_COLUMN_MARGIN
+  for (let i = columnFrom; i <= columnTo; i += 1) {
+    for (let j = firstRow; j <= lastRow; j += 1) {
+      const blob = snowBlob(i, j, cover)
+      if (!blob) {
+        continue
+      }
+      for (let k = 0; k < points; k += 1) {
+        const angle = (k / points) * Math.PI * 2
+        const stretch = blobStretch(blob, angle)
+        const x = (blob.x + Math.cos(angle) * blob.rx * stretch) * scale
+        const y = (blob.depth + Math.sin(angle) * blob.ry * stretch) * scale
+        if (k === 0) {
+          path.moveTo(x, y)
+        } else {
+          path.lineTo(x, y)
+        }
+      }
+      path.closePath()
+    }
+  }
+  strip.patches = { path, cover, firstColumn: columnFrom, lastColumn: columnTo, firstRow, lastRow }
+  return path
+}
+
+/** How far the snow's cover may change before the foreground's melt patches are remade (their edges then move about 0.3 px). */
+const MELT_COVER_STEP = 0.0005
+
+/** Grid columns the melt patches are made for beyond those in view, so that scrolling does not remake them. */
+const MELT_COLUMN_MARGIN = 4
 
 /** Where a layer's vegetation stands, in the strip's coordinates, and which rows of the strip its images cover. */
 export type VegPlan = {
@@ -903,7 +1038,9 @@ function* buildVegImage(
     typeof document === 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil((right - left) * res))
   canvas.height = Math.max(1, Math.ceil((rowBottom - rowTop) * res))
-  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  // In the worker the image is painted by the processor: on the graphics card its many thousands of leaves would
+  // hold up the frames the game is drawing there.
+  const ctx = canvas.getContext('2d', typeof document === 'undefined' ? { willReadFrequently: true } : undefined) as CanvasRenderingContext2D | null
   if (!ctx) {
     return { canvas, rowTop }
   }
@@ -1078,6 +1215,9 @@ let plannedMoment = -1
  */
 function planVegetation(world: World, cameraX: number, viewWidth: number): void {
   const { k, t } = sampleAt(world.season.time)
+  // The images of later moments are made between the fades, never during one (see `buildHoldAt`).
+  const hold = buildHoldAt(world.season.time)
+  holdAheadWork(hold)
   // Planning goes through every layer's chunks and images, which makes a lot of small strings: a few times a
   // second is enough (a chunk is queued a screen or so before it is seen), and at once when the moment changes.
   planFrame += 1
@@ -1089,7 +1229,7 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
   // The next moments are only prepared when they are about to be needed (not all summer long).
   const position = sampleIndexAt(world.season.time)
   const through = position - Math.floor(position)
-  const ahead = position < -0.6 ? [] : through > 0.4 ? [k + 1, k + 2] : [k + 1]
+  const ahead = position < -0.6 || hold ? [] : through >= BUILD_HOLD_END ? [k + 1, k + 2] : [k + 1]
   world.forest.forEach((layer, index) => {
     const strip = forestStrips.get(layer)
     if (!strip) {
@@ -1105,8 +1245,10 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
         if (moment >= SAMPLE_COUNT) {
           continue
         }
-        // The moments in use get the chunks next to the visible ones too; the ones ahead only the visible ones.
-        for (let chunk = priority === 2 ? first : exact.first; chunk <= (priority === 2 ? last : exact.last); chunk += 1) {
+        // The moments in use get the chunks next to the visible ones too, and so does the next one (it comes into
+        // use when the fade starts, and nothing should have to be made then); the ones after it only the visible ones.
+        const wide = priority === 2 || moment === k + 1
+        for (let chunk = wide ? first : exact.first; chunk <= (wide ? last : exact.last); chunk += 1) {
           for (const part of ['back', 'front'] as const) {
             if (map.has(vegKey(moment, part, chunk)) || !chunkHasContent(layer, strip.veg, part, chunk)) {
               continue
@@ -1177,11 +1319,13 @@ function settleArrivals(budgetMs: number): void {
       releaseVegImage(arrival.image)
       continue
     }
-    uploadCanvas ??= document.createElement('canvas')
-    uploadCanvas.width = 1
-    uploadCanvas.height = 1
-    const uploadCtx = uploadCanvas.getContext('2d')
-    uploadCtx?.drawImage(arrival.image.canvas, 0, 0, 1, 1)
+    // (Big enough for the browser to keep this canvas on the graphics card: a tiny one would not upload anything.)
+    if (!uploadCanvas) {
+      uploadCanvas = document.createElement('canvas')
+      uploadCanvas.width = 512
+      uploadCanvas.height = 512
+    }
+    uploadCanvas.getContext('2d')?.drawImage(arrival.image.canvas, 0, 0, 1, 1)
     arrival.map.set(arrival.key, arrival.image)
   }
 }
@@ -1429,9 +1573,17 @@ function drawVegetation(
     }
     const x = chunk * VEG_CHUNK - x0
     let source = any.canvas
+    let cropX = 0
+    let cropWidth = 0
     if (first && second && t > 0 && t < 1) {
       // During the short fade the two images are added up every frame, each at its own share (the
-      // leaves of one fade out as the other's fade in), onto a canvas kept for the chunk.
+      // leaves of one fade out as the other's fade in), onto a canvas kept for the chunk. Only the part
+      // that shows is added up (two columns more each side, so smoothing at the screen's edges is unchanged).
+      cropX = Math.max(0, Math.floor(-x * res) - 2)
+      cropWidth = Math.min(first.canvas.width, Math.ceil((viewWidth - x) * res) + 2) - cropX
+      if (cropWidth <= 0) {
+        continue
+      }
       const key = `${part}|${chunk}`
       let fade = pieces.get(key)
       if (!fade) {
@@ -1445,12 +1597,12 @@ function drawVegetation(
       const pctx = fade.canvas.getContext('2d')
       if (pctx) {
         pctx.globalCompositeOperation = 'source-over'
-        pctx.clearRect(0, 0, fade.canvas.width, fade.canvas.height)
+        pctx.clearRect(cropX, firstRow, cropWidth, rows)
         pctx.globalAlpha = 1 - t
-        pctx.drawImage(first.canvas, 0, 0)
+        pctx.drawImage(first.canvas, cropX, firstRow, cropWidth, rows, cropX, firstRow, cropWidth, rows)
         pctx.globalCompositeOperation = 'lighter'
         pctx.globalAlpha = t
-        pctx.drawImage(second.canvas, 0, 0)
+        pctx.drawImage(second.canvas, cropX, firstRow, cropWidth, rows, cropX, firstRow, cropWidth, rows)
         pctx.globalAlpha = 1
         pctx.globalCompositeOperation = 'source-over'
       }
@@ -1460,7 +1612,8 @@ function drawVegetation(
     } else if (first) {
       source = first.canvas
     }
-    ctx.drawImage(source, 0, firstRow, source.width, rows, x, y + firstRow / res, source.width / res, rows / res)
+    const columns = cropWidth > 0 ? cropWidth : source.width
+    ctx.drawImage(source, cropX, firstRow, columns, rows, x + cropX / res, y + firstRow / res, columns / res, rows / res)
   }
 }
 
@@ -1778,28 +1931,23 @@ function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, 
     return
   }
   const { terrain } = world
-  const startX = Math.max(0, Math.floor((cameraX - 16) / terrain.step) * terrain.step)
-  const endX = Math.min(world.width + 64, cameraX + viewWidth + 16 + terrain.step)
   const bottom = world.height + terrain.creek.depth
   const gradient = ctx.createLinearGradient(0, world.groundY - world.groundHeight * 4, 0, bottom)
   gradient.addColorStop(0, SNOW_TOP)
   gradient.addColorStop(1, SNOW_BOTTOM)
   ctx.fillStyle = gradient
   ctx.globalAlpha = thickness
-  ctx.beginPath()
-  if (cover >= 0.999) {
-    ctx.moveTo(startX, bottom)
-    for (let x = startX; x <= endX; x += terrain.step) {
-      ctx.lineTo(x, groundYAt(terrain, x) - 1)
-    }
-    ctx.lineTo(endX, bottom)
-    ctx.closePath()
-  } else {
+  const firstColumn = Math.floor((cameraX - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+  const lastColumn = Math.floor((cameraX + viewWidth + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+  // The patches are kept from frame to frame until the melt has moved them by a fraction of a pixel.
+  let held = groundPatches.get(world)
+  if (!held || firstColumn < held.firstColumn || lastColumn > held.lastColumn || Math.abs(held.cover - cover) >= MELT_COVER_STEP) {
     const rows = Math.ceil((bottom - world.groundY + SNOW_CELL_DEPTH) / SNOW_CELL_DEPTH)
-    const firstColumn = Math.floor((cameraX - SNOW_CELL_X * 1.4) / SNOW_CELL_X)
-    const lastColumn = Math.floor((cameraX + viewWidth + SNOW_CELL_X * 1.4) / SNOW_CELL_X)
+    const columnFrom = firstColumn - MELT_COLUMN_MARGIN
+    const columnTo = lastColumn + MELT_COLUMN_MARGIN
+    const path = new Path2D()
     const points = 30
-    for (let i = firstColumn; i <= lastColumn; i += 1) {
+    for (let i = columnFrom; i <= columnTo; i += 1) {
       for (let j = 0; j <= rows; j += 1) {
         const blob = snowBlob(i, j, cover)
         if (!blob) {
@@ -1812,18 +1960,23 @@ function drawSnow(ctx: CanvasRenderingContext2D, world: World, cameraX: number, 
           const depth = Math.max(0, blob.depth + Math.sin(angle) * blob.ry * stretch)
           const y = groundYAt(terrain, x) + depth - (depth === 0 ? 3 : 0)
           if (k === 0) {
-            ctx.moveTo(x, y)
+            path.moveTo(x, y)
           } else {
-            ctx.lineTo(x, y)
+            path.lineTo(x, y)
           }
         }
-        ctx.closePath()
+        path.closePath()
       }
     }
+    held = { path, cover, firstColumn: columnFrom, lastColumn: columnTo }
+    groundPatches.set(world, held)
   }
-  ctx.fill()
+  ctx.fill(held.path)
   ctx.globalAlpha = 1
 }
+
+/** The foreground's melting snow patches per world, and the cover and grid columns they were made for. */
+const groundPatches = new WeakMap<World, { path: Path2D; cover: number; firstColumn: number; lastColumn: number }>()
 
 /** Width of a cached leaf-litter tile, in world pixels. */
 const LEAF_TILE_WIDTH = 1024

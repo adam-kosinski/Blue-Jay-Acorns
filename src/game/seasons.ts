@@ -153,6 +153,33 @@ export function sampleAt(time: number): { k: number; t: number } {
   return { k, t: smooth((x - k - (0.5 - half)) / (2 * half)) }
 }
 
+/** Seconds between two sample moments. */
+const SAMPLE_SECONDS = SAMPLE_STEP * SEGMENT_SECONDS
+
+/** Seconds before a fade that the images of later moments stop being started (what is being drawn then can finish). */
+const BUILD_HOLD_LEAD = 2
+
+/** Seconds after a fade that the images of later moments start being made again. */
+const BUILD_HOLD_TAIL = 0.5
+
+/** How far through the interval between two sample moments (0-1) the hold around its fade ends. */
+export const BUILD_HOLD_END = 0.5 + (FADE_SECONDS / 2 + BUILD_HOLD_TAIL) / SAMPLE_SECONDS
+
+/**
+ * Whether the images of later moments should wait: drawing them keeps the graphics card busy, and during a fade
+ * the frames need it most, so they are made between the fades.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function buildHoldAt(time: number): boolean {
+  const position = sampleIndexAt(time)
+  if (position < 0 || position >= SAMPLE_COUNT - 1) {
+    return false
+  }
+  const through = position - Math.floor(position)
+  return through > 0.5 - (FADE_SECONDS / 2 + BUILD_HOLD_LEAD) / SAMPLE_SECONDS && through < BUILD_HOLD_END
+}
+
 /** The looks of the leaves of a tree or bush it holds between changes: green, half colorful, fully colorful, half bare (then bare). */
 export const STAGE_LOOKS: { presence: number; fall: number }[] = [
   { presence: 1, fall: 0 },

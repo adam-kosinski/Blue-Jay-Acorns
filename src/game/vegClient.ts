@@ -45,6 +45,27 @@ const waiting: Work[] = []
 const keys = new Set<string>()
 const inFlight = new Map<number, Work>()
 
+/** Requests this far down the order are images of moments still to come, which can wait for a fade to pass. */
+const AHEAD_PRIORITY = 6.5
+
+/** Whether the images of moments still to come are being held back (see `holdAheadWork`). */
+let holdingAhead = false
+
+/**
+ * Holds back the images of moments still to come, or lets them go again.
+ *
+ * @param hold - Whether they should wait.
+ */
+export function holdAheadWork(hold: boolean): void {
+  if (hold === holdingAhead) {
+    return
+  }
+  holdingAhead = hold
+  if (!hold) {
+    pump()
+  }
+}
+
 /**
  * Gives up on the worker (the game then draws the images itself).
  */
@@ -62,11 +83,18 @@ function fail(): void {
  */
 function pump(): void {
   while (worker && inFlight.size < IN_FLIGHT && waiting.length > 0) {
-    let best = 0
-    for (let i = 1; i < waiting.length; i += 1) {
-      if ((waiting[i]?.priority ?? 0) < (waiting[best]?.priority ?? 0)) {
+    let best = -1
+    for (let i = 0; i < waiting.length; i += 1) {
+      const priority = waiting[i]?.priority ?? 0
+      if (holdingAhead && priority >= AHEAD_PRIORITY) {
+        continue
+      }
+      if (best < 0 || priority < (waiting[best]?.priority ?? 0)) {
         best = i
       }
+    }
+    if (best < 0) {
+      break
     }
     const [request] = waiting.splice(best, 1)
     if (!request) {
