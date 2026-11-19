@@ -728,6 +728,33 @@ function drawForest(
       }
     }
     if (!hidden) {
+      // The layer's own rocks, drawn like the rocks between the layers (vectors at the screen's resolution, so
+      // they match them, with their snow), before the ferns and bushes that stand in front of them.
+      const shift = camera.x * p
+      for (const prop of strip.veg.props) {
+        const rock = prop.kind === 'rock' ? layer.rocks[prop.index] : undefined
+        if (!rock) {
+          continue
+        }
+        const screenX = rock.x - shift
+        const groundY = base - strip.originY + prop.y
+        if (screenX < -rock.rx * 1.5 || screenX > viewWidth + rock.rx * 1.5 || groundY - rock.ry * 1.2 > limit) {
+          continue
+        }
+        ctx.save()
+        ctx.translate(-shift, 0)
+        if (winter > 0) {
+          const { color, highlight } = rock
+          rock.color = winterHazed(color, layer, winter)
+          rock.highlight = winterHazed(highlight, layer, winter)
+          drawRockSimple(ctx, rock, groundY)
+          rock.color = color
+          rock.highlight = highlight
+        } else {
+          drawRockSimple(ctx, rock, groundY)
+        }
+        ctx.restore()
+      }
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
     }
   }
@@ -1070,12 +1097,9 @@ function* buildVegImage(
   } else {
     for (const prop of veg.props) {
       if (prop.kind === 'rock') {
-        const rock = layer.rocks[prop.index]
-        if (rock && near(rock.x, rock.rx * 1.5)) {
-          mossFade = transitionProgress(rock.fadeStart, time)
-          paintRockWithSnow(ctx, rock, rock.x, prop.y + rock.ry * 0.4, rockSnowSize(rock, time), snowCapLayers(time))
-          mossFade = 0
-        }
+        // (A layer's rocks are not in its images: they would be at the layer's lower resolution, blurrier than
+        // the rocks next to them, and the images stop at the start of winter, before the snow. They are drawn
+        // every frame, see `drawForest`.)
       } else if (prop.kind === 'fern') {
         const fern = layer.ferns[prop.index]
         if (fern && near(fern.x, fern.size * 1.4)) {
@@ -1369,8 +1393,7 @@ function chunkHasContent(layer: ForestLayer, veg: VegPlan, part: 'back' | 'front
   } else {
     has = veg.props.some((prop) => {
       if (prop.kind === 'rock') {
-        const rock = layer.rocks[prop.index]
-        return rock !== undefined && near(rock.x, rock.rx * 1.5)
+        return false
       }
       if (prop.kind === 'fern') {
         const fern = layer.ferns[prop.index]
@@ -4071,43 +4094,6 @@ function paintSnowShapes(
 }
 
 /**
- * Paints the snow heaped over the top edge of a rock's outline; it rises from the rock as the full cap comes
- * in (the line grows from nothing).
- *
- * @param ctx - 2D canvas context.
- * @param outline - The top contour to follow (the rock's silhouette, moss included).
- * @param offX - Added to the contour's x.
- * @param offY - Added to the contour's y.
- * @param cx - Center x.
- * @param baseY - Y of the rock's base line.
- * @param rx - Half width.
- * @param ry - Height.
- * @param phase - Shape of the lumps.
- * @param amount - How big the snow is, 0-1.
- * @param full - How far the full cap has come in, 0-1.
- * @param fog - The rock's distance haze.
- */
-function paintSnowHeap(
-  ctx: CanvasRenderingContext2D,
-  outline: [number, number][],
-  offX: number,
-  offY: number,
-  cx: number,
-  baseY: number,
-  rx: number,
-  ry: number,
-  phase: number,
-  amount: number,
-  full: number,
-  fog: number,
-): void {
-  if (full <= 0.02) {
-    return
-  }
-  strokeSnowHeap(ctx, snowHeapPath(outline, offX, offY, cx, baseY, rx, ry, phase, amount, full), ry, full, fog)
-}
-
-/**
  * The path of the snow heaped over the top edge of a rock (built from its top contour).
  *
  * @param outline - The top contour to follow.
@@ -4255,90 +4241,12 @@ function silhouetteColumns(
 }
 
 /**
- * The top contour of what a bitmap shows, as points (see `silhouetteColumns`).
- *
- * @param source - The bitmap.
- * @param left - Where its left edge is in the world.
- * @param top - Where its top edge is.
- * @param width - Its width in the world.
- * @param height - Its height in the world.
- */
-function silhouetteTop(
-  source: CanvasImageSource & { width: number; height: number },
-  left: number,
-  top: number,
-  width: number,
-  height: number,
-): [number, number][] {
-  const columns = silhouetteColumns(source, left, top, width, height)
-  return columns.x.map((x, i): [number, number] => [x, columns.top[i] ?? top])
-}
-
-/**
  * The shape phase of a rock's snow lumps.
  *
  * @param rock - The rock.
  */
 function snowPhase(rock: Rock): number {
   return (rock.jitter.reduce((a, b) => a + b, 0) * 31) % 6.28
-}
-
-/**
- * Paints a rock with snow lying on it, for the far layers' images: the rock is painted on a canvas of its own,
- * the snow shapes are cut to what it painted (so the snow covers exactly its silhouette, moss that hangs over
- * the outline included) and both are drawn onto the image.
- *
- * @param ctx - 2D canvas context of the image.
- * @param rock - The rock.
- * @param cx - Center x.
- * @param baseY - Y of the rock's base line.
- * @param amount - How big the snow is, 0-1.
- * @param layers - How strongly the dusting and the full cap show, 0-1.
- */
-function paintRockWithSnow(
-  ctx: CanvasRenderingContext2D,
-  rock: Rock,
-  cx: number,
-  baseY: number,
-  amount: number,
-  layers: { thin: number; full: number },
-): void {
-  if (amount < 0.005 || layers.thin < 0.02) {
-    paintRock(ctx, rock, cx, baseY)
-    return
-  }
-  const res = ctx.getTransform().a
-  const pad = 6
-  const width = rock.rx * 3 + pad * 2
-  const above = rock.ry * 1.8 + pad
-  const height = above + rock.ry * 0.9 + pad
-  const rockCanvas = newCanvas()
-  rockCanvas.width = Math.max(1, Math.ceil(width * res))
-  rockCanvas.height = Math.max(1, Math.ceil(height * res))
-  const rctx = rockCanvas.getContext('2d') as CanvasRenderingContext2D | null
-  const snowCanvas = newCanvas()
-  snowCanvas.width = rockCanvas.width
-  snowCanvas.height = rockCanvas.height
-  const sctx = snowCanvas.getContext('2d') as CanvasRenderingContext2D | null
-  if (!rctx || !sctx) {
-    paintRock(ctx, rock, cx, baseY)
-    return
-  }
-  const phase = snowPhase(rock)
-  rctx.scale(res, res)
-  rctx.translate(width / 2, above)
-  paintRock(rctx, rock, 0, 0)
-  sctx.scale(res, res)
-  sctx.translate(width / 2, above)
-  paintSnowShapes(sctx, 0, 0, rock.rx, rock.ry, phase, amount, layers, rock.fog)
-  // Keep the snow only where the rock was painted.
-  sctx.setTransform(1, 0, 0, 1, 0, 0)
-  sctx.globalCompositeOperation = 'destination-in'
-  sctx.drawImage(rockCanvas, 0, 0)
-  ctx.drawImage(rockCanvas, cx - width / 2, baseY - above, width, height)
-  ctx.drawImage(snowCanvas, cx - width / 2, baseY - above, width, height)
-  const contour = silhouetteTop(rockCanvas, cx - width / 2, baseY - above, width, height)
-  paintSnowHeap(ctx, contour, 0, 0, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full, rock.fog)
 }
 
 /** Each rock's silhouette (moss included) relative to its center and base line, found once. */

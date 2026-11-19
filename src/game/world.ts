@@ -876,9 +876,21 @@ function spawnForest(
         fadeStart: Math.random(),
       })
     }
-    // (No rocks in the layers' own images: they were drawn at the layer's lower resolution and could not carry
-    // snow; the little rocks between the layers (`edgeRocks`) are drawn at full resolution and do.)
+    // Rocks on the layer's surface, plus a lining along the creek's edges.
     const rocks: Rock[] = []
+    for (let i = 0; i < span / (viewHeight * 2); i += 1) {
+      const rx = randRange(0.12, 0.4) * playerSize
+      const rockX = randRange(0, span)
+      if (!blocked(layerKeepOut, rockX, rx) && !outsideWindow(rockX)) {
+        rocks.push(makeRock(rockX, rx, rx * randRange(0.6, 0.9), layer.fog, Math.random() < 0.3))
+      }
+    }
+    for (let i = 0; i < 14; i += 1) {
+      const side = Math.random() < 0.5 ? -1 : 1
+      const rx = randRange(0.1, 0.3) * playerSize
+      const rockX = layerCreek.x + side * (layerCreek.halfWidth + rx + Math.random() ** 2 * layerCreek.halfWidth * 0.7)
+      rocks.push(makeRock(rockX, rx, rx * randRange(0.55, 0.85), layer.fog))
+    }
     return {
       parallax: layer.parallax,
       span,
