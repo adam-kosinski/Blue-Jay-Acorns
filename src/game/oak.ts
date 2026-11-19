@@ -990,7 +990,7 @@ function* buildPartSteps(
     typeof document === 'undefined' ? new OffscreenCanvas(1, 1) : document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  const ctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(scale, scale)
     yield* drawOakSteps(ctx, shape, -minX, -minY, tones, trunkColor, 1, part !== 'trunk', PART_LOOKS[part])
@@ -1079,6 +1079,9 @@ function storePart(key: string, sprite: TreeSprite): void {
 /** Parts that came from the background worker and are not in use yet (each is given to the graphics card in a frame of its own). */
 const partArrivals: { key: string; sprite: TreeSprite }[] = []
 
+/** In the background worker parts are painted by the processor, so the graphics card stays free for the game's frames. */
+const WORKER_CONTEXT = typeof document === 'undefined' ? { willReadFrequently: true } : undefined
+
 let partUploadCanvas: HTMLCanvasElement | null = null
 
 /**
@@ -1098,9 +1101,12 @@ export function settleOakArrivals(budgetMs: number): void {
       releaseSprite(arrival.sprite)
       continue
     }
-    partUploadCanvas ??= document.createElement('canvas')
-    partUploadCanvas.width = 1
-    partUploadCanvas.height = 1
+    // (Big enough for the browser to keep it on the graphics card, so the part really is uploaded now.)
+    if (!partUploadCanvas) {
+      partUploadCanvas = document.createElement('canvas')
+      partUploadCanvas.width = 512
+      partUploadCanvas.height = 512
+    }
     partUploadCanvas.getContext('2d')?.drawImage(arrival.sprite.canvas, 0, 0, 1, 1)
     storePart(arrival.key, arrival.sprite)
   }

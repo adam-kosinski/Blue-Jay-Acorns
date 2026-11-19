@@ -234,6 +234,7 @@ export function renderScene(
   }
   drawCreek(ctx, world, camera, viewWidth, viewHeight)
   drawMounds(ctx, world, camera.x, viewWidth)
+  beginNpcLabels()
   for (const npc of world.npcs) {
     const bx = npc.bird.x + npc.bird.size / 2
     if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
@@ -257,6 +258,7 @@ export function renderScene(
       }
     }
   }
+  endNpcLabels()
   drawBirdOnWater(ctx, player, world)
   // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
   // never look like they sit on a bush.
@@ -423,7 +425,7 @@ function drawForest(
   const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999 && winter >= 0.999
   let stripsMade = 0
   tintBuildsLeft = 1
-  patchBuildsLeft = 1
+
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
 
@@ -793,7 +795,7 @@ type ForestStrip = {
 
 /** How many layers may have their tinted ground or their melt patches remade in the current frame. */
 let tintBuildsLeft = 0
-let patchBuildsLeft = 0
+
 
 /** How many steps of 1/255 a tinted ground may lag behind while it waits for its turn to be remade (too little to see). */
 const TINT_STALE_STEPS = 2
@@ -864,7 +866,7 @@ function dropTintedStrip(strip: ForestStrip): void {
 /**
  * The melting snow's patches on a layer's ground, in the layer's own coordinates (from its left end, and from 30 px
  * above its base line at the layer's scale), reused from frame to frame until the melt has moved them by a fraction
- * of a pixel, one layer per frame.
+ * of a pixel.
  *
  * @param strip - The layer's ground bitmap (it keeps the patches).
  * @param scale - The patches' scale on this layer.
@@ -884,14 +886,14 @@ function meltPatches(
   lastRow: number,
 ): Path2D {
   const held = strip.patches
-  const step = Math.min(0.004, MELT_COVER_STEP / scale)
+  const step = MELT_COVER_STEP / scale
   if (held && firstColumn >= held.firstColumn && lastColumn <= held.lastColumn && firstRow >= held.firstRow && lastRow <= held.lastRow) {
     const behind = Math.abs(held.cover - cover)
-    if (behind < step || (patchBuildsLeft <= 0 && behind < step * 3)) {
+    if (behind < step) {
       return held.path
     }
   }
-  patchBuildsLeft -= 1
+
   const path = new Path2D()
   const points = 10
   const columnFrom = firstColumn - MELT_COLUMN_MARGIN
@@ -1549,6 +1551,14 @@ function drawVegetation(
   if (!pieces) {
     pieces = new Map()
     fadePieces.set(layer, pieces)
+  }
+  if (!(t > 0 && t < 1) && pieces.size > 0) {
+    // No fade going on: the working canvases are let go (they hold a lot of memory).
+    for (const piece of pieces.values()) {
+      piece.canvas.width = 0
+      piece.canvas.height = 0
+    }
+    pieces.clear()
   }
   for (let chunk = firstChunk; chunk <= lastChunk; chunk += 1) {
     if (!chunkHasContent(layer, strip.veg, part, chunk)) {
@@ -3181,7 +3191,7 @@ function* buildBushPart(bush: Bush, res: number, part: BushPart): Generator<void
   const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  const ctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(scale, scale)
     ctx.translate(-(minX - pad), -(minY - pad))
@@ -3401,7 +3411,7 @@ function buildFernSprite(fern: Fern, res: number, winter: boolean): FernSprite {
   const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const sctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  const sctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (sctx) {
     sctx.scale(scale, scale)
     sctx.translate(width / 2, height - below - 4)
@@ -3459,6 +3469,9 @@ function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number, fa
     }
   }
 }
+
+/** In the background worker images are painted by the processor, so the graphics card stays free for the game's frames. */
+const WORKER_CONTEXT = typeof document === 'undefined' ? { willReadFrequently: true } : undefined
 
 /**
  * A new canvas (an offscreen one inside the background worker, which has no document).
@@ -3636,9 +3649,12 @@ let touchCanvas: HTMLCanvasElement | null = null
  * @param source - The bitmap.
  */
 function touchBitmap(source: CanvasImageSource): void {
-  touchCanvas ??= document.createElement('canvas')
-  touchCanvas.width = 1
-  touchCanvas.height = 1
+  // (Big enough for the browser to keep it on the graphics card, so the bitmap really is uploaded now.)
+  if (!touchCanvas) {
+    touchCanvas = document.createElement('canvas')
+    touchCanvas.width = 512
+    touchCanvas.height = 512
+  }
   touchCanvas.getContext('2d')?.drawImage(source, 0, 0, 1, 1)
 }
 
@@ -4400,31 +4416,68 @@ function drawRockSnow(
     path.closePath()
     return path
   }
+  // The shapes and gradients only change while the snow comes in or melts: otherwise last frame's are used again.
+  let made = rockSnowShapes.get(rock)
+  if (!made || made.ctx !== ctx || made.cx !== cx || made.baseY !== baseY || made.amount !== amount || made.thin !== layers.thin || made.full !== layers.full) {
+    const dust = ctx.createLinearGradient(0, baseY - rock.ry * 1.08, 0, baseY - rock.ry * 1.15 + g.dustDepth + rock.ry * 0.12)
+    dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+    dust.addColorStop(0.3, `rgba(${tr}, ${tg}, ${tb}, 1)`)
+    dust.addColorStop(0.7, `rgba(${tr}, ${tg}, ${tb}, 0.45)`)
+    dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
+    const full = layers.full > 0.02
+    const cap = full ? ctx.createLinearGradient(0, g.top, 0, baseY - rock.ry * 1.15 + g.depth + rock.ry * 0.2) : null
+    cap?.addColorStop(0, colors.top)
+    cap?.addColorStop(1, colors.bottom)
+    const outline: [number, number][] = sil.x.map((x, i): [number, number] => [x, sil.top[i] ?? 0])
+    made = {
+      ctx,
+      cx,
+      baseY,
+      amount,
+      thin: layers.thin,
+      full: layers.full,
+      dust,
+      dustPath: shape(g.dustY),
+      cap,
+      capPath: full ? shape(g.edgeY) : null,
+      heap: full ? snowHeapPath(outline, cx, baseY, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full) : null,
+    }
+    rockSnowShapes.set(rock, made)
+  }
   ctx.save()
   // First the dusting, opaque along the top and thinning out downward.
   ctx.globalAlpha = layers.thin
-  const dust = ctx.createLinearGradient(0, baseY - rock.ry * 1.08, 0, baseY - rock.ry * 1.15 + g.dustDepth + rock.ry * 0.12)
-  dust.addColorStop(0, `rgba(${tr}, ${tg}, ${tb}, 1)`)
-  dust.addColorStop(0.3, `rgba(${tr}, ${tg}, ${tb}, 1)`)
-  dust.addColorStop(0.7, `rgba(${tr}, ${tg}, ${tb}, 0.45)`)
-  dust.addColorStop(1, `rgba(${tr}, ${tg}, ${tb}, 0)`)
-  ctx.fillStyle = dust
-  ctx.fill(shape(g.dustY))
+  ctx.fillStyle = made.dust
+  ctx.fill(made.dustPath)
   // Then the full cap, inside the rock.
-  if (layers.full > 0.02) {
+  if (made.cap && made.capPath) {
     ctx.globalAlpha = layers.full
-    const cap = ctx.createLinearGradient(0, g.top, 0, baseY - rock.ry * 1.15 + g.depth + rock.ry * 0.2)
-    cap.addColorStop(0, colors.top)
-    cap.addColorStop(1, colors.bottom)
-    ctx.fillStyle = cap
-    ctx.fill(shape(g.edgeY))
+    ctx.fillStyle = made.cap
+    ctx.fill(made.capPath)
   }
   ctx.restore()
-  if (layers.full > 0.02) {
-    const outline: [number, number][] = sil.x.map((x, i): [number, number] => [x, sil.top[i] ?? 0])
-    strokeSnowHeap(ctx, snowHeapPath(outline, cx, baseY, cx, baseY, rock.rx, rock.ry, phase, amount, layers.full), rock.ry, layers.full, rock.fog)
+  if (made.heap) {
+    strokeSnowHeap(ctx, made.heap, rock.ry, layers.full, rock.fog)
   }
 }
+
+/** A rock's snow shapes and gradients as last made, and what they were made for. */
+const rockSnowShapes = new WeakMap<
+  Rock,
+  {
+    ctx: CanvasRenderingContext2D
+    cx: number
+    baseY: number
+    amount: number
+    thin: number
+    full: number
+    dust: CanvasGradient
+    dustPath: Path2D
+    cap: CanvasGradient | null
+    capPath: Path2D | null
+    heap: Path2D | null
+  }
+>()
 
 /**
  * Lays a cap of snow over the upper part of a simple (little, hazy) rock's outline: clipped to the outline
@@ -4636,7 +4689,7 @@ function buildRockSprite(rock: Rock, res: number, winter: boolean): RockSprite {
   const canvas = newCanvas()
   canvas.width = Math.max(1, Math.ceil(width * scale))
   canvas.height = Math.max(1, Math.ceil(height * scale))
-  const sctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  const sctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (sctx) {
     sctx.scale(scale, scale)
     sctx.translate(width / 2, above)
@@ -6170,78 +6223,84 @@ function drawFollowArrows(ctx: CanvasRenderingContext2D, world: World): void {
   ctx.restore()
 }
 
-/** Pre-rendered NPC label text, keyed by its content. */
-const labelSprites = new Map<string, { canvas: HTMLCanvasElement; width: number; height: number }>()
+/** The debug labels above the animals: HTML elements over the canvas (crisp text, and no bitmap to make per change). */
+type NpcLabel = { el: HTMLDivElement; key: string; seen: number }
+const npcLabels = new Map<Npc, NpcLabel>()
+let labelLayer: HTMLDivElement | null = null
+let labelFrame = 0
 
 /**
- * Draws a debug label above an NPC from a cached bitmap, since text is expensive to render every
- * frame: its state, then hunger, nosiness and secrecy as white bars filled to their value (0-1) with
- * the number overlaid, and, for a few seconds after it starts burying, the burial quality it chose.
+ * Starts a frame of debug labels (labels not placed again this frame are hidden by `endNpcLabels`).
+ */
+function beginNpcLabels(): void {
+  labelFrame += 1
+}
+
+/**
+ * Hides the debug labels of animals that were not labeled this frame (off screen, or the debug display is off).
+ */
+function endNpcLabels(): void {
+  for (const label of npcLabels.values()) {
+    if (label.seen !== labelFrame && label.el.style.display !== 'none') {
+      label.el.style.display = 'none'
+    }
+  }
+}
+
+/**
+ * Places a debug label above an NPC: its state, then hunger, nosiness and secrecy as white bars filled to their
+ * value (0-1) with the number on them, and, for a few seconds after it starts burying, the burial quality it chose.
  *
- * @param ctx - 2D canvas context in world space.
+ * @param ctx - 2D canvas context in world space (its transform gives the screen position).
  * @param npc - NPC to annotate.
  */
 function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
-  const dpr = ctx.getTransform().a
+  const canvas = ctx.canvas
+  const parent = canvas.parentElement
+  if (!parent) {
+    return
+  }
+  if (!labelLayer || labelLayer.parentElement !== parent) {
+    labelLayer = document.createElement('div')
+    labelLayer.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;pointer-events:none'
+    parent.insertBefore(labelLayer, canvas.nextSibling)
+  }
+  let label = npcLabels.get(npc)
+  if (!label || label.el.parentElement !== labelLayer) {
+    const el = document.createElement('div')
+    el.style.cssText =
+      'position:absolute;left:0;top:0;width:130px;transform-origin:0 0;font:12px Georgia,serif;color:#1b2838;text-align:center;text-shadow:0 0 2px #fff,0 0 2px #fff,0 0 3px #fff'
+    labelLayer.appendChild(el)
+    label = { el, key: '', seen: 0 }
+    npcLabels.set(npc, label)
+  }
   const bars: [string, number][] = [['hunger', npc.bird.hunger]]
   if (npc.nosiness !== null) {
     bars.push(['nosy', npc.nosiness])
   }
   bars.push(['secrecy', npc.secrecy])
   const showQuality = npc.buryQualityTimer > 0
-  const key = [npc.state, ...bars.map(([, v]) => v.toFixed(2)), showQuality ? npc.buryQuality.toFixed(2) : '', Math.round(dpr * 100)].join('|')
-  let label = labelSprites.get(key)
-  if (!label) {
-    const width = 130
-    const barW = 100
-    const barH = 12
-    const height = 18 + bars.length * (barH + 3) + (showQuality ? 15 : 0)
-    const canvas = document.createElement('canvas')
-    canvas.width = Math.ceil(width * dpr)
-    canvas.height = Math.ceil(height * dpr)
-    const lctx = canvas.getContext('2d')
-    if (lctx) {
-      lctx.scale(dpr, dpr)
-      lctx.textAlign = 'center'
-      lctx.lineJoin = 'round'
-      const text = (line: string, y: number, font: string): void => {
-        lctx.font = font
-        lctx.lineWidth = 3
-        lctx.strokeStyle = 'rgba(255, 255, 255, 0.85)'
-        lctx.fillStyle = '#1b2838'
-        lctx.strokeText(line, width / 2, y)
-        lctx.fillText(line, width / 2, y)
-      }
-      text(npc.state, 12, '12px Georgia, serif')
-      bars.forEach(([name, value], i) => {
-        const x = (width - barW) / 2
-        const y = 18 + i * (barH + 3)
-        lctx.fillStyle = 'rgba(27, 40, 56, 0.55)'
-        lctx.fillRect(x, y, barW, barH)
-        lctx.fillStyle = 'rgba(255, 255, 255, 0.95)'
-        lctx.fillRect(x, y, barW * Math.max(0, Math.min(1, value)), barH)
-        lctx.strokeStyle = 'rgba(255, 255, 255, 0.95)'
-        lctx.lineWidth = 1
-        lctx.strokeRect(x + 0.5, y + 0.5, barW - 1, barH - 1)
-        text(`${name} ${value.toFixed(2)}`, y + barH - 2.5, 'bold 10px Georgia, serif')
-      })
-      if (showQuality) {
-        text(`burial quality ${npc.buryQuality.toFixed(2)}`, height - 3, '12px Georgia, serif')
-      }
-    }
-    label = { canvas, width, height }
-    if (labelSprites.size >= 120) {
-      const oldest = labelSprites.keys().next().value
-      if (oldest !== undefined) {
-        labelSprites.delete(oldest)
-      }
-    }
-    labelSprites.set(key, label)
+  const key = [npc.state, ...bars.map(([, v]) => v.toFixed(2)), showQuality ? npc.buryQuality.toFixed(2) : ''].join('|')
+  if (label.key !== key) {
+    label.key = key
+    const bar = ([name, value]: [string, number]): string =>
+      `<div style="position:relative;width:100px;height:12px;margin:3px auto 0;background:rgba(27,40,56,.55);outline:1px solid rgba(255,255,255,.95);outline-offset:-1px">` +
+      `<div style="position:absolute;left:0;top:0;bottom:0;width:${Math.max(0, Math.min(1, value)) * 100}%;background:rgba(255,255,255,.95)"></div>` +
+      `<div style="position:relative;font:bold 10px/12px Georgia,serif">${name} ${value.toFixed(2)}</div></div>`
+    label.el.innerHTML =
+      `<div>${npc.state}</div>${bars.map(bar).join('')}` + (showQuality ? `<div>burial quality ${npc.buryQuality.toFixed(2)}</div>` : '')
   }
+  // Screen position (CSS pixels) of the spot just above the bird's head, and the view's scale there.
+  const m = ctx.getTransform()
+  const dpr = window.devicePixelRatio || 1
   const x = npc.bird.x + npc.bird.size / 2
-  const y = npc.bird.y - npc.bird.size * 0.1
-  // The label's bottom sits just above the bird's head.
-  ctx.drawImage(label.canvas, x - label.width / 2, y + 8 - label.height, label.width, label.height)
+  const y = npc.bird.y - npc.bird.size * 0.1 + 8
+  const sx = (m.a * x + m.c * y + m.e) / dpr
+  const sy = (m.b * x + m.d * y + m.f) / dpr
+  const scale = m.a / dpr
+  label.el.style.transform = `translate(${sx}px, ${sy}px) scale(${scale}) translate(-65px, -100%)`
+  label.el.style.display = ''
+  label.seen = labelFrame
 }
 
 /** Hunger level at or below which the bar flashes red. */
