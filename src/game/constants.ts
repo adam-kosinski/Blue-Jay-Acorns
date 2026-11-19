@@ -244,24 +244,18 @@ export const SQUIRREL_IDLE_LEAVE_HUNGER = 0.7
 export const ACORN_SPREAD_FACTOR = 0.5
 
 /**
- * The acorns per second that all the oaks together drop at the default rate (1): the nutrition needs of 7
- * mouths, the player, 3 jays and 3 squirrels (one squirrel per oak when there were 3 oaks). A bird needs
+ * Chance per second that each oak drops a group of acorns, derived so that the default rate (1) exactly
+ * matches the nutrition needs of every bird and squirrel, however many oaks there are. A bird needs
  * 1 / (`HUNGER_DRAIN_SECONDS` x `ACORN_NUTRITION`) = 0.05 acorns per second, and so does a squirrel (its bar is
- * twice as big, drains half as fast, and an acorn fills half as much of it): 0.35 in all. It stays the same
- * however many oaks there are (more oaks each drop less often), though a fourth oak brings a fourth squirrel.
- */
-export const ACORNS_PER_SECOND_AT_BASE_RATE = 7 / (HUNGER_DRAIN_SECONDS * ACORN_NUTRITION)
-
-/**
- * Chance per second that each oak drops a group of acorns, so that the oaks together drop
- * `ACORNS_PER_SECOND_AT_BASE_RATE` at the default rate (1). `updateTreeDrops` multiplies the chance (and the
- * world cap) by (birds + squirrels) / birds, with one squirrel per oak, so that is divided out here, and the
- * groups average `ACORN_GROUP_MEAN` at the baseline rate. With 4 oaks: 0.35 / (4 x 3 x 2) = 0.0146
- * (it was 0.0222 with 3 oaks: 0.35 / (3 x 3 x 1.75)).
+ * twice as big, drains half as fast, and an acorn fills half as much of it). Each squirrel adds a mouth, so
+ * `updateTreeDrops` multiplies the chance (and the world cap) by (birds + squirrels) / birds, with one squirrel per oak.
+ * The player and the NPC jays are `1 + NPC_COUNT` birds; groups average `ACORN_GROUP_MEAN` at the baseline rate.
+ * With 4 oaks, 3 jays + the player and 4 squirrels: 4 x 0.0167 x 2 x 3 = 0.4 acorns per second = 8 x 0.05
+ * (with 3 oaks: 3 x 0.0222 x 1.75 x 3 = 0.35 = 7 x 0.05): the supply per mouth is the same.
  */
 export const ACORN_DROP_CHANCE_PER_SECOND =
-  ACORNS_PER_SECOND_AT_BASE_RATE /
-  (OAK_TREE_COUNT * ACORN_GROUP_MEAN * ((1 + NPC_COUNT + OAK_TREE_COUNT) / (1 + NPC_COUNT)))
+  ((1 + NPC_COUNT) / (HUNGER_DRAIN_SECONDS * ACORN_NUTRITION)) /
+  (OAK_TREE_COUNT * ACORN_GROUP_MEAN)
 
 /** Where a squirrel's nose tip touches the ground when it pecks or sniffs, in sprite units ahead of its centre at size 100. */
 export const SQUIRREL_NOSE_REACH_X = 45
