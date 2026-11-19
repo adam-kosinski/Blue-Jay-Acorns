@@ -4139,10 +4139,12 @@ function snowHeapPath(
   // follows how much snow is left there (so the heap thins away smoothly and in patches with the cap).
   const upper: [number, number][] = []
   const lower: [number, number][] = []
+  // (A contour with only a few points is not smoothed: averaging them would flatten it.)
+  const radius = Math.min(5, Math.floor(outline.length / 40))
   for (let i = 0; i < outline.length; i += 1) {
     let sum = 0
     let count = 0
-    for (let d = -5; d <= 5; d += 1) {
+    for (let d = -radius; d <= radius; d += 1) {
       const other = outline[i + d]
       if (other) {
         sum += other[1]
@@ -4428,7 +4430,8 @@ function drawRockSnow(
 
 /**
  * Lays a cap of snow over the upper part of a simple (little, hazy) rock's outline: clipped to the outline
- * (these rocks have no moss over their edge), plus the heap over the top.
+ * (these rocks have no moss over their edge). They get no heap over the top edge: their outline has only a few
+ * points, and a ribbon along it showed as white rims around the creek's little rocks.
  *
  * @param ctx - 2D canvas context.
  * @param outline - The rock's outline.
@@ -4460,7 +4463,6 @@ function paintSnowCap(
   ctx.clip()
   paintSnowShapes(ctx, cx, baseY, rx, ry, phase, amount, layers, fog)
   ctx.restore()
-  paintSnowHeap(ctx, outline, 0, 0, cx, baseY, rx, ry, phase, amount, layers.full, fog)
 }
 
 /**
