@@ -159,8 +159,9 @@ function createPerlin1D(): (x: number) => number {
  * there is lowered to the waterline, with a bed just below it and banks sloping up to the normal terrain.
  *
  * @param viewHeight - Window height (scales wavelengths and amplitudes).
+ * @param edgeMargin - The least distance from each edge of the world to the creek's center (the oaks near the edges need room).
  */
-export function buildTerrain(worldWidth: number, baseY: number, viewHeight: number): Terrain {
+export function buildTerrain(worldWidth: number, baseY: number, viewHeight: number, edgeMargin = 0): Terrain {
   const large = createPerlin1D()
   const small = createPerlin1D()
   const largeAmp = viewHeight * LARGE_AMPLITUDE_VIEW_FRACTION
@@ -178,7 +179,9 @@ export function buildTerrain(worldWidth: number, baseY: number, viewHeight: numb
     // The hill sits near one side of the map, so it has not come back down to level by the edge.
     const fromEdge = hillHalf * (0.1 + 0.35 * Math.random())
     const candidateHill = Math.random() < 0.5 ? fromEdge : worldWidth - fromEdge
-    const candidateCreek = worldWidth * (0.1 + 0.8 * Math.random())
+    const lowest = Math.max(worldWidth * 0.1, edgeMargin)
+    const highest = Math.min(worldWidth * 0.9, worldWidth - edgeMargin)
+    const candidateCreek = lowest + (highest - lowest) * Math.random()
     if (
       // The creek stays clear of the whole hill (its foot too) with a gap beyond it, never right beside it.
       Math.abs(candidateCreek - candidateHill) > hillHalf + creekReach + worldWidth * 0.12 &&

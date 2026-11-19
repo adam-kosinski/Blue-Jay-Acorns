@@ -38,6 +38,12 @@ export const GROUND_VIEW_FRACTION = 0.04
 /** Oak trees spawned when a run starts. */
 export const OAK_TREE_COUNT = 3
 
+/**
+ * How far (in bird widths) the edge of the region of the oak nearest each edge of the world (the stretch acorns
+ * fall on and its squirrel lives on) may be from that edge of the world; closer, or past the edge, is fine too.
+ */
+export const OAK_EDGE_REGION_IN_SIZES = 4
+
 /** Acorns scattered on the ground at the start of a run. */
 export const ACORN_COUNT = 16
 

@@ -6,6 +6,7 @@ import {
   GROUND_COLOR,
   FOREST_HAZE_COLOR,
   OAK_TONES,
+  OAK_EDGE_REGION_IN_SIZES,
   OAK_TREE_COUNT,
   SCENERY_SCALE,
   TYPICAL_ASPECT_RATIO,
@@ -17,6 +18,7 @@ import {
   playerSizeForView,
   TRUNK_COLOR,
 } from './constants'
+import { acornReach } from './burial'
 import { createNpcs, createSquirrels } from './npc'
 import { generateOak } from './oak'
 import { buildFineNoise, buildTerrain, CREEK_DRIFT, groundYAt } from './terrain'
@@ -147,7 +149,28 @@ function pick<T>(items: T[], fallback: T): T {
 }
 
 /**
- * Builds oak trees spread across the world, each about one viewport tall.
+ * How far from each edge of the world the creek must stay: far enough that the oak at that edge (its region's
+ * edge at most `OAK_EDGE_REGION_IN_SIZES` bird widths from the world's edge) stands well back from the creek's
+ * water (see `spawnOakTrees`: a trunk stays a crown's reach, and its own width, from the water).
+ *
+ * @param viewHeight - Window height used as the tree's total height.
+ */
+export function creekEdgeMargin(viewHeight: number): number {
+  const crownRadius = viewHeight * 0.32 * SCENERY_SCALE
+  const trunkWidth = Math.max(18, viewHeight * 0.055) * 1.3 * SCENERY_SCALE
+  const size = playerSizeForView(viewHeight)
+  const halfWidth = 3 * size
+  // The farthest an edge oak's trunk can stand from its edge: the region's reach (a generous estimate) plus
+  // the distance its region's edge may be from the world's edge.
+  const trunkFromEdge = crownRadius * 0.7 + OAK_EDGE_REGION_IN_SIZES * size
+  return trunkFromEdge + halfWidth + crownRadius * 0.9 + trunkWidth * 2
+}
+
+/**
+ * Builds oak trees spread across the world, each about one viewport tall. The first and the last stand near the
+ * edges of the world: the edge of their region (the stretch acorns fall on and a squirrel lives on, see
+ * `acornReach`) is at most `OAK_EDGE_REGION_IN_SIZES` bird widths from the world's edge, or past it. The rest are
+ * spread between them.
  *
  * @param worldWidth - Full world width.
  * @param viewHeight - Window height used as the tree's total height.
@@ -158,33 +181,17 @@ function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span, te
   const crownRadius = viewHeight * 0.32 * SCENERY_SCALE
   const trunkHeight = (viewHeight - viewHeight * 0.32) * SCENERY_SCALE
   const trunkWidth = Math.max(18, viewHeight * 0.055) * 1.3 * SCENERY_SCALE
-  const trees: OakTree[] = []
-  const margin = crownRadius + trunkWidth
-  const usable = Math.max(trunkWidth, worldWidth - 2 * margin)
-  const slot = usable / OAK_TREE_COUNT
+  const playerSize = playerSizeForView(viewHeight)
+  // Oaks stand well back from the creek: their acorns fall from all over the crown, so a trunk must
+  // be about a crown's reach from the water or acorns would fall into it.
+  const noOak = { x: keepOut.x, halfWidth: terrain.creek.halfWidth + crownRadius * 0.9 }
 
-  // One of the oaks is an old-growth tree: twice the trunk width, branches 1.5x as thick, and
-  // buttress roots that spread at least a bird's size past the trunk on each side.
-  const oldGrowthIndex = Math.floor(Math.random() * OAK_TREE_COUNT)
-  for (let i = 0; i < OAK_TREE_COUNT; i += 1) {
-    const old = i === oldGrowthIndex
+  /** One oak whose trunk's left edge is at x (an old-growth tree has twice the trunk width). */
+  const build = (x: number, old: boolean): OakTree => {
     const width = old ? trunkWidth * 2 : trunkWidth
-    const slotStart = margin + i * slot
-    // Oaks stand well back from the creek: their acorns fall from all over the crown, so a trunk must
-    // be about a crown's reach from the water or acorns would fall into it.
-    const noOak = { x: keepOut.x, halfWidth: terrain.creek.halfWidth + crownRadius * 0.9 }
-    let x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
-    for (let attempt = 0; attempt < 40 && blocked(noOak, x + width / 2, width * 0.5); attempt += 1) {
-      x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
-    }
-    if (blocked(noOak, x + width / 2, width * 0.5)) {
-      // The whole slot is too close: stand at the edge of the clear zone on the slot's side.
-      const side = x + width / 2 < noOak.x ? -1 : 1
-      x = Math.max(margin, Math.min(worldWidth - margin - width, noOak.x + side * (noOak.halfWidth + width) - width / 2))
-    }
     const baseX = x + width / 2
     const baseGround = groundYAt(terrain, baseX)
-    trees.push({
+    return {
       shape: generateOak(
         viewHeight * SCENERY_SCALE,
         trunkWidth,
@@ -195,9 +202,65 @@ function spawnOakTrees(worldWidth: number, viewHeight: number, keepOut: Span, te
       trunkWidth: width,
       trunkHeight,
       crownRadius,
-    })
+    }
   }
 
+  /** An oak near one edge of the world: its region's edge a random distance (at most 4 bird widths, sometimes past the edge) from it. */
+  const buildEdgeOak = (side: -1 | 1, old: boolean): OakTree => {
+    const width = old ? trunkWidth * 2 : trunkWidth
+    const maxEdge = OAK_EDGE_REGION_IN_SIZES * playerSize
+    const want = randRange(-0.2 * crownRadius, maxEdge * 0.85)
+    const centreFor = (reach: number): number => {
+      const centre = side < 0 ? want + reach : worldWidth - want - reach
+      return Math.max(width, Math.min(worldWidth - width, centre))
+    }
+    // The region's reach is only known once the tree is made: make it where it is expected, then place it
+    // by its real reach (again from scratch when roots follow the ground, and when it moved much).
+    let tree = build(centreFor(crownRadius * 0.5) - width / 2, old)
+    const first = tree.x + width / 2
+    const target = centreFor(acornReach(tree))
+    if (old || Math.abs(target - first) > playerSize) {
+      tree = build(target - width / 2, old)
+    }
+    const centre = centreFor(acornReach(tree))
+    const edge = side < 0 ? centre - acornReach(tree) : worldWidth - (centre + acornReach(tree))
+    // Rarely the remade tree's reach differs enough to leave it a little too far: move it (as it is) closer.
+    const moved = edge > maxEdge ? centre + (edge - maxEdge * 0.9) * side : centre
+    tree.x = Math.max(width, Math.min(worldWidth - width, moved)) - width / 2
+    return tree
+  }
+
+  const trees: OakTree[] = []
+  // One of the oaks is an old-growth tree: twice the trunk width, branches 1.5x as thick, and
+  // buttress roots that spread at least a bird's size past the trunk on each side.
+  const oldGrowthIndex = Math.floor(Math.random() * OAK_TREE_COUNT)
+  const edgeIndex = OAK_TREE_COUNT > 1 ? [0, OAK_TREE_COUNT - 1] : [0]
+  const leftTree = buildEdgeOak(-1, oldGrowthIndex === 0)
+  const rightTree = OAK_TREE_COUNT > 1 ? buildEdgeOak(1, oldGrowthIndex === OAK_TREE_COUNT - 1) : null
+  // The others share what lies between the two edge oaks (their crowns' reach apart).
+  const innerCount = Math.max(0, OAK_TREE_COUNT - edgeIndex.length)
+  const innerStart = leftTree.x + leftTree.trunkWidth + crownRadius * 0.5
+  const innerEnd = (rightTree ? rightTree.x : worldWidth) - crownRadius * 0.5
+  const slot = Math.max(trunkWidth, innerEnd - innerStart) / Math.max(1, innerCount)
+  trees.push(leftTree)
+  for (let i = 1; i <= innerCount; i += 1) {
+    const old = i === oldGrowthIndex
+    const width = old ? trunkWidth * 2 : trunkWidth
+    const slotStart = innerStart + (i - 1) * slot
+    let x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
+    for (let attempt = 0; attempt < 40 && blocked(noOak, x + width / 2, width * 0.5); attempt += 1) {
+      x = slotStart + randRange(slot * 0.12, slot * 0.88) - width / 2
+    }
+    if (blocked(noOak, x + width / 2, width * 0.5)) {
+      // The whole slot is too close: stand at the edge of the clear zone on the slot's side.
+      const side = x + width / 2 < noOak.x ? -1 : 1
+      x = Math.max(width, Math.min(worldWidth - width * 2, noOak.x + side * (noOak.halfWidth + width) - width / 2))
+    }
+    trees.push(build(x, old))
+  }
+  if (rightTree) {
+    trees.push(rightTree)
+  }
   return trees
 }
 
@@ -873,7 +936,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
   const width = viewHeight * TYPICAL_ASPECT_RATIO * WORLD_WIDTH_MULTIPLIER
   const groundY = height - groundHeight - bottomExtra
   const playerSize = playerSizeForView(viewHeight)
-  const terrain = buildTerrain(width, groundY, viewHeight)
+  const terrain = buildTerrain(width, groundY, viewHeight, creekEdgeMargin(viewHeight))
 
   const creekKeep = creekKeepOut(terrain.creek)
   const trees = spawnOakTrees(width, viewHeight, creekKeep, terrain)
