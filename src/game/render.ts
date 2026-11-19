@@ -576,11 +576,15 @@ function drawForest(
       // included, in the same share as the rest: tinted by a mask drawn over it instead, a soft edge pixel
       // kept its own brownish color and showed as a thin dark line along the ridge), then drawn as one.
       blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
-      const deviceScale = ctx.getTransform().a
+      // (At the layer's own resolution, like its images and rocks, so the melting snow's patches are as soft as the rest of it.)
+      const deviceScale = Math.min(ctx.getTransform().a, vegRes(layer))
       const sw = Math.ceil(viewWidth * deviceScale)
       const sh = Math.ceil(viewHeight * deviceScale)
+      // One scratch canvas per resolution, so that layers of different resolutions do not resize a shared one every frame.
+      let tintCanvas = tintCanvases.get(deviceScale)
       if (!tintCanvas) {
         tintCanvas = document.createElement('canvas')
+        tintCanvases.set(deviceScale, tintCanvas)
       }
       if (tintCanvas.width !== sw || tintCanvas.height !== sh) {
         tintCanvas.width = sw
@@ -867,8 +871,8 @@ function makeMask(strip: ForestStrip, color: string, scale: number, repeats = 1)
   return copy
 }
 
-/** A screen-sized scratch canvas where a far layer's ground is tinted before it is drawn (see `drawForest`). */
-let tintCanvas: HTMLCanvasElement | null = null
+/** Screen-sized scratch canvases (one per resolution) where a far layer's ground is tinted before it is drawn (see `drawForest`). */
+const tintCanvases = new Map<number, HTMLCanvasElement>()
 
 /** Pre-rendered forest layer: horizon, trees, bushes and logs drawn once into a wide bitmap. */
 type ForestStrip = {
