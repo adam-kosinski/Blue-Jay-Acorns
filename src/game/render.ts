@@ -660,52 +660,40 @@ function drawForest(
     bottom = Math.max(bottom, top + 1)
     const topX = layer.creek.x - camera.x * p
     if (top < limit && bottom > 0) {
-      // The ribbon is painted at the layer's resolution (on a scratch canvas) and drawn up to size, so that its
-      // edges are as soft as the layer's ground is: the farther back, the fuzzier.
+      // The ribbon's edge is made as soft as the layer's ground is (the farther back, the fuzzier): the path is
+      // filled, then stroked a few times with a faint, widening line, which spreads the edge outward.
       const ribbonRes = vegRes(layer)
       const mid = (top + bottom) / 2
       const topHalf = layer.creek.halfWidth
-      const left0 = Math.max(Math.min(topX - topHalf, bottomX - bottomHalf) - 3, -4)
-      const right0 = Math.min(Math.max(topX + topHalf, bottomX + bottomHalf) + 3, viewWidth + 4)
-      const top0 = Math.max(top - (index === 0 ? topHalf * 0.2 : 0) - 3, -4)
-      const bottom0 = Math.min(bottom + 4, viewHeight + 4)
-      if (right0 > left0 && bottom0 > top0) {
-        const rw = Math.ceil((right0 - left0) * ribbonRes)
-        const rh = Math.ceil((bottom0 - top0) * ribbonRes)
-        if (!ribbonCanvas) {
-          ribbonCanvas = document.createElement('canvas')
+      const water = ctx.createLinearGradient(0, top, 0, bottom)
+      water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
+      water.addColorStop(1, bottomColor)
+      ctx.fillStyle = water
+      // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
+      ctx.beginPath()
+      ctx.moveTo(topX - topHalf, top)
+      if (index === 0) {
+        // The farthest creek ends in a rounded head rather than a flat edge.
+        ctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
+      } else {
+        ctx.lineTo(topX + topHalf, top)
+      }
+      // Two pixels past the end, so neighbouring ribbons overlap and no hairline shows between them.
+      ctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom + 2)
+      ctx.lineTo(bottomX - bottomHalf, bottom + 2)
+      ctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
+      ctx.closePath()
+      ctx.fill()
+      const fuzz = (1 / ribbonRes - 1) * 1.6
+      if (fuzz > 0.5) {
+        ctx.save()
+        ctx.strokeStyle = water
+        ctx.globalAlpha = 0.2
+        for (let pass = 1; pass <= 3; pass += 1) {
+          ctx.lineWidth = fuzz * pass * 0.9
+          ctx.stroke()
         }
-        // (Only ever grown: resizing a canvas clears and reallocates it.)
-        if (ribbonCanvas.width < rw || ribbonCanvas.height < rh) {
-          ribbonCanvas.width = Math.max(ribbonCanvas.width, rw)
-          ribbonCanvas.height = Math.max(ribbonCanvas.height, rh)
-        }
-        const rctx = ribbonCanvas.getContext('2d')
-        if (rctx) {
-          rctx.setTransform(1, 0, 0, 1, 0, 0)
-          rctx.clearRect(0, 0, rw + 1, rh + 1)
-          rctx.setTransform(ribbonRes, 0, 0, ribbonRes, -left0 * ribbonRes, -top0 * ribbonRes)
-          const water = rctx.createLinearGradient(0, top, 0, bottom)
-          water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
-          water.addColorStop(1, bottomColor)
-          rctx.fillStyle = water
-          // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
-          rctx.beginPath()
-          rctx.moveTo(topX - topHalf, top)
-          if (index === 0) {
-            // The farthest creek ends in a rounded head rather than a flat edge.
-            rctx.quadraticCurveTo(topX, top - topHalf * 0.2, topX + topHalf, top)
-          } else {
-            rctx.lineTo(topX + topHalf, top)
-          }
-          // Two pixels past the end, so neighbouring ribbons overlap and no hairline shows between them.
-          rctx.bezierCurveTo(topX + topHalf, mid, bottomX + bottomHalf, mid, bottomX + bottomHalf, bottom + 2)
-          rctx.lineTo(bottomX - bottomHalf, bottom + 2)
-          rctx.bezierCurveTo(bottomX - bottomHalf, mid, topX - topHalf, mid, topX - topHalf, top)
-          rctx.closePath()
-          rctx.fill()
-          ctx.drawImage(ribbonCanvas, 0, 0, rw, rh, left0, top0, rw / ribbonRes, rh / ribbonRes)
-        }
+        ctx.restore()
       }
 
       // Rocks on the ground between this layer and the next: thickest along the creek's banks
@@ -772,16 +760,17 @@ function drawForest(
   ctx.imageSmoothingQuality = 'low'
 }
 
-/** A screen-sized scratch canvas the creek ribbons between the layers are painted on at the layers' resolution. */
-let ribbonCanvas: HTMLCanvasElement | null = null
+/** A far rock painted at its resolution, kept until what shows of it changes (see `drawFuzzyRock`). */
+type FuzzyRock = { canvas: HTMLCanvasElement; key: string; halfWidth: number; above: number; width: number; height: number; res: number }
 
-/** A small scratch canvas the far rocks are painted on at their layer's resolution. */
-let rockScratch: HTMLCanvasElement | null = null
+const fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
 
 /**
- * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel on a small scratch canvas and
- * drawn up to size (smoothed), so that it is as soft as the layer's images are, and as soft as the rocks
- * and ground next to it. A resolution at or above the screen's is drawn directly.
+ * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel into a small bitmap of its own
+ * and drawn up to size (smoothed), so that it is as soft as the layer's images are, and as soft as the ground
+ * next to it. The bitmap is kept and only remade when something that shows of the rock has changed (its size, the
+ * winter haze, its snow, each in steps of 1/24 or finer), so that most frames only draw it. A resolution at or
+ * above the screen's is drawn directly.
  *
  * @param ctx - 2D canvas context (the rock's coordinates are its coordinates).
  * @param rock - The rock (it is drawn by `drawRockSimple`).
@@ -798,37 +787,53 @@ function drawFuzzyRock(
   layer: ForestLayer,
   winter: number,
 ): void {
+  const direct = res >= ctx.getTransform().a * 0.97
   const { color, highlight } = rock
-  if (winter > 0) {
-    rock.color = winterHazed(color, layer, winter)
-    rock.highlight = winterHazed(highlight, layer, winter)
+  const hazed = (): void => {
+    if (winter > 0) {
+      rock.color = winterHazed(color, layer, winter)
+      rock.highlight = winterHazed(highlight, layer, winter)
+    }
   }
-  const pad = 3
-  const halfWidth = rock.rx * 1.4 + pad
-  const above = rock.ry * 1.7 + pad
-  const below = rock.ry * 0.6 + pad
-  const width = Math.ceil(halfWidth * 2 * res)
-  const height = Math.ceil((above + below) * res)
-  if (res >= ctx.getTransform().a * 0.97 || width > 640 || height > 320) {
+  if (direct) {
+    hazed()
     drawRockSimple(ctx, rock, groundY)
-  } else {
-    if (!rockScratch) {
-      rockScratch = document.createElement('canvas')
-      rockScratch.width = 640
-      rockScratch.height = 320
-    }
-    const sctx = rockScratch.getContext('2d')
-    if (sctx) {
-      const baseY = groundY + rock.ry * 0.4
-      sctx.setTransform(1, 0, 0, 1, 0, 0)
-      sctx.clearRect(0, 0, width + 1, height + 1)
-      sctx.setTransform(res, 0, 0, res, (halfWidth - rock.x) * res, (above - baseY) * res)
-      drawRockSimple(sctx, rock, groundY)
-      ctx.drawImage(rockScratch, 0, 0, width, height, rock.x - halfWidth, baseY - above, width / res, height / res)
-    }
+    rock.color = color
+    rock.highlight = highlight
+    return
   }
-  rock.color = color
-  rock.highlight = highlight
+  const baseY = groundY + rock.ry * 0.4
+  const layers = snowCapLayers(seasonNow)
+  const step = (value: number): number => Math.round(value * 24)
+  const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(winter * 32)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
+  let sprite = fuzzyRocks.get(rock)
+  if (!sprite || sprite.key !== key) {
+    const pad = 3
+    const halfWidth = rock.rx * 1.4 + pad
+    const above = rock.ry * 1.7 + pad
+    const below = rock.ry * 0.6 + pad
+    const width = Math.max(1, Math.ceil(halfWidth * 2 * res))
+    const height = Math.max(1, Math.ceil((above + below) * res))
+    const canvas = sprite?.canvas ?? document.createElement('canvas')
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width
+      canvas.height = height
+    }
+    const sctx = canvas.getContext('2d')
+    if (!sctx) {
+      return
+    }
+    sctx.setTransform(1, 0, 0, 1, 0, 0)
+    sctx.clearRect(0, 0, width, height)
+    sctx.setTransform(res, 0, 0, res, (halfWidth - rock.x) * res, (above - baseY) * res)
+    hazed()
+    drawRockSimple(sctx, rock, groundY)
+    rock.color = color
+    rock.highlight = highlight
+    sprite = { canvas, key, halfWidth, above, width, height, res }
+    fuzzyRocks.set(rock, sprite)
+  }
+  ctx.drawImage(sprite.canvas, 0, 0, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
 }
 
 /**
