@@ -224,8 +224,11 @@ export const NPC_COUNT = 3
 /** Squirrel size relative to the player's bird. */
 export const SQUIRREL_SIZE_FRACTION = 1
 
+/** The least secrecy an NPC jay can have (each draws its own between this and 1). */
+export const NPC_MIN_SECRECY = 0.3
+
 /** Every squirrel's secrecy. */
-export const SQUIRREL_SECRECY = 0.5
+export const SQUIRREL_SECRECY = 0.7
 
 /** Squirrels' hunger bar is this many times as large: it drains this much slower and an acorn fills this much less of it. */
 export const SQUIRREL_HUNGER_SCALE = 2

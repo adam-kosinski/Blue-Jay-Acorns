@@ -554,4 +554,11 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - `YEAR_SECONDS` 300, so a segment is 37.5 s. Things in real seconds (the 30 s snow fade-in, snowfall bursts, the drop-rate wobble's periods, hunger drain) are unchanged. The drop rate needs no scaling: hunger drains per real second, so the animals' need per second is the same, and the fall surplus that stocks up for winter shrinks together with the winter it must last through (both halved).
 
 ## 7.5 minutes, hunger drains half as fast
-- `YEAR_SECONDS` 450 (segments 56.25 s); `HUNGER_DRAIN_SECONDS` 45 (was 60, briefly 120 by mistake: a third faster drain than the original). The base acorn drop chance is derived from the drain time (see `ACORN_DROP_CHANCE_PER_SECOND`), so it rose by itself by a third per second: the nutrition the animals need per second rose, and the supply follows (the seasonal trend and the 2/3 factor are unchanged).
+- `YEAR_SECONDS` 450 (segments 56.25 s); `HUNGER_DRAIN_SECONDS` 45 (was 60, briefly 120 by mistake: the original drains in 60 s: a third faster now). The base acorn drop chance is derived from the drain time (see `ACORN_DROP_CHANCE_PER_SECOND`), so it rose by itself by a third per second: the nutrition the animals need per second rose, and the supply follows (the seasonal trend and the 2/3 factor are unchanged).
+
+## Secrecy: NPC jays at least 0.3, squirrels 0.7
+- `NPC_MIN_SECRECY` 0.3: each jay draws its secrecy uniformly between 0.3 and 1. `SQUIRREL_SECRECY` is 0.7 (was 0.5).
+
+## One control for pick up and bury/dig
+- Left Shift / left click: holding an acorn buries it; otherwise a free acorn in reach is picked up, and if there is none the bird digs. S no longer picks up (it only descends), and right click only eats (E). The `pickup` key edge remains in `KeyEdges` but nothing sets it.
+- The controls panel (bottom left) lists Shift / Left click (pick up, bury, dig up) and E / Right click (eat); it is a wider rectangle now.

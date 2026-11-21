@@ -313,8 +313,14 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
     if (player.held) {
       startBury(player, world)
     } else {
-      // Dig where the beak is: the closest buried acorn in range of the beak tip comes up.
-      startDig(player, world)
+      // Empty-beaked: pick up a free acorn in reach if there is one, else dig where the beak is (the
+      // closest buried acorn in range of the beak tip comes up).
+      const free = nearestAcorn(player, world, 'ground')
+      if (free) {
+        startPickup(player, free)
+      } else {
+        startDig(player, world)
+      }
     }
   }
 }

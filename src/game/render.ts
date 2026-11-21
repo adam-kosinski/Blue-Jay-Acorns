@@ -6299,18 +6299,19 @@ function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
 const STARVING_LEVEL = 0.2
 
 /**
- * Draws the controls cheat sheet as a square overlay in the bottom left corner.
+ * Draws the controls cheat sheet as an overlay in the bottom left corner.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param viewHeight - Viewport height.
  */
 function drawControlsOverlay(ctx: CanvasRenderingContext2D, viewHeight: number): void {
-  const side = 196
+  const width = 330
+  const height = 150
   const x = 16
-  const y = viewHeight - side - 16
+  const y = viewHeight - height - 16
   ctx.fillStyle = 'rgba(27, 40, 56, 0.72)'
   ctx.beginPath()
-  ctx.roundRect(x, y, side, side, 10)
+  ctx.roundRect(x, y, width, height, 10)
   ctx.fill()
   ctx.textAlign = 'left'
   ctx.fillStyle = '#f4efe4'
@@ -6318,10 +6319,9 @@ function drawControlsOverlay(ctx: CanvasRenderingContext2D, viewHeight: number):
   ctx.fillText('Controls', x + 14, y + 28)
   const rows: [string, string][] = [
     ['WASD', 'move'],
-    ['S (tap)', 'pick up'],
     ['Q', 'drop'],
-    ['Shift', 'bury / dig up'],
-    ['E', 'eat when hungry'],
+    ['Shift / Left click', 'pick up, bury, dig up'],
+    ['E / Right click', 'eat when hungry'],
   ]
   ctx.font = '15px Georgia, serif'
   rows.forEach(([key, action], index) => {
@@ -6329,7 +6329,7 @@ function drawControlsOverlay(ctx: CanvasRenderingContext2D, viewHeight: number):
     ctx.fillStyle = '#f2c230'
     ctx.fillText(key, x + 14, rowY)
     ctx.fillStyle = '#f4efe4'
-    ctx.fillText(action, x + 84, rowY)
+    ctx.fillText(action, x + 150, rowY)
   })
 }
 

@@ -1,11 +1,11 @@
 import type { KeyEdges, KeyState } from './types'
 
-/** One-shot actions: S (a fresh tap) picks up, Q drops, left Shift or the left mouse button buries / digs up, E or the right mouse button eats / picks up. */
+/** One-shot actions: Q drops, left Shift or the left mouse button picks up a free acorn in reach, else buries (holding one) / digs up, E or the right mouse button eats. */
 type EdgeKey = keyof KeyEdges
 
 /**
- * Creates mutable WASD key state plus one-shot S / Q / left Shift / E presses, and attaches window
- * listeners. S is both held (descend while flying) and a one-shot tap (pick up while standing).
+ * Creates mutable WASD key state plus one-shot Q / left Shift / E presses (and mouse clicks), and attaches
+ * window listeners.
  *
  * `edges` records fresh key-downs (ignoring auto-repeat); the game loop must
  * call `clearEdges` once per frame after consuming them.
@@ -36,9 +36,6 @@ export function createKeyState(): {
    * Maps a KeyboardEvent to a one-shot action, or null if unrelated.
    */
   function edgeFor(event: KeyboardEvent): EdgeKey | null {
-    if (event.code === 'KeyS') {
-      return 'pickup'
-    }
     if (event.code === 'KeyQ') {
       return 'drop'
     }
@@ -88,7 +85,7 @@ export function createKeyState(): {
     return !(event.target instanceof Element && event.target.closest('button, input, label, fieldset, select'))
   }
 
-  /** Left click buries / digs up (like left Shift), right click eats (like E) or picks up (like S). */
+  /** Left click buries / digs up (like left Shift), right click eats (like E). */
   function onMouseDown(event: MouseEvent): void {
     if (!onGame(event)) {
       return
@@ -96,9 +93,7 @@ export function createKeyState(): {
     if (event.button === 0) {
       edges.bury = true
     } else if (event.button === 2) {
-      // Eats a held acorn, or else picks one up (each does nothing in the other's situation).
       edges.e = true
-      edges.pickup = true
     }
   }
 

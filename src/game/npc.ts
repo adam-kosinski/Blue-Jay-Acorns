@@ -19,6 +19,7 @@ import {
   SQUIRREL_IDLE_ENTER_HUNGER,
   SQUIRREL_IDLE_LEAVE_HUNGER,
   SQUIRREL_NOSE_REACH_X,
+  NPC_MIN_SECRECY,
   SQUIRREL_SECRECY,
   SQUIRREL_SIZE_FRACTION,
   SQUIRREL_SPEED_SCALE,
@@ -206,7 +207,7 @@ export function createNpcs(world: World, size: number): Npc[] {
     bird.y = groundUnder(bird, world) - size
     bird.facing = randomDirection()
     bird.hunger = randRange(0.4, 1)
-    npcs.push(newNpc(bird, Math.random()))
+    npcs.push(newNpc(bird, randRange(NPC_MIN_SECRECY, 1)))
   }
   return npcs
 }
