@@ -549,3 +549,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## The player may eat below 4/5 hunger
 - `PLAYER_HUNGER_THRESHOLD` = 4/5 (eating allowed, bar yellow, marker on the bar) for the player; other birds keep `HUNGER_THRESHOLD` = 2/3. `updateHunger` takes the threshold as a parameter.
 - Right click also picks up an acorn (when none is held; with one held it eats).
+
+## The game is 5 minutes (was 10)
+- `YEAR_SECONDS` 300, so a segment is 37.5 s. Things in real seconds (the 30 s snow fade-in, snowfall bursts, the drop-rate wobble's periods, hunger drain) are unchanged. The drop rate needs no scaling: hunger drains per real second, so the animals' need per second is the same, and the fall surplus that stocks up for winter shrinks together with the winter it must last through (both halved).
