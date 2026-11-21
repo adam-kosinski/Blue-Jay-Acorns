@@ -34,13 +34,13 @@ function loadPauseHunger(): boolean {
 }
 
 /**
- * Reads whether the debug panel was left open (it is open by default).
+ * Reads whether the debug panel was left open (it is closed by default).
  */
 function loadDebugOpen(): boolean {
   try {
-    return window.localStorage.getItem(DEBUG_OPEN_STORAGE_KEY) !== 'false'
+    return window.localStorage.getItem(DEBUG_OPEN_STORAGE_KEY) === 'true'
   } catch {
-    return true
+    return false
   }
 }
 
