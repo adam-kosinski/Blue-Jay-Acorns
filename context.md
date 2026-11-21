@@ -548,3 +548,4 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## The player may eat below 4/5 hunger
 - `PLAYER_HUNGER_THRESHOLD` = 4/5 (eating allowed, bar yellow, marker on the bar) for the player; other birds keep `HUNGER_THRESHOLD` = 2/3. `updateHunger` takes the threshold as a parameter.
+- Right click also picks up an acorn (when none is held; with one held it eats).
