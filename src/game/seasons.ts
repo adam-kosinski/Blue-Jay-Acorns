@@ -1,11 +1,11 @@
 /**
  * The seasons: a timeline of eight equal segments (summer, three of fall, three of winter, spring) that
- * the game clock walks along once, from the start of summer to the end of spring (5 minutes). The season sets the base
+ * the game clock walks along once, from the start of summer to the end of spring (7.5 minutes). The season sets the base
  * acorn drop rate (see `baseDropRate`).
  */
 
 /** Seconds from the start of summer to the end of spring. */
-export const YEAR_SECONDS = 300
+export const YEAR_SECONDS = 450
 
 /** Seconds in one segment of the timeline (summer and spring are as long as one part of fall or winter). */
 export const SEGMENT_SECONDS = YEAR_SECONDS / 8

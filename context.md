@@ -552,3 +552,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## The game is 5 minutes (was 10)
 - `YEAR_SECONDS` 300, so a segment is 37.5 s. Things in real seconds (the 30 s snow fade-in, snowfall bursts, the drop-rate wobble's periods, hunger drain) are unchanged. The drop rate needs no scaling: hunger drains per real second, so the animals' need per second is the same, and the fall surplus that stocks up for winter shrinks together with the winter it must last through (both halved).
+
+## 7.5 minutes, hunger drains half as fast
+- `YEAR_SECONDS` 450 (segments 56.25 s); `HUNGER_DRAIN_SECONDS` 120 (was 60). The base acorn drop chance is derived from the drain time (see `ACORN_DROP_CHANCE_PER_SECOND`), so it fell by itself to half per second: the nutrition the animals need per second halved, and the supply follows (the seasonal trend and the 2/3 factor are unchanged).
