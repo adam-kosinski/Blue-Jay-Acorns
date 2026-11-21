@@ -204,7 +204,7 @@ export const GROUND_COLOR = '#7b5232'
 export const FOREST_HAZE_COLOR = '#cfe2c6'
 
 /** Seconds for a full hunger bar to drain to empty. */
-export const HUNGER_DRAIN_SECONDS = 120
+export const HUNGER_DRAIN_SECONDS = 45
 
 /** Hunger level (0-1) below which the bar turns yellow and eating is allowed (for the other birds; the player's is `PLAYER_HUNGER_THRESHOLD`). */
 export const HUNGER_THRESHOLD = 2 / 3
