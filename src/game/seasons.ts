@@ -237,8 +237,11 @@ const WAVES: [number, number][] = [
 /** The trend's peak, in the middle of mid fall (sized so the acorns that fall roughly match what the animals need). */
 const PEAK_RATE = 2.4
 
+/** The timeline's rates (the default setting) are this share of what the trend below says (it was lowered by a third). */
+const TIMELINE_RATE_FACTOR = 2 / 3
+
 /** Highest base drop rate the trend and wobble can reach (the graph's scale). */
-export const MAX_BASE_DROP_RATE = PEAK_RATE * (1 + WOBBLE)
+export const MAX_BASE_DROP_RATE = PEAK_RATE * TIMELINE_RATE_FACTOR * (1 + WOBBLE)
 
 /**
  * A new clock at the start of summer with its own random wobble.
@@ -302,7 +305,7 @@ export function trendDropRate(time: number): number {
  * @param time - Seconds along the timeline.
  */
 export function baseDropRate(clock: SeasonClock, time: number): number {
-  const trend = trendDropRate(time)
+  const trend = trendDropRate(time) * TIMELINE_RATE_FACTOR
   if (trend <= 0) {
     return 0
   }

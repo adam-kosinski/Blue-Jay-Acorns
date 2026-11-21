@@ -10,7 +10,6 @@ import {
   BURIAL_HOP_RANGE_IN_SIZES,
   BURIAL_HOPS_TO_HIDE,
   BURY_DURATION,
-  DIG_RESPONSE_IN_SIZES,
   KICKED_LEAVES_LIMIT,
   KICKED_LEAF_DENSITY_PER_SIZE,
   LEAF_COLORS,
@@ -19,6 +18,7 @@ import {
   SNOW_PUFFS_PER_HOP,
   acornRadiusForPlayer,
 } from './constants'
+import { digRange } from './burial'
 import { SNOW_PARTICLE_TONES, snowAt, snowKickShare } from './snow'
 import { groundYAt, inWater } from './terrain'
 import type { Acorn, KeyEdges, Player, World } from './types'
@@ -147,7 +147,7 @@ function closestBuried(
   x: number,
   avoidOwn: boolean,
 ): { nearest: Acorn | null; ownInRange: boolean } {
-  const range = DIG_RESPONSE_IN_SIZES * digger.size
+  const range = digRange(world, digger)
   let nearest: Acorn | null = null
   let nearestDist = range
   let ownInRange = false
@@ -225,7 +225,7 @@ export function updateAction(player: Player, world: World, dt: number): void {
     const acorn = action.acorn
     if (action.kind === 'dig') {
       // The buried acorn closest to the beak (now on the target the bird shuffled to) responds.
-      const range = DIG_RESPONSE_IN_SIZES * player.size
+      const range = digRange(world, player)
       const { nearest, ownInRange } = closestBuried(world, player, action.spotX, action.avoidOwn)
       if (nearest && !player.held) {
         nearest.state = 'held'

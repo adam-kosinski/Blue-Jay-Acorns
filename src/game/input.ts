@@ -1,6 +1,6 @@
 import type { KeyEdges, KeyState } from './types'
 
-/** One-shot actions: S (a fresh tap) picks up, Q drops, left Shift buries / digs up, E eats. */
+/** One-shot actions: S (a fresh tap) picks up, Q drops, left Shift or the left mouse button buries / digs up, E or the right mouse button eats. */
 type EdgeKey = keyof KeyEdges
 
 /**
@@ -83,8 +83,34 @@ export function createKeyState(): {
     }
   }
 
+  /** Whether a mouse event landed on the game itself (not on the debug panel, the Restart button, ...). */
+  function onGame(event: MouseEvent): boolean {
+    return !(event.target instanceof Element && event.target.closest('button, input, label, fieldset, select'))
+  }
+
+  /** Left click buries / digs up (like left Shift), right click eats (like E). */
+  function onMouseDown(event: MouseEvent): void {
+    if (!onGame(event)) {
+      return
+    }
+    if (event.button === 0) {
+      edges.bury = true
+    } else if (event.button === 2) {
+      edges.e = true
+    }
+  }
+
+  /** No browser menu on a right click over the game. */
+  function onContextMenu(event: MouseEvent): void {
+    if (onGame(event)) {
+      event.preventDefault()
+    }
+  }
+
   window.addEventListener('keydown', onKeyDown)
   window.addEventListener('keyup', onKeyUp)
+  window.addEventListener('mousedown', onMouseDown)
+  window.addEventListener('contextmenu', onContextMenu)
 
   return {
     keys,
@@ -98,6 +124,8 @@ export function createKeyState(): {
     dispose: () => {
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('contextmenu', onContextMenu)
     },
   }
 }

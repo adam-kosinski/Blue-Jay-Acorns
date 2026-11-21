@@ -4,7 +4,7 @@ import {
   EAT_DURATION,
   FOREST_HAZE_COLOR,
   GROUND_COLOR,
-  HUNGER_THRESHOLD,
+  PLAYER_HUNGER_THRESHOLD,
   NOTICE_LINE_FADE_SECONDS,
   OAK_TONES,
   PLAYER_COLOR,
@@ -6352,7 +6352,7 @@ function drawHungerBar(
   const h = 32
   const x = (viewWidth - w) / 2
   const y = viewHeight - 52
-  const hungry = player.hunger < HUNGER_THRESHOLD
+  const hungry = player.hunger < PLAYER_HUNGER_THRESHOLD
   const starving = player.hunger <= STARVING_LEVEL
   const flashOn = starving && Math.floor(performance.now() / 300) % 2 === 0
 
@@ -6369,8 +6369,8 @@ function drawHungerBar(
   ctx.strokeStyle = '#fff'
   ctx.lineWidth = 3
   ctx.beginPath()
-  ctx.moveTo(x + w * HUNGER_THRESHOLD, y - 8)
-  ctx.lineTo(x + w * HUNGER_THRESHOLD, y + h + 8)
+  ctx.moveTo(x + w * PLAYER_HUNGER_THRESHOLD, y - 8)
+  ctx.lineTo(x + w * PLAYER_HUNGER_THRESHOLD, y + h + 8)
   ctx.stroke()
 
   ctx.fillStyle = starving ? (flashOn ? '#ff3b30' : '#f4efe4') : '#f4efe4'

@@ -131,6 +131,9 @@ export const HOVER_OFFSET_IN_SIZES = 140 / 48 / 3
  */
 export const DIG_RESPONSE_IN_SIZES = 0.25
 
+/** Other birds (and squirrels) dig over this many times the player's dig range. */
+export const NPC_DIG_RANGE_FACTOR = 2
+
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
 export const REACH_IN_SIZES = 0.9
 
@@ -203,8 +206,11 @@ export const FOREST_HAZE_COLOR = '#cfe2c6'
 /** Seconds for a full hunger bar to drain to empty. */
 export const HUNGER_DRAIN_SECONDS = 60
 
-/** Hunger level (0-1) below which the bar turns yellow and eating is allowed. */
+/** Hunger level (0-1) below which the bar turns yellow and eating is allowed (for the other birds; the player's is `PLAYER_HUNGER_THRESHOLD`). */
 export const HUNGER_THRESHOLD = 2 / 3
+
+/** The same for the player. */
+export const PLAYER_HUNGER_THRESHOLD = 4 / 5
 
 /** Hunger restored by eating one acorn (a third of a full bar). */
 export const ACORN_NUTRITION = 1 / 3

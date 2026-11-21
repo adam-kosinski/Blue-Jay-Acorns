@@ -16,6 +16,7 @@ import type { KeyEdges, Player, World } from './types'
  * @param world - Acorn container (eaten acorns are removed).
  * @param dt - Elapsed seconds.
  * @param drain - False to hold hunger steady (the debug "pause hunger" toggle); eating still works.
+ * @param threshold - Hunger level below which the bird may eat (the player's is higher).
  */
 export function updateHunger(
   player: Player,
@@ -23,6 +24,7 @@ export function updateHunger(
   world: World,
   dt: number,
   drain = true,
+  threshold = HUNGER_THRESHOLD,
 ): void {
   if (player.eatTimer > 0) {
     player.eatTimer -= dt
@@ -35,7 +37,7 @@ export function updateHunger(
         player.hunger = Math.min(1, player.hunger + ACORN_NUTRITION / player.hungerScale)
       }
     }
-  } else if (edges.e && player.held && !player.action && player.hunger < HUNGER_THRESHOLD) {
+  } else if (edges.e && player.held && !player.action && player.hunger < threshold) {
     player.eatTimer = EAT_DURATION
   }
   if (drain) {

@@ -540,3 +540,11 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## The game is won at the end of spring
 - The season clock now runs to the end of spring (`SEASON_AUTO_END_SECONDS = YEAR_SECONDS`); `advanceSeason` returns true when it gets there by itself.
 - `GameCanvas` keeps a `won` flag (set when the clock reaches the end and the jay is not starving; stops the simulation like `gameOver`; reset by Restart). `renderScene` takes an outcome (`'playing' | 'lost' | 'won'`), and `drawGameOver` shows the same card with "Congratulations you made it to spring!" and '"Yay!" says your blue jay' when won.
+
+## Mouse buttons, lower default drop rate, wider NPC dig range
+- Left click (on the game, not on buttons/panels) buries / digs up like left Shift; right click eats like E (browser menu suppressed over the game). See `input.ts`.
+- The timeline (default drop setting) is scaled by `TIMELINE_RATE_FACTOR` (first 0.75, now 2/3) in `seasons.ts`; the fixed debug rates are unchanged.
+- Other birds and squirrels have twice the player's dig range (`NPC_DIG_RANGE_FACTOR`, `digRange` in `burial.ts`; used by digging, the burial-quality tolerance and the empty-dig forgetting).
+
+## The player may eat below 4/5 hunger
+- `PLAYER_HUNGER_THRESHOLD` = 4/5 (eating allowed, bar yellow, marker on the bar) for the player; other birds keep `HUNGER_THRESHOLD` = 2/3. `updateHunger` takes the threshold as a parameter.

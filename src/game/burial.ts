@@ -6,6 +6,7 @@ import {
   BURIAL_QUALITY_OWN_SITE_PENALTY,
   BURIAL_QUALITY_UNSEEN_PENALTY,
   DIG_RESPONSE_IN_SIZES,
+  NPC_DIG_RANGE_FACTOR,
   TYPICAL_VIEW_WIDTH_IN_SIZES,
 } from './constants'
 import { groundYAt, inWater } from './terrain'
@@ -70,6 +71,18 @@ export function standingFacings(world: World, bird: Player, x: number): (1 | -1)
 }
 
 /**
+ * How far (world pixels) from the beak a buried acorn still responds to a dig by this bird: the player's range,
+ * or `NPC_DIG_RANGE_FACTOR` times it for every other bird.
+ *
+ * @param world - The world.
+ * @param bird - The digging bird.
+ */
+export function digRange(world: World, bird: Player): number {
+  const other = world.npcs.some((npc) => npc.bird === bird) || world.squirrels.some((npc) => npc.bird === bird)
+  return DIG_RESPONSE_IN_SIZES * bird.size * (other ? NPC_DIG_RANGE_FACTOR : 1)
+}
+
+/**
  * How good a spot is for `burier` to bury an acorn, from 0 (terrible) to 1 (ideal). Starting at 1:
  * every other bird (the player included) within half a screen width of the spot, wherever the burier
  * is, lowers it by 0.8 if that bird can see the spot (its view reaches farther ahead than behind) and
@@ -122,7 +135,7 @@ export function burialQuality(
   // Near a place the burier remembers burying an acorn: the full penalty at the place itself, easing
   // linearly to nothing two dig tolerances away (the farthest apart two spots can be and both be
   // dug from one standing place).
-  const tolerance = DIG_RESPONSE_IN_SIZES * size
+  const tolerance = digRange(world, burier)
   let own = 0
   for (const spot of burier.burials) {
     own = Math.max(own, BURIAL_QUALITY_OWN_SITE_PENALTY * (1 - Math.abs(spot - x) / (2 * tolerance)))

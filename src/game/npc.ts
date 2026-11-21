@@ -2,7 +2,6 @@ import {
   BURIAL_HOPS_TO_HIDE,
   BURIAL_QUALITY_DISPLAY_SECONDS,
   NPC_AVOID_JAY_TURN_PROBABILITY_PER_SECOND,
-  DIG_RESPONSE_IN_SIZES,
   FOLLOW_COOLDOWN_SECONDS,
   FOLLOW_DISTANCE_MAX_IN_SIZES,
   FOLLOW_DISTANCE_MIN_IN_SIZES,
@@ -45,7 +44,7 @@ import {
   updateTreePhase,
 } from './squirrel'
 import { forgetBurial, startBury, startDig, startPickup, trackHops, updateAction } from './acorns'
-import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, standingFacings } from './burial'
+import { BURIAL_QUALITY_RANGE_IN_SIZES, burialQuality, digRange, standingFacings } from './burial'
 import { burialSiteVisibility, inView } from './vision'
 import { updateHunger } from './hunger'
 import { groundYAt, inWater, nearCreek } from './terrain'
@@ -1827,7 +1826,7 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     if (bird.digFailX !== null) {
       // A dig that comes up empty removes the other-bird burial sites within range of it.
       const failX = bird.digFailX
-      const range = DIG_RESPONSE_IN_SIZES * bird.size
+      const range = digRange(world, bird)
       npc.sites = npc.sites.filter((site) => Math.abs(site.x - failX) > range)
       bird.digFailX = null
     }

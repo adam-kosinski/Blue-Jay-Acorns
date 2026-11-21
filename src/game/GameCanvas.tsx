@@ -7,6 +7,7 @@ import {
   LOGICAL_VIEW_HEIGHT,
   playerSizeForView,
   type AcornDropMode,
+  PLAYER_HUNGER_THRESHOLD,
 } from './constants'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
@@ -196,7 +197,7 @@ export function GameCanvas() {
         updatePlayer(player, keys, dt, world)
         updateAction(player, world, dt)
         handleAcornActions(player, edges, world)
-        updateHunger(player, edges, world, dt, !pauseHungerRef.current)
+        updateHunger(player, edges, world, dt, !pauseHungerRef.current, PLAYER_HUNGER_THRESHOLD)
         world.time += dt
         updateNpcs(world, dt, player)
         // The season sets the acorn rate unless the debug panel fixes it.
