@@ -122,6 +122,7 @@ export function GameCanvas() {
     let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
     let gameOver = false
+    let won = false
     let loading = true
     let loadedFrames = 0
     let warmUp: Generator<void> | null = warmUpScene(
@@ -141,6 +142,7 @@ export function GameCanvas() {
       player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
       warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
       gameOver = false
+      won = false
       loading = true
       loadedFrames = 0
       setLoading(true)
@@ -178,7 +180,7 @@ export function GameCanvas() {
         // images made in the background are in place.
         if (!warmUp) {
           const camera = cameraForPlayer(player, world, width, height)
-          renderScene(ctx, width, height, world, camera, player, false)
+          renderScene(ctx, width, height, world, camera, player, 'playing')
           loadedFrames += 1
           if (loadedFrames > 4 && forestReady(world, camera.x, width)) {
             loading = false
@@ -189,7 +191,7 @@ export function GameCanvas() {
         animationId = window.requestAnimationFrame(frame)
         return
       }
-      if (!gameOver) {
+      if (!gameOver && !won) {
         player.invisible = invisibleRef.current
         updatePlayer(player, keys, dt, world)
         updateAction(player, world, dt)
@@ -198,7 +200,7 @@ export function GameCanvas() {
         world.time += dt
         updateNpcs(world, dt, player)
         // The season sets the acorn rate unless the debug panel fixes it.
-        advanceSeason(world.season, dt)
+        const reachedEnd = advanceSeason(world.season, dt)
         updateTreeDrops(
           world,
           player.size,
@@ -208,6 +210,8 @@ export function GameCanvas() {
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
+        // Surviving to the end of spring wins the game.
+        won = reachedEnd && !gameOver
         // How many of the player's buried acorns are still buried (shown in the debug panel).
         const buried = world.acorns.reduce(
           (count, acorn) => (acorn.state === 'buried' && acorn.owner === player ? count + 1 : count),
@@ -220,7 +224,7 @@ export function GameCanvas() {
       }
       clearEdges()
       const camera = cameraForPlayer(player, world, width, height)
-      renderScene(ctx, width, height, world, camera, player, gameOver)
+      renderScene(ctx, width, height, world, camera, player, gameOver ? 'lost' : won ? 'won' : 'playing')
       animationId = window.requestAnimationFrame(frame)
     }
 

@@ -10,8 +10,8 @@ export const YEAR_SECONDS = 600
 /** Seconds in one segment of the timeline (summer and spring are as long as one part of fall or winter). */
 export const SEGMENT_SECONDS = YEAR_SECONDS / 8
 
-/** The timeline stops advancing by itself in the middle of spring. */
-export const SEASON_AUTO_END_SECONDS = SEGMENT_SECONDS * 7.5
+/** The timeline advances by itself until the end of spring, where the game is won. */
+export const SEASON_AUTO_END_SECONDS = YEAR_SECONDS
 
 /** The segments of the timeline, in order, with the colours of their rectangles. */
 export const SEASON_SEGMENTS: { name: string; season: 'summer' | 'fall' | 'winter' | 'spring'; color: string; text: string }[] = [
@@ -251,15 +251,18 @@ export function createSeasonClock(): SeasonClock {
 }
 
 /**
- * Moves the clock forward, stopping at mid-spring (a clock already past it, set by hand, stays put).
+ * Moves the clock forward, stopping at the end of spring (a clock already there, set by hand, stays put).
  *
  * @param clock - The clock.
  * @param dt - Elapsed seconds.
+ * @returns True if it has just reached the end of spring by itself.
  */
-export function advanceSeason(clock: SeasonClock, dt: number): void {
+export function advanceSeason(clock: SeasonClock, dt: number): boolean {
   if (clock.time < SEASON_AUTO_END_SECONDS) {
     clock.time = Math.min(SEASON_AUTO_END_SECONDS, clock.time + dt)
+    return clock.time >= SEASON_AUTO_END_SECONDS
   }
+  return false
 }
 
 /**

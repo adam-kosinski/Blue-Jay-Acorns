@@ -188,7 +188,7 @@ function backdropColors(time: number): [string, string] {
  * @param world - Generated play space.
  * @param camera - Current view origin in world space.
  * @param player - Current player pose.
- * @param gameOver - True to cover the scene with the game-over screen.
+ * @param outcome - 'lost' or 'won' to cover the scene with the game-over or the victory screen.
  */
 export function renderScene(
   ctx: CanvasRenderingContext2D,
@@ -197,7 +197,7 @@ export function renderScene(
   world: World,
   camera: Camera,
   player: Player,
-  gameOver = false,
+  outcome: 'playing' | 'lost' | 'won' = 'playing',
 ): void {
   // The backdrop is the colour of the tree leaves as the farthest layer's haze would show them,
   // darker leaves at the top fading to lighter ones lower down, so layers melt into it.
@@ -282,11 +282,11 @@ export function renderScene(
   drawControlsOverlay(ctx, viewHeight)
   lastSceneMs = performance.now() - sceneStart
 
-  if (gameOver) {
+  if (outcome !== 'playing') {
     if (gameOverSince === 0) {
       gameOverSince = performance.now()
     }
-    drawGameOver(ctx, viewWidth, viewHeight, performance.now() - gameOverSince)
+    drawGameOver(ctx, viewWidth, viewHeight, performance.now() - gameOverSince, outcome === 'won')
   } else {
     gameOverSince = 0
   }
@@ -296,19 +296,22 @@ export function renderScene(
 let gameOverSince = 0
 
 /**
- * Draws the game-over screen: a vignette, a parchment card that eases in with the message,
- * a divider flanked by acorns, and a pulsing pointer to the Restart button.
+ * Draws the game-over screen (or, when the game was won, the victory screen with the same look): a vignette,
+ * a parchment card that eases in with the message, a divider flanked by acorns, and a pulsing pointer to the
+ * Restart button.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param viewWidth - Viewport width.
  * @param viewHeight - Viewport height.
  * @param elapsed - Milliseconds since the screen appeared (drives the fade-in).
+ * @param won - True for the victory screen (the player made it to the end of spring).
  */
 function drawGameOver(
   ctx: CanvasRenderingContext2D,
   viewWidth: number,
   viewHeight: number,
   elapsed: number,
+  won: boolean,
 ): void {
   const fade = Math.min(1, elapsed / 600)
   const ease = 1 - (1 - fade) * (1 - fade)
@@ -352,7 +355,7 @@ function drawGameOver(
   ctx.stroke()
 
   // Title, sized to fit the card
-  const title = 'You got a rumbly in your tumbly'
+  const title = won ? 'Congratulations you made it to spring!' : 'You got a rumbly in your tumbly'
   let fontSize = Math.min(56, cardW * 0.075)
   ctx.font = `bold ${fontSize}px Georgia, serif`
   const maxTitleWidth = cardW - 80
@@ -381,7 +384,7 @@ function drawGameOver(
 
   ctx.fillStyle = '#6b4a2b'
   ctx.font = 'italic 24px Georgia, serif'
-  ctx.fillText('The jay went hungry. Click Restart to try again.', 0, cardH * 0.26)
+  ctx.fillText(won ? '"Yay!" says your blue jay' : 'The jay went hungry. Click Restart to try again.', 0, cardH * 0.26)
   ctx.restore()
 
   // Pulsing pointer toward the Restart button
