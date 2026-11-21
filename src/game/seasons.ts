@@ -238,7 +238,7 @@ const WAVES: [number, number][] = [
 const PEAK_RATE = 2.4
 
 /** The timeline's rates (the default setting) are this share of what the trend below says (it was lowered by a third). */
-const TIMELINE_RATE_FACTOR = 2 / 3
+const TIMELINE_RATE_FACTOR = 0.75
 
 /** Highest base drop rate the trend and wobble can reach (the graph's scale). */
 export const MAX_BASE_DROP_RATE = PEAK_RATE * TIMELINE_RATE_FACTOR * (1 + WOBBLE)

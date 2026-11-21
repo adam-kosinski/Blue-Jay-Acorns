@@ -562,3 +562,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## One control for pick up and bury/dig
 - Left Shift / left click: holding an acorn buries it; otherwise a free acorn in reach is picked up, and if there is none the bird digs. S no longer picks up (it only descends), and right click only eats (E). The `pickup` key edge remains in `KeyEdges` but nothing sets it.
 - The controls panel (bottom left) lists Shift / Left click (pick up, bury, dig up) and E / Right click (eat); it is a wider rectangle now.
+
+## Drop rate 0.75 of the original again; faster NPC jays
+- `TIMELINE_RATE_FACTOR` is 0.75 (was 2/3, first 0.75 too); `NPC_SPEED_SCALE` 0.9 (was 0.75): the jays fly at 90% of the player's speed.
