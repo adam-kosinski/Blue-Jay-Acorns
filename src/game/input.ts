@@ -80,9 +80,9 @@ export function createKeyState(): {
     }
   }
 
-  /** Whether a mouse event landed on the game itself (not on the debug panel, the Restart button, ...). */
+  /** Whether a mouse event landed on the game's picture itself (not on the debug tools, the Restart button, ...). */
   function onGame(event: MouseEvent): boolean {
-    return !(event.target instanceof Element && event.target.closest('button, input, label, fieldset, select'))
+    return event.target instanceof Element && event.target.classList.contains('game-canvas')
   }
 
   /** Left click buries / digs up (like left Shift), right click eats (like E). */
