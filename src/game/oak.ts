@@ -138,6 +138,75 @@ function growBranch(
 }
 
 /**
+ * Adds thin branches growing off the thick ones into the leaf area: one toward each leaf clump that has no wood
+ * near it, from the closest wood (below it for preference), most with a smaller sprig of their own. Later ones
+ * can grow off earlier ones.
+ *
+ * @param segments - The branch pieces so far, the trunk's three first (added to).
+ * @param lobes - The leaf clumps.
+ * @param leafRadius - Cluster radius for this tree's scale.
+ */
+function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number): void {
+  /** The point of the wood (from the upper trunk on) that a twig to (x, y) would best start from. */
+  const nearestWood = (x: number, y: number): { x: number; y: number; w: number; distance: number } => {
+    let best = { x: 0, y: 0, w: 0, distance: Infinity }
+    let bestCost = Infinity
+    for (const seg of segments.slice(2)) {
+      const dx = seg.x1 - seg.x0
+      const dy = seg.y1 - seg.y0
+      const t = Math.max(0, Math.min(1, ((x - seg.x0) * dx + (y - seg.y0) * dy) / (dx * dx + dy * dy || 1)))
+      const px = seg.x0 + dx * t
+      const py = seg.y0 + dy * t
+      const distance = Math.hypot(x - px, y - py)
+      // Twigs rather reach up than hang down.
+      const cost = py < y ? distance * 1.6 : distance
+      if (cost < bestCost) {
+        bestCost = cost
+        best = { x: px, y: py, w: seg.w0 + (seg.w1 - seg.w0) * t, distance }
+      }
+    }
+    return best
+  }
+
+  /** A twig of two pieces from one point to another, thinning to its tip; returns where it bends. */
+  const twig = (x: number, y: number, endX: number, endY: number, width: number): { x: number; y: number } => {
+    const dx = endX - x
+    const dy = endY - y
+    // A gentle bend, bowed to one side or the other.
+    const bow = randRange(-0.14, 0.14)
+    const midX = x + dx * 0.55 - dy * bow
+    const midY = y + dy * 0.55 + dx * bow
+    segments.push({ x0: x, y0: y, x1: midX, y1: midY, w0: width, w1: width * 0.65 })
+    segments.push({ x0: midX, y0: midY, x1: endX, y1: endY, w0: width * 0.65, w1: Math.max(3, width * 0.35) })
+    return { x: midX, y: midY }
+  }
+
+  // The clumps farthest from the thick wood come first, so long twigs reach out to the edge of the crown and
+  // the nearer clumps then fill in off those and the branches.
+  const outermost = lobes
+    .map((lobe) => ({ lobe, distance: nearestWood(lobe.x, lobe.y).distance }))
+    .sort((a, b) => b.distance - a.distance)
+  for (const { lobe } of outermost) {
+    const targetX = lobe.x + randRange(-0.35, 0.35) * lobe.r
+    const targetY = lobe.y + randRange(-0.35, 0.35) * lobe.r
+    const from = nearestWood(targetX, targetY)
+    if (from.distance < lobe.r * 0.4) {
+      continue
+    }
+    const reach = Math.min(1, (leafRadius * 2.2) / from.distance)
+    const endX = from.x + (targetX - from.x) * reach
+    const endY = from.y + (targetY - from.y) * reach
+    const width = Math.max(8, Math.min(from.w * 0.8, leafRadius * randRange(0.2, 0.3)))
+    const mid = twig(from.x, from.y, endX, endY, width)
+    if (Math.random() < 0.8) {
+      const angle = Math.atan2(endX - mid.x, mid.y - endY) + (Math.random() < 0.5 ? -1 : 1) * randRange(0.6, 1.1)
+      const length = from.distance * reach * randRange(0.35, 0.55)
+      twig(mid.x, mid.y, mid.x + Math.sin(angle) * length, mid.y - Math.cos(angle) * length, width * 0.6)
+    }
+  }
+}
+
+/**
  * Generates an asymmetric oak: a leaning tapered trunk, random branches, and many leaf clusters.
  *
  * Coordinates are relative to the tree base; negative y is up. The trunk starts slightly
@@ -241,6 +310,8 @@ export function generateOak(
 
   addCluster(lobes, trunkTopX, trunkTopY - leafRadius * 0.6, leafRadius * 1.3)
   addCluster(lobes, trunkTopX + randRange(-0.3, 0.3) * leafRadius, trunkTopY + leafRadius * 0.3, leafRadius * 1.1)
+
+  addTwigs(segments, lobes, leafRadius)
 
   let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.7 : trunkWidth
   let top = trunkTopY

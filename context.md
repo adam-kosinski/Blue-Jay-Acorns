@@ -573,3 +573,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## One leaf layer per plant, drawn after all its shapes
 - `drawLeafyDisk` draws only a clump's large shapes; its small leaves go into the plant's `LeafLayer`, and each new clump removes the earlier leaves its shapes cover (tested whether or not the shapes are present, so the set is the same all year). `drawLeafLayer` draws what is left after all shapes (every other one first when they fall). A test oak went from about 6200 leaves to 1560 with summer looking the same; the leaves-only fall stages are airier than before.
+
+## Thin branches into the crown
+- `addTwigs` (end of `generateOak`): one thin two-piece branch toward each leaf clump that has no wood near it (farthest clumps first, so later ones can grow off earlier ones), from the nearest wood (preferably below), most with a sprig of their own. Leaf clumps are unchanged. A test oak went from about 40 to 110-160 wood pieces.
