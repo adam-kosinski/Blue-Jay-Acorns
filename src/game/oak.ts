@@ -1,7 +1,7 @@
-import { fallTones, newLeafSeason, parseRgb } from './leafColors'
+import { fallTones, newLeafSeason, parseRgb, springTones } from './leafColors'
 import { requestWork, workerUsable } from './vegClient'
 import { enqueueJob } from './work'
-import { STAGE_LOOKS, type LeafAmounts } from './seasons'
+import { BARE_STAGE, STAGE_LOOKS, type LeafAmounts } from './seasons'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
 
 /**
@@ -1010,6 +1010,9 @@ export function* drawOakSteps(
   if (look.shapes > 0 || look.leaves > 0) {
     const rand = seededRandom(shape.id * 7919 + 13)
     const leaves: LeafLayer = []
+    // Spring's new leaves have their own light green, and are drawn as single leaves however far the tree is.
+    const green = look.spring ? springTones(look.haze ?? null) : tones
+    const detail = look.spring ? Math.max(leafDetail, 0.3) : leafDetail
     for (let index = 0; index < shape.lobes.length; index += 1) {
       const lobe = shape.lobes[index]
       if (!lobe) {
@@ -1022,7 +1025,7 @@ export function* drawOakSteps(
               tonesB:
                 look.fall > 0
                   ? fallTones(shape.leaf.hue, (seededRandom(shape.id * 31 + index)() - 0.5) * 18, look.haze ?? null, shape.leaf.sat)
-                  : tones,
+                  : green,
               fall: look.fall,
               shapes: look.shapes,
               leaves: look.leaves,
@@ -1030,7 +1033,7 @@ export function* drawOakSteps(
               clump: index,
             }
           : undefined
-      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail, 0, leaves, mix)
+      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, green, lobe.tone, rand, detail, 0, leaves, mix)
       yield
     }
     yield* drawLeafLayer(ctx, leaves, look.leaves)
@@ -1083,10 +1086,10 @@ function partLook(part: OakPart): TreeLook {
 /**
  * The part of a crown for one of the looks.
  *
- * @param stage - An index into `STAGE_LOOKS`.
+ * @param stage - An index into `STAGE_LOOKS` (the bare look has no part).
  */
 export function crownPart(stage: number): OakPart | null {
-  return stage >= 0 && stage < STAGE_LOOKS.length ? `c${stage}` : null
+  return stage >= 0 && stage < STAGE_LOOKS.length && stage !== BARE_STAGE ? `c${stage}` : null
 }
 
 /**
@@ -1509,11 +1512,16 @@ function drawCrowns(
       queueOakPart(shape, tones, trunkColor, res, part, 1)
       // The nearest look that is built stands in for it.
       for (const other of [stage - 1, stage + 1, stage - 2, stage + 2, 0]) {
-        const alt = crownPart(other)
+        // (A fall look only stands in for a fall look, a spring one for a spring one.)
+        const alt = other < BARE_STAGE === stage < BARE_STAGE ? crownPart(other) : null
         sprite = alt ? peekOakPart(shape, trunkColor, res, alt) : null
         if (sprite) {
           break
         }
+      }
+      // With no spring look made yet the tree stays bare; in fall the green crown is made at once.
+      if (!sprite && stage > BARE_STAGE) {
+        continue
       }
       sprite = sprite ?? getOakPart(shape, tones, trunkColor, res, 'c0')
     }

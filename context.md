@@ -579,3 +579,8 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## A quarter-leaves step before bare
 - `STAGE_LOOKS` ends: small leaves alone, half of them, a quarter of them, bare. `STAGE_BOUNDARIES` is now [1/12, 1/3, 0.55, 0.62, 0.69, 0.77, 0.86, 0.95], and a tree or bush holds eight crown looks (`c0`-`c7`).
+
+## Spring leaves, opaque canvas
+- Late in spring trees and bushes get new single leaves (no large shapes) in light yellow-green (`springTones`): bare, a quarter, half, all. `STAGE_LOOKS` holds fall's looks, bare (`BARE_STAGE` 8) and three spring looks; each plant starts between 7.5 and 7.65 segments (by its same random start), takes 0.35 segment, with changes at 0.05, 0.45 and 0.85 of it (`SPRING` in `seasons.ts`); all are done before the year ends. `leafLookAt(start, time)` (far layers' images) and `leafStageMixAt(start, time)` (foreground) replace the progress-based functions.
+- Far layers have five spring sample moments (7.5 to 8 every eighth of a segment) after fall's 19; the position rests at the last fall moment through winter and the spring images are made from 7.0 on (no build hold in spring). In spring, far clumps are drawn with single leaves (detail at least 0.3).
+- The game's canvas context is opaque (`alpha: false`).

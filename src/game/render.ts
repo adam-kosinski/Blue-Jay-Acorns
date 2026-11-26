@@ -22,17 +22,18 @@ import {
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
   buildHoldAt,
-  leafStageMix,
+  leafStageMixAt,
+  BARE_STAGE,
   STAGE_LOOKS,
   type LeafAmounts,
-  leafLook,
+  leafLookAt,
   sampleAt,
   sampleIndexAt,
   sampleTime,
   transitionProgress,
   winterTintAt,
 } from './seasons'
-import { fallTones, mixHex, parseRgb, winterGreen } from './leafColors'
+import { fallTones, mixHex, parseRgb, winterGreen, springTones } from './leafColors'
 import { BACKDROP_FOG, mixColor } from './world'
 import { CREEK_FRONT_DROP_IN_VIEWS, CREEK_FRONT_PARALLAX, TERRAIN_STEP, creekWeight, groundYAt, hillBump, liftAt, lowPass } from './terrain'
 import type {
@@ -1164,7 +1165,7 @@ function* buildVegImage(
     for (const [index, tree] of layer.trees.entries()) {
       const at = veg.trees[index]
       if (at && near(at.x, tree.shape.halfWidth)) {
-        const look = leafLook(transitionProgress(tree.shape.leaf.start, time))
+        const look = leafLookAt(tree.shape.leaf.start, time)
         yield* drawOakSteps(ctx, tree.shape, at.x, at.y, layer.tones, layer.trunkColor, 0.02 + layer.parallax * 0.4, false, { ...look, haze })
       }
     }
@@ -1212,7 +1213,7 @@ function* buildVegImage(
           reach = Math.max(reach, Math.abs(lobe.dx) + lobe.radius)
         }
         if (bush && near(bush.x, reach)) {
-          const look = leafLook(transitionProgress(bush.leaf.start, time))
+          const look = leafLookAt(bush.leaf.start, time)
           ctx.save()
           ctx.translate(bush.x, prop.y)
           drawBushWood(ctx, bush, layer.trunkColor)
@@ -1338,7 +1339,9 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
   // The next moments are only prepared when they are about to be needed (not all summer long).
   const position = sampleIndexAt(world.season.time)
   const through = position - Math.floor(position)
-  const ahead = position < -0.6 || hold ? [] : through >= BUILD_HOLD_END ? [k + 1, k + 2] : [k + 1]
+  // In spring the moments follow each other closely, so more of them are made in advance.
+  const spring = world.season.time >= sampleTime(SAMPLE_COUNT - 1) - SEGMENT_SECONDS
+  const ahead = position < -0.6 || hold ? [] : spring ? [k + 1, k + 2, k + 3] : through >= BUILD_HOLD_END ? [k + 1, k + 2] : [k + 1]
   world.forest.forEach((layer, index) => {
     const strip = forestStrips.get(layer)
     if (!strip) {
@@ -2407,7 +2410,7 @@ function drawTrees(
     if (baseX + tree.shape.halfWidth < left || baseX - tree.shape.halfWidth > right) {
       continue
     }
-    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR, leafStageMix(transitionProgress(tree.shape.leaf.start, seasonTime)))
+    drawOak(ctx, tree.shape, baseX, groundYAt(terrain, baseX), OAK_TONES, TRUNK_COLOR, leafStageMixAt(tree.shape.leaf.start, seasonTime))
   }
 }
 
@@ -2428,7 +2431,7 @@ function fadeOf(start: number, world: World): number {
  * @param world - Play space (the season).
  */
 function alphasOf(start: number, world: World): { a: number; b: number; w: number } {
-  return leafStageMix(fadeOf(start, world))
+  return leafStageMixAt(start, world.season.time)
 }
 
 /**
@@ -3255,6 +3258,7 @@ function* paintBushLeaves(
   }
   const rand = seededRandom(Math.floor(bush.x * 13))
   const leaves: LeafLayer = []
+  const greenFor = look.spring ? () => springTones(haze) : tonesFor
   for (const [index, lobe] of bush.lobes.entries()) {
     const mix =
       look.fall > 0 || look.shapes < 1 || look.leaves < 1
@@ -3262,7 +3266,7 @@ function* paintBushLeaves(
             tonesB:
               look.fall > 0
                 ? fallTones(bush.leaf.hue, (seededRandom(Math.floor(bush.x * 5) + index)() - 0.5) * 16, haze, bush.leaf.sat)
-                : tonesFor(lobe),
+                : greenFor(lobe),
             fall: look.fall,
             shapes: look.shapes,
             leaves: look.leaves,
@@ -3270,7 +3274,7 @@ function* paintBushLeaves(
             clump: index,
           }
         : undefined
-    drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, tonesFor(lobe), baseTone, rand, detail, 1, leaves, mix)
+    drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, greenFor(lobe), baseTone, rand, detail, 1, leaves, mix)
     yield
   }
   yield* drawLeafLayer(ctx, leaves, look.leaves)
@@ -3386,19 +3390,20 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
   const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
   const shown: { sprite: BushSprite; alpha: number }[] = []
   for (const [stage, alpha] of stages) {
-    if (stage >= STAGE_LOOKS.length || alpha <= 0) {
+    if (stage >= STAGE_LOOKS.length || stage === BARE_STAGE || alpha <= 0) {
       continue
     }
     let sprite = bushPartSprite(bush, res, `c${stage}` as BushPart, false)
     if (!sprite) {
       queueBushPart(bush, res, `c${stage}` as BushPart, 1)
       for (const other of [stage - 1, stage + 1, stage - 2, stage + 2]) {
-        sprite = other >= 0 && other < STAGE_LOOKS.length ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
+        // (A fall look only stands in for a fall look, a spring one for a spring one.)
+        sprite = other >= 0 && other < STAGE_LOOKS.length && other !== BARE_STAGE && other < BARE_STAGE === stage < BARE_STAGE ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
         if (sprite) {
           break
         }
       }
-      sprite = sprite ?? bushPartSprite(bush, res, 'c0', true)
+      sprite = sprite ?? (stage < BARE_STAGE ? bushPartSprite(bush, res, 'c0', true) : null)
     }
     if (sprite) {
       shown.push({ sprite, alpha })
@@ -3413,11 +3418,11 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
     }
     endCrossfade(bush)
     // Holding a look: the next one is made when its change is near.
-    if (mix.soon && mix.a < STAGE_LOOKS.length - 1) {
+    if (mix.soon && mix.a < STAGE_LOOKS.length - 1 && mix.a + 1 !== BARE_STAGE) {
       queueBushPart(bush, res, `c${mix.a + 1}` as BushPart, 6)
     }
     // Let go of the looks that are over (memory), once the one held is there.
-    if (mix.a >= STAGE_LOOKS.length || bushPartSprite(bush, res, `c${mix.a}`, false)) {
+    if (mix.a === BARE_STAGE || bushPartSprite(bush, res, `c${mix.a}`, false)) {
       for (let old = 0; old < Math.min(mix.a, STAGE_LOOKS.length); old += 1) {
         bushParts.get(bush)?.delete(`c${old}|${res.toFixed(2)}`)
       }
@@ -6170,7 +6175,7 @@ function drawClimbingSquirrel(ctx: CanvasRenderingContext2D, squirrel: Npc, worl
     groundYAt(world.terrain, home.trunkX),
     OAK_TONES,
     TRUNK_COLOR,
-    leafStageMix(transitionProgress(home.tree.shape.leaf.start, world.season.time)),
+    leafStageMixAt(home.tree.shape.leaf.start, world.season.time),
   )
   off.globalCompositeOperation = 'source-over'
   ctx.drawImage(climbCanvas, ox, oy, span, span)

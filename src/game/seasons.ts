@@ -50,12 +50,13 @@ export function transitionProgress(start: number, time: number): number {
  * What there is of a tree's or bush's leaves: the share of the large leafy shapes and of the small leaves still
  * there (0-1 each), and how far they are into their fall color (0-1).
  */
-export type LeafAmounts = { shapes: number; leaves: number; fall: number }
+export type LeafAmounts = { shapes: number; leaves: number; fall: number; spring?: boolean }
 
 /**
  * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
  * three steps while all the small leaves stay (ending with the small leaves alone); then half of the small leaves
- * are left, then a quarter; after the last of these, bare.
+ * are left, then a quarter, then none (bare). In spring the new leaves come: a quarter of the small ones, half,
+ * all of them (no large shapes).
  */
 export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1, leaves: 1, fall: 0 },
@@ -66,10 +67,32 @@ export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 0, leaves: 1, fall: 1 },
   { shapes: 0, leaves: 0.5, fall: 1 },
   { shapes: 0, leaves: 0.25, fall: 1 },
+  { shapes: 0, leaves: 0, fall: 1 },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true },
+  { shapes: 0, leaves: 1, fall: 0, spring: true },
 ]
 
-/** After the last look. */
-const BARE_LOOK: LeafAmounts = { shapes: 0, leaves: 0, fall: 1 }
+/** The index of the bare look in `STAGE_LOOKS` (the looks before it are fall's, those after it spring's). */
+export const BARE_STAGE = 8
+
+/**
+ * The spring leaves come in the second half of spring: each tree's and bush's change starts somewhere in the
+ * first `spread` segments after `from` (by the same random start as its fall), lasts `length` segments and passes
+ * from one look to the next at `boundaries` along it (bare, a quarter of the leaves, half, all). Images of the new
+ * looks start to be wanted from `prepare` on.
+ */
+const SPRING = { prepare: 7.3, from: 7.5, spread: 0.15, length: 0.35, boundaries: [0.05, 0.45, 0.85] }
+
+/**
+ * How far along its spring change an object is (below 0 before it starts, above 1 after it ends).
+ *
+ * @param start - The object's start, 0-1.
+ * @param time - Seconds along the timeline.
+ */
+function springProgress(start: number, time: number): number {
+  return (time / SEGMENT_SECONDS - (SPRING.from + start * SPRING.spread)) / SPRING.length
+}
 
 /**
  * Where along its change (0-1) a tree or bush passes from each look to the next (the last is to bare). The same
@@ -81,14 +104,21 @@ const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 0.55, 0.62, 0.69, 0.77, 0.86, 0.95]
 const FALL_KEYS = { half: 1 / 6, full: 1 / 2 }
 
 /**
- * The look of a tree's or bush's leaves at a point of its change, for objects painted at that moment: the color
- * changes smoothly, and the shapes and leaves go in the steps of `STAGE_LOOKS`.
+ * The look of a tree's or bush's leaves at a time, for objects painted at that moment: in fall the color
+ * changes smoothly, and the shapes and leaves go in the steps of `STAGE_LOOKS`; late in spring the new leaves come
+ * in its last steps.
  *
- * @param progress - Its progress, 0-1 (see `transitionProgress`).
+ * @param start - The object's start, 0-1.
+ * @param time - Seconds along the timeline.
  */
-export function leafLook(progress: number): LeafAmounts {
+export function leafLookAt(start: number, time: number): LeafAmounts {
+  if (time / SEGMENT_SECONDS >= SPRING.from) {
+    const grown = SPRING.boundaries.filter((boundary) => springProgress(start, time) >= boundary).length
+    return { ...(STAGE_LOOKS[BARE_STAGE + grown] ?? { shapes: 0, leaves: 0, fall: 1 }) }
+  }
+  const progress = transitionProgress(start, time)
   const stage = STAGE_BOUNDARIES.filter((boundary) => progress >= boundary).length
-  const look = STAGE_LOOKS[stage] ?? BARE_LOOK
+  const look = STAGE_LOOKS[stage] ?? { shapes: 0, leaves: 0, fall: 1 }
   const fall =
     progress <= FALL_KEYS.half
       ? (0.5 * progress) / FALL_KEYS.half
@@ -99,17 +129,27 @@ export function leafLook(progress: number): LeafAmounts {
 /** Segments between two sample moments (a sixth). */
 const SAMPLE_STEP = 1 / 6
 
-/** The number of moments along the timeline that images of the far layers are made for (one every sixth of a segment). */
-export const SAMPLE_COUNT = 19
+/** The fall's sample moments: one every sixth of a segment from the start of early fall to the start of winter. */
+const FALL_SAMPLES = 19
+
+/** The spring's sample moments, in segments along the timeline. */
+const SPRING_SAMPLES = [7.5, 7.625, 7.75, 7.875, 8]
+
+/** From here (in segments) the images pass from the last of fall's moments to the first of spring's. */
+const SPRING_APPROACH = 7
+
+/** The number of moments along the timeline that images of the far layers are made for. */
+export const SAMPLE_COUNT = FALL_SAMPLES + SPRING_SAMPLES.length
 
 /**
- * The time of one of the sample moments: the first is the start of early fall (all summer before it), the
- * last the start of winter, with one every sixth of a segment (all winter after it).
+ * The time of one of the sample moments: fall's (the first is the start of early fall, all summer before it; the
+ * last the start of winter, which lasts until spring's), then spring's.
  *
  * @param index - 0 to `SAMPLE_COUNT` - 1.
  */
 export function sampleTime(index: number): number {
-  return SEGMENT_SECONDS * (1 + SAMPLE_STEP * index)
+  const spring = SPRING_SAMPLES[index - FALL_SAMPLES]
+  return SEGMENT_SECONDS * (spring ?? 1 + SAMPLE_STEP * index)
 }
 
 /** How long, in seconds, a change from one look of the leaves to the next takes: they stay as they are, then fade over this. */
@@ -127,12 +167,22 @@ function smooth(x: number): number {
 
 /**
  * Where a time is along the sample moments, as a fractional index (below 0 before the first, above the last
- * index after the last).
+ * index after the last). It rests at the last of fall's moments through the winter.
  *
  * @param time - Seconds along the timeline.
  */
 export function sampleIndexAt(time: number): number {
-  return (time / SEGMENT_SECONDS - 1) / SAMPLE_STEP
+  const u = time / SEGMENT_SECONDS
+  const lastFall = FALL_SAMPLES - 1
+  const firstSpring = SPRING_SAMPLES[0] ?? 7.5
+  if (u < SPRING_APPROACH) {
+    return Math.min(lastFall, (u - 1) / SAMPLE_STEP)
+  }
+  if (u < firstSpring) {
+    return lastFall + (u - SPRING_APPROACH) / (firstSpring - SPRING_APPROACH)
+  }
+  const step = (SPRING_SAMPLES[1] ?? 8) - firstSpring
+  return FALL_SAMPLES + (u - firstSpring) / step
 }
 
 /**
@@ -143,7 +193,7 @@ export function sampleIndexAt(time: number): number {
  * @param time - Seconds along the timeline.
  */
 export function sampleAt(time: number): { k: number; t: number } {
-  const x = (time / SEGMENT_SECONDS - 1) / SAMPLE_STEP
+  const x = sampleIndexAt(time)
   if (x <= 0) {
     return { k: 0, t: 0 }
   }
@@ -151,7 +201,9 @@ export function sampleAt(time: number): { k: number; t: number } {
     return { k: SAMPLE_COUNT - 2, t: 1 }
   }
   const k = Math.floor(x)
-  const half = FADE_SECONDS / (SAMPLE_STEP * SEGMENT_SECONDS) / 2
+  // The seconds the interval lasts (the one into spring runs from `SPRING_APPROACH`).
+  const seconds = k === FALL_SAMPLES - 1 ? sampleTime(k + 1) - SPRING_APPROACH * SEGMENT_SECONDS : sampleTime(k + 1) - sampleTime(k)
+  const half = FADE_SECONDS / seconds / 2
   return { k, t: smooth((x - k - (0.5 - half)) / (2 * half)) }
 }
 
@@ -175,33 +227,55 @@ export const BUILD_HOLD_END = 0.5 + (FADE_SECONDS / 2 + BUILD_HOLD_TAIL) / SAMPL
  */
 export function buildHoldAt(time: number): boolean {
   const position = sampleIndexAt(time)
-  if (position < 0 || position >= SAMPLE_COUNT - 1) {
+  // (Not in spring: its moments follow each other too closely to hold anything back.)
+  if (position < 0 || position >= FALL_SAMPLES - 1) {
     return false
   }
   const through = position - Math.floor(position)
   return through > 0.5 - (FADE_SECONDS / 2 + BUILD_HOLD_LEAD) / SAMPLE_SECONDS && through < BUILD_HOLD_END
 }
 
+/** Which look an object drawn from ready-made images holds and passes to (see `leafStageMixAt`). */
+export type StageMix = { a: number; b: number; w: number; soon: boolean }
+
 /**
- * The look of a tree's or bush's leaves for objects drawn from ready-made images: which look it holds
- * (`a`, an index into `STAGE_LOOKS`, or its length for bare), and while it passes to the next (`b`) over a few seconds, how far (`w`);
- * `soon` is whether a change is about to start (the next look should be made).
+ * The mix at a point along a row of changes.
  *
- * @param progress - Its progress, 0-1 (see `transitionProgress`).
+ * @param progress - Where along the change.
+ * @param boundaries - Where each change happens.
+ * @param first - The look held before the first change (an index into `STAGE_LOOKS`).
+ * @param width - How much of the progress a change takes.
+ * @param lead - How long before a change starts, in progress, the next look is wanted.
  */
-export function leafStageMix(progress: number): { a: number; b: number; w: number; soon: boolean } {
-  const width = FADE_SECONDS / (TRANSITION_SEGMENTS * SEGMENT_SECONDS)
+function mixAlong(progress: number, boundaries: number[], first: number, width: number, lead: number): StageMix {
   let stage = 0
-  for (const [index, boundary] of STAGE_BOUNDARIES.entries()) {
+  for (const [index, boundary] of boundaries.entries()) {
     if (progress >= boundary + width / 2) {
       stage = index + 1
     } else if (progress > boundary - width / 2) {
-      return { a: index, b: index + 1, w: smooth((progress - (boundary - width / 2)) / width), soon: true }
+      return { a: first + index, b: first + index + 1, w: smooth((progress - (boundary - width / 2)) / width), soon: true }
     }
   }
-  // The next look is wanted when its change is near (about 8 seconds before it starts).
-  const next = STAGE_BOUNDARIES[stage]
-  return { a: stage, b: stage, w: 0, soon: next !== undefined && progress > next - width / 2 - 0.05 }
+  const next = boundaries[stage]
+  return { a: first + stage, b: first + stage, w: 0, soon: next !== undefined && progress > next - width / 2 - lead }
+}
+
+/**
+ * The look of a tree's or bush's leaves for objects drawn from ready-made images: which look it holds
+ * (`a`, an index into `STAGE_LOOKS`), and while it passes to the next (`b`) over a few seconds, how far (`w`);
+ * `soon` is whether a change is about to start (the next look should be made).
+ *
+ * @param start - The object's start, 0-1.
+ * @param time - Seconds along the timeline.
+ */
+export function leafStageMixAt(start: number, time: number): StageMix {
+  if (time / SEGMENT_SECONDS < SPRING.prepare) {
+    const seconds = TRANSITION_SEGMENTS * SEGMENT_SECONDS
+    return mixAlong(transitionProgress(start, time), STAGE_BOUNDARIES, 0, FADE_SECONDS / seconds, 0.05)
+  }
+  // (The next look is wanted about 8 seconds ahead.)
+  const seconds = SPRING.length * SEGMENT_SECONDS
+  return mixAlong(springProgress(start, time), SPRING.boundaries, BARE_STAGE, FADE_SECONDS / seconds, 8 / seconds)
 }
 
 /**

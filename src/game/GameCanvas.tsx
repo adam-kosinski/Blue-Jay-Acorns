@@ -106,7 +106,8 @@ export function GameCanvas() {
       return
     }
 
-    const ctx2d = canvasEl.getContext('2d')
+    // Opaque: every frame covers the whole canvas, and the browser then need not blend it with the page.
+    const ctx2d = canvasEl.getContext('2d', { alpha: false })
     if (!ctx2d) {
       return
     }
