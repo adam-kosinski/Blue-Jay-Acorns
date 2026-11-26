@@ -593,3 +593,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Falling leaves now fade over 2 s once they land (ground or water; none are kept lying). They are kept only in a stretch around the view (300 px past each side, from just above the screen down); whatever newly enters it (a side strip, or a band at the top) is filled with the leaves a steady fall would have there (`fillArea`, each accepted by `leafFallAt` at the time it would have started), so new areas already have leaves in the air.
 - The debug timeline has a Pause / Play button (`pausedRef`): paused, only the season clock stops (birds, hunger, acorns go on at that moment's rate); dragging still sets the time; closing the debug tools resumes.
 - The end screens no longer have the pulsing pointer to the Restart button.
+
+## Spring leaves grow, up to half of them
+- Spring has five looks after bare (`STAGE_LOOKS` 9-13): a quarter of the small leaves at 0.25 and 0.45 of their size, then half of them (the newer quarter coming in at 0.25) at sizes 0.65/0.25, 0.82/0.6 and full; never all the leaves. `LeafAmounts.sizes` is [first quarter, the rest]. Each plant starts between 7.5 and 7.58 segments, changes at 0.04, 0.27, 0.5, 0.73, 0.95 of 0.4 segments; the sizes step through the cross-fades (no per-frame animation). Far layers sample spring at 7.25, 7.5, then every 0.1 to 8.

@@ -50,13 +50,20 @@ export function transitionProgress(start: number, time: number): number {
  * What there is of a tree's or bush's leaves: the share of the large leafy shapes and of the small leaves still
  * there (0-1 each), and how far they are into their fall color (0-1).
  */
-export type LeafAmounts = { shapes: number; leaves: number; fall: number; spring?: boolean }
+export type LeafAmounts = {
+  shapes: number
+  leaves: number
+  fall: number
+  spring?: boolean
+  /** In spring, how big (as a share of full size) the first quarter of the leaves and the ones after it are. */
+  sizes?: [number, number]
+}
 
 /**
  * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
  * three steps while all the small leaves stay (ending with the small leaves alone); then half of the small leaves
- * are left, then a quarter, then none (bare). In spring the new leaves come: a quarter of the small ones, half,
- * all of them (no large shapes).
+ * are left, then a quarter, then none (bare). In spring new small leaves come (no large shapes): a quarter of them,
+ * later as many again (half in all), each coming in at a quarter of its size and growing to full size.
  */
 export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1, leaves: 1, fall: 0 },
@@ -68,9 +75,11 @@ export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 0, leaves: 0.5, fall: 1 },
   { shapes: 0, leaves: 0.25, fall: 1 },
   { shapes: 0, leaves: 0, fall: 1 },
-  { shapes: 0, leaves: 0.25, fall: 0, spring: true },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true },
-  { shapes: 0, leaves: 1, fall: 0, spring: true },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.25, 0.25] },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.45, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.65, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.82, 0.6] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [1, 1] },
 ]
 
 /** The index of the bare look in `STAGE_LOOKS` (the looks before it are fall's, those after it spring's). */
@@ -79,10 +88,10 @@ export const BARE_STAGE = 8
 /**
  * The spring leaves come in the second half of spring: each tree's and bush's change starts somewhere in the
  * first `spread` segments after `from` (by the same random start as its fall), lasts `length` segments and passes
- * from one look to the next at `boundaries` along it (bare, a quarter of the leaves, half, all). Images of the new
- * looks start to be wanted from `prepare` on.
+ * from one look to the next at `boundaries` along it (bare, then the spring looks of `STAGE_LOOKS`); the last of
+ * them is reached just before the year ends. Images of the new looks start to be wanted from `prepare` on.
  */
-const SPRING = { prepare: 7.3, from: 7.5, spread: 0.15, length: 0.35, boundaries: [0.05, 0.45, 0.85] }
+const SPRING = { prepare: 7.3, from: 7.5, spread: 0.08, length: 0.4, boundaries: [0.04, 0.27, 0.5, 0.73, 0.95] }
 
 /**
  * How far along its spring change an object is (below 0 before it starts, above 1 after it ends).
@@ -145,7 +154,7 @@ const SAMPLE_STEP = 1 / 6
 const FALL_SAMPLES = 19
 
 /** The spring's sample moments, in segments along the timeline. */
-const SPRING_SAMPLES = [7.25, 7.5, 7.625, 7.75, 7.875, 8]
+const SPRING_SAMPLES = [7.25, 7.5, 7.6, 7.7, 7.8, 7.9, 8]
 
 /** The start of spring (in segments): from here the images pass from the last of fall's moments on to spring's. */
 const SPRING_APPROACH = 7

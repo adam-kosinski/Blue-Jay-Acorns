@@ -3271,7 +3271,7 @@ function* paintBushLeaves(
     drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, greenFor(lobe), baseTone, rand, detail, 1, leaves, mix)
     yield
   }
-  yield* drawLeafLayer(ctx, leaves, look.leaves)
+  yield* drawLeafLayer(ctx, leaves, look.leaves, look.sizes)
 }
 
 /**
@@ -3414,6 +3414,10 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
     // Holding a look: the next one is made when its change is near.
     if (mix.soon && mix.a < STAGE_LOOKS.length - 1 && mix.a + 1 !== BARE_STAGE) {
       queueBushPart(bush, res, `c${mix.a + 1}` as BushPart, 6)
+    }
+    // (In spring the looks follow each other closely, so the one after that is asked for too.)
+    if (mix.soon && mix.a >= BARE_STAGE && mix.a + 2 < STAGE_LOOKS.length) {
+      queueBushPart(bush, res, `c${mix.a + 2}` as BushPart, 7)
     }
     // Let go of the looks that are over (memory), once the one held is there.
     if (mix.a === BARE_STAGE || bushPartSprite(bush, res, `c${mix.a}`, false)) {
