@@ -1,4 +1,4 @@
-import { useEffect, useRef, type MutableRefObject, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type MutableRefObject, type PointerEvent } from 'react'
 import {
   MAX_BASE_DROP_RATE,
   SEASON_SEGMENTS,
@@ -77,18 +77,23 @@ function drawGraph(canvas: HTMLCanvasElement, clock: SeasonClock): void {
 
 /**
  * The debug timeline: a graph of the base acorn drop rate, a slider showing (and setting, by dragging)
- * the current time, and below them the season rectangles with the current one outlined.
+ * the current time, and below them the season rectangles with the current one outlined. A button pauses and
+ * resumes the passing of time (the slider still works while paused); closing the timeline resumes it.
  *
  * @param props.worldRef - The running game's world (replaced on restart).
  * @param props.overrideRef - The debug acorn rate that replaces the timeline's value, or null to use the timeline's.
+ * @param props.pausedRef - True while the season clock is held still.
  */
 export function Timeline({
   worldRef,
   overrideRef,
+  pausedRef,
 }: {
   worldRef: MutableRefObject<World | null>
   overrideRef: MutableRefObject<number | null>
+  pausedRef: MutableRefObject<boolean>
 }) {
+  const [paused, setPaused] = useState<boolean>(false)
   const areaRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<HTMLCanvasElement>(null)
   const thumbRef = useRef<HTMLDivElement>(null)
@@ -145,6 +150,14 @@ export function Timeline({
     return () => window.cancelAnimationFrame(id)
   }, [worldRef, overrideRef])
 
+  // Time never stays held with the button out of sight.
+  useEffect(() => {
+    const held = pausedRef
+    return () => {
+      held.current = false
+    }
+  }, [pausedRef])
+
   /**
    * Sets the time from a pointer position over the timeline.
    */
@@ -162,6 +175,18 @@ export function Timeline({
   return (
     <div className="timeline" aria-label="Timeline">
       <div className="timeline-title">
+        <button
+          type="button"
+          className="debug-button timeline-pause"
+          aria-pressed={paused}
+          onClick={(event) => {
+            pausedRef.current = !paused
+            setPaused(!paused)
+            event.currentTarget.blur()
+          }}
+        >
+          {paused ? '\u25B6 Play' : '\u275A\u275A Pause'}
+        </button>
         <span>
           Acorn rate <span ref={rateRef} className="timeline-rate" />
         </span>

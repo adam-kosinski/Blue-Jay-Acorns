@@ -304,8 +304,7 @@ let gameOverSince = 0
 
 /**
  * Draws the game-over screen (or, when the game was won, the victory screen with the same look): a vignette,
- * a parchment card that eases in with the message, a divider flanked by acorns, and a pulsing pointer to the
- * Restart button.
+ * a parchment card that eases in with the message and a divider flanked by acorns.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param viewWidth - Viewport width.
@@ -393,16 +392,6 @@ function drawGameOver(
   ctx.font = 'italic 24px Georgia, serif'
   ctx.fillText(won ? '"Yay!" says your blue jay' : 'The jay went hungry. Click Restart to try again.', 0, cardH * 0.26)
   ctx.restore()
-
-  // Pulsing pointer toward the Restart button
-  const pulse = 0.6 + 0.4 * Math.sin(elapsed / 220)
-  ctx.globalAlpha = ease * pulse
-  ctx.fillStyle = '#f4ead2'
-  ctx.font = 'bold 20px Georgia, serif'
-  ctx.textAlign = 'right'
-  ctx.fillText('Restart ↗', viewWidth - 24, 78)
-  ctx.globalAlpha = 1
-  ctx.textAlign = 'left'
 }
 
 /**

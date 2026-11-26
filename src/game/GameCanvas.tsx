@@ -72,6 +72,7 @@ export function GameCanvas() {
   const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
   const rateOverrideRef = useRef<number | null>(ACORN_DROP_MODES[dropMode])
   const pauseHungerRef = useRef<boolean>(pauseHunger)
+  const timePausedRef = useRef<boolean>(false)
   const [showBurialQuality, setShowBurialQuality] = useState<boolean>(false)
   const [invisible, setInvisible] = useState<boolean>(false)
   const [debugOpen, setDebugOpen] = useState<boolean>(loadDebugOpen)
@@ -202,7 +203,8 @@ export function GameCanvas() {
         world.time += dt
         updateNpcs(world, dt, player)
         // The season sets the acorn rate unless the debug panel fixes it.
-        const reachedEnd = advanceSeason(world.season, dt)
+        // The timeline's pause button holds the season clock still (everything else goes on).
+        const reachedEnd = !timePausedRef.current && advanceSeason(world.season, dt)
         updateTreeDrops(
           world,
           player.size,
@@ -355,7 +357,7 @@ export function GameCanvas() {
             </fieldset>
           )}
         </div>
-        {debugOpen && <Timeline worldRef={worldRef} overrideRef={rateOverrideRef} />}
+        {debugOpen && <Timeline worldRef={worldRef} overrideRef={rateOverrideRef} pausedRef={timePausedRef} />}
       </div>
       <div className="hud-right">
         <button type="button" className="restart-button" onClick={onRestart}>

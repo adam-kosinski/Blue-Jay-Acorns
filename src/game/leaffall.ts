@@ -1,7 +1,8 @@
 /**
  * Leaves falling in fall: now and then, in mid fall and the first half of late fall, a few come down at a time,
  * swinging from side to side as the air holds them back, from above the screen until they meet the ground of
- * the foreground (where they stay lying) or the creek (where they soon sink out of sight).
+ * the foreground or the creek, where they fade away. Leaves are only kept around the view; a stretch that comes
+ * into it is filled with the leaves that would be in the air there, as if they had been falling all along.
  */
 import { fallTones } from './leafColors'
 import { drawLeaf } from './oak'
@@ -27,11 +28,14 @@ const SPAWN_PER_SECOND = 1.35
 /** How far past each side of the screen leaves are made too (so some are already there when the view moves). */
 const SPAWN_MARGIN = 300
 
-/** Most leaves left lying (the oldest go first). */
-const MAX_RESTING = 80
+/** How far above the screen leaves start. */
+const SPAWN_HEIGHT = 40
 
-/** Seconds a leaf that fell on the water takes to sink out of sight. */
-const SINK_SECONDS = 2.5
+/** The average speed leaves come down at (px per second; see `newLeaf` and the swing in `updateLeafFall`). */
+const MEAN_FALL_SPEED = 75
+
+/** Seconds a leaf that has come down takes to fade away. */
+const FADE_SECONDS = 2
 
 /** A falling leaf, or one that has come down. */
 type FallingLeaf = {
@@ -50,12 +54,15 @@ type FallingLeaf = {
   angle: number
   color: string
   landed: boolean
-  /** On the water: seconds since it landed (0 on the ground). */
-  sinking: number
+  /** Seconds since it came down (0 in the air). */
+  down: number
   onWater: boolean
 }
 
-type LeafFall = { leaves: FallingLeaf[]; lastMs: number; due: number }
+/** The stretch of the world leaves are kept for: from side to side, and from its top down to the ground. */
+type View = { left: number; right: number; top: number }
+
+type LeafFall = { leaves: FallingLeaf[]; lastMs: number; due: number; seen: View | null }
 
 const falls = new WeakMap<World, LeafFall>()
 
@@ -85,33 +92,78 @@ export function leafFallAt(time: number): number {
 }
 
 /**
- * A new leaf just above the screen, in the fall color of one of the trees.
+ * A new leaf in the air at a point, in the fall color of one of the trees.
  *
  * @param world - Play space.
- * @param cameraX - View left edge.
- * @param cameraY - View top edge.
- * @param viewWidth - Viewport width.
+ * @param x - World x.
+ * @param y - World y.
  */
-function newLeaf(world: World, cameraX: number, cameraY: number, viewWidth: number): FallingLeaf {
+function newLeaf(world: World, x: number, y: number): FallingLeaf {
   const tree = world.trees[Math.floor(Math.random() * world.trees.length)]
   const tones = fallTones(tree?.shape.leaf.hue ?? 30, between(-8, 8), null, tree?.shape.leaf.sat)
-  const x = cameraX + between(-SPAWN_MARGIN, viewWidth + SPAWN_MARGIN)
+  const phase = between(0, Math.PI * 2)
+  const swing = between(28, 62)
   return {
-    centerX: x,
+    centerX: x - Math.sin(phase) * swing,
     x,
-    y: cameraY - between(20, 60),
-    phase: between(0, Math.PI * 2),
+    y,
+    phase,
     rate: between(1.7, 2.7),
-    swing: between(28, 62),
+    swing,
     speed: between(60, 90),
     drift: between(-12, 12),
     // About as big as the larger leaves of the litter.
     length: between(26, 36),
-    angle: Math.PI / 2,
+    angle: Math.PI / 2 - Math.sin(phase) * 0.8,
     color: tones[1 + Math.floor(Math.random() * (tones.length - 1))] ?? '#b5702f',
     landed: false,
-    sinking: 0,
+    down: 0,
     onWater: false,
+  }
+}
+
+/**
+ * Where a leaf at x comes to rest: the water's surface over the creek, else just in the ground's surface.
+ *
+ * @param world - Play space.
+ * @param x - World x.
+ */
+function surfaceAt(world: World, x: number): number {
+  return inWater(world.terrain, x) ? world.terrain.creek.waterY : groundYAt(world.terrain, x) + 3
+}
+
+/**
+ * Fills a part of the view's stretch that has just come into it with the leaves that would be in the air there:
+ * as many as there are in a steady fall, each only if leaves were falling when it would have started.
+ *
+ * @param world - Play space.
+ * @param leaves - The leaves (added to).
+ * @param left - The part's left side.
+ * @param right - Its right side.
+ * @param top - Its top.
+ * @param bottom - Its bottom (the ground cuts it off).
+ * @param view - The whole stretch (its top is where leaves start, its width what they are spread over).
+ */
+function fillArea(
+  world: World,
+  leaves: FallingLeaf[],
+  left: number,
+  right: number,
+  top: number,
+  bottom: number,
+  view: View,
+): void {
+  const size = Math.max(0, right - left) * Math.max(0, bottom - top)
+  // Leaves per square pixel: those starting each second, over the stretch's width and the distance they fall in it.
+  const expected = (size * SPAWN_PER_SECOND) / ((view.right - view.left) * MEAN_FALL_SPEED)
+  const count = Math.floor(expected) + (Math.random() < expected - Math.floor(expected) ? 1 : 0)
+  for (let i = 0; i < count; i += 1) {
+    const x = between(left, right)
+    const y = between(top, bottom)
+    const age = (y - view.top) / MEAN_FALL_SPEED
+    if (y < surfaceAt(world, x) && Math.random() < leafFallAt(world.season.time - age)) {
+      leaves.push(newLeaf(world, x, y))
+    }
   }
 }
 
@@ -126,27 +178,24 @@ function newLeaf(world: World, cameraX: number, cameraY: number, viewWidth: numb
 export function updateLeafFall(world: World, cameraX: number, cameraY: number, viewWidth: number): void {
   let fall = falls.get(world)
   if (!fall) {
-    fall = { leaves: [], lastMs: performance.now(), due: 0 }
+    fall = { leaves: [], lastMs: performance.now(), due: 0, seen: null }
     falls.set(world, fall)
   }
   const now = performance.now()
   const dt = Math.min(0.05, Math.max(0, (now - fall.lastMs) / 1000))
   fall.lastMs = now
+  const view: View = { left: cameraX - SPAWN_MARGIN, right: cameraX + viewWidth + SPAWN_MARGIN, top: cameraY - SPAWN_HEIGHT }
   const strength = leafFallAt(world.season.time)
   if (strength > 0) {
     fall.due += SPAWN_PER_SECOND * strength * dt
     while (fall.due >= 1) {
       fall.due -= 1
-      fall.leaves.push(newLeaf(world, cameraX, cameraY, viewWidth))
+      fall.leaves.push(newLeaf(world, between(view.left, view.right), view.top - between(0, 30)))
     }
   }
-  let resting = 0
   for (const leaf of fall.leaves) {
     if (leaf.landed) {
-      resting += 1
-      if (leaf.onWater) {
-        leaf.sinking += dt
-      }
+      leaf.down += dt
       continue
     }
     leaf.phase += leaf.rate * dt
@@ -155,30 +204,35 @@ export function updateLeafFall(world: World, cameraX: number, cameraY: number, v
     // It drops fastest through the middle of a swing and nearly hangs at either end, tipped up toward that side.
     leaf.y += leaf.speed * (0.3 + 1.4 * Math.cos(leaf.phase) ** 2) * dt
     leaf.angle = Math.PI / 2 - Math.sin(leaf.phase) * 0.8
-    const water = inWater(world.terrain, leaf.x)
-    const surface = water ? world.terrain.creek.waterY : groundYAt(world.terrain, leaf.x) + 3
+    const surface = surfaceAt(world, leaf.x)
     if (leaf.y >= surface) {
       leaf.y = surface
       leaf.landed = true
-      leaf.onWater = water
+      leaf.onWater = inWater(world.terrain, leaf.x)
       leaf.angle = Math.PI / 2 + between(-0.25, 0.25)
     }
   }
-  // Leaves sunk, left far behind in the air, or over the number that may lie about are let go.
-  let extra = resting - MAX_RESTING
-  fall.leaves = fall.leaves.filter((leaf) => {
-    if (leaf.sinking >= SINK_SECONDS) {
-      return false
+  // Leaves that have faded away, or are in the air outside the stretch, are let go.
+  fall.leaves = fall.leaves.filter((leaf) =>
+    leaf.landed ? leaf.down < FADE_SECONDS : leaf.x > view.left - 100 && leaf.x < view.right + 100 && leaf.y > view.top - 100,
+  )
+  // What has just come into the stretch is filled: all of it the first time, then a strip at a side or at the top.
+  const seen = fall.seen
+  const ground = world.height
+  if (!seen) {
+    fillArea(world, fall.leaves, view.left, view.right, view.top, ground, view)
+  } else {
+    if (view.right > seen.right) {
+      fillArea(world, fall.leaves, Math.max(view.left, seen.right), view.right, view.top, ground, view)
     }
-    if (!leaf.landed) {
-      return leaf.x > cameraX - viewWidth && leaf.x < cameraX + viewWidth * 2
+    if (view.left < seen.left) {
+      fillArea(world, fall.leaves, view.left, Math.min(view.right, seen.left), view.top, ground, view)
     }
-    if (extra > 0) {
-      extra -= 1
-      return false
+    if (view.top < seen.top) {
+      fillArea(world, fall.leaves, Math.max(view.left, seen.left), Math.min(view.right, seen.right), view.top, seen.top, view)
     }
-    return true
-  })
+  }
+  fall.seen = view
 }
 
 /**
@@ -202,8 +256,8 @@ export function drawLeafFall(
       continue
     }
     if (leaf.landed) {
-      // One on the ground disappears under the snow; one on the water sinks.
-      const alpha = leaf.onWater ? 1 - leaf.sinking / SINK_SECONDS : 1 - snowAt(leaf.x, 0, world.season.time)
+      // One that has come down fades away (and does not show on snow).
+      const alpha = (1 - leaf.down / FADE_SECONDS) * (leaf.onWater ? 1 : 1 - snowAt(leaf.x, 0, world.season.time))
       if (alpha <= 0.01) {
         continue
       }
