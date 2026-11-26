@@ -54,7 +54,8 @@ export type LeafAmounts = { shapes: number; leaves: number; fall: number }
 
 /**
  * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
- * three steps while all the small leaves stay; then half of the small leaves go; after the last of these, bare.
+ * three steps while all the small leaves stay (ending with the small leaves alone); then half of the small leaves
+ * are left, then a quarter; after the last of these, bare.
  */
 export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1, leaves: 1, fall: 0 },
@@ -64,6 +65,7 @@ export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1 / 3, leaves: 1, fall: 1 },
   { shapes: 0, leaves: 1, fall: 1 },
   { shapes: 0, leaves: 0.5, fall: 1 },
+  { shapes: 0, leaves: 0.25, fall: 1 },
 ]
 
 /** After the last look. */
@@ -73,7 +75,7 @@ const BARE_LOOK: LeafAmounts = { shapes: 0, leaves: 0, fall: 1 }
  * Where along its change (0-1) a tree or bush passes from each look to the next (the last is to bare). The same
  * for every one: only when its change starts is random (see `transitionProgress`).
  */
-const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 0.58, 0.66, 0.74, 0.84, 0.94]
+const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 0.55, 0.62, 0.69, 0.77, 0.86, 0.95]
 
 /** Where along its change the fall color has come halfway and all the way. */
 const FALL_KEYS = { half: 1 / 6, full: 1 / 2 }

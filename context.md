@@ -576,3 +576,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## Thin branches into the crown
 - `addTwigs` (end of `generateOak`): one thin two-piece branch toward each leaf clump that has no wood near it (farthest clumps first, so later ones can grow off earlier ones), from the nearest wood (preferably below), most with a sprig of their own. Leaf clumps are unchanged. A test oak went from about 40 to 110-160 wood pieces.
+
+## A quarter-leaves step before bare
+- `STAGE_LOOKS` ends: small leaves alone, half of them, a quarter of them, bare. `STAGE_BOUNDARIES` is now [1/12, 1/3, 0.55, 0.62, 0.69, 0.77, 0.86, 0.95], and a tree or bush holds eight crown looks (`c0`-`c7`).

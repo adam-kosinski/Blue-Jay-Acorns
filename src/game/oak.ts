@@ -416,7 +416,8 @@ function insideBlob(x: number, y: number, blob: { cx: number; cy: number; pts: [
 }
 
 /**
- * Draws a plant's small leaves, in steps. With a share of them gone, every other one goes first.
+ * Draws a plant's small leaves, in steps. They go in a fixed order spread evenly over the plant: every other one
+ * first (down to half), then every other one of the rest (down to a quarter), and so on.
  *
  * @param ctx - 2D canvas context.
  * @param layer - The leaves.
@@ -424,7 +425,8 @@ function insideBlob(x: number, y: number, blob: { cx: number; cy: number; pts: [
  */
 export function* drawLeafLayer(ctx: CanvasRenderingContext2D, layer: LeafLayer, share: number): Generator<void> {
   for (const [index, leaf] of layer.entries()) {
-    if ((index % 2 === 1 ? 0.25 : 0.75) < share) {
+    // Each leaf of every four has its own rank: it is there while the share left is above it.
+    if (([0.625, 0.125, 0.875, 0.375][index % 4] ?? 0) < share) {
       drawLeaf(ctx, leaf.x, leaf.y, leaf.length, leaf.angle, leaf.color, leaf.midrib)
     }
     if (index % 250 === 249) {
