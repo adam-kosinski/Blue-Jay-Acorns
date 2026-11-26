@@ -46,52 +46,52 @@ export function transitionProgress(start: number, time: number): number {
   return Math.max(0, Math.min(1, (u - (1 + start)) / TRANSITION_SEGMENTS))
 }
 
-/** Where along its change (0-1) a tree or bush is green, half colorful, fully colorful, half bare, and bare. */
-const LEAF_KEYS = [0, 1 / 6, 1 / 2, 5 / 6, 1]
-/** The share of its leaves that are there at each of those moments. */
-const LEAF_PRESENCE = [1, 1, 1, 0.5, 0]
-/** The share of the leaves there that are in fall color at each of those moments. */
-const LEAF_FALL = [0, 0.5, 1, 1, 1]
-
 /**
- * Linear interpolation along a list of keyed values.
- *
- * @param keys - Increasing positions.
- * @param values - The value at each position.
- * @param at - Where to read.
+ * What there is of a tree's or bush's leaves: the share of the large leafy shapes and of the small leaves still
+ * there (0-1 each), and how far they are into their fall color (0-1).
  */
-function along(keys: number[], values: number[], at: number): number {
-  for (let i = 1; i < keys.length; i += 1) {
-    const k1 = keys[i] ?? 1
-    if (at <= k1) {
-      const k0 = keys[i - 1] ?? 0
-      const v0 = values[i - 1] ?? 0
-      const v1 = values[i] ?? 0
-      return v0 + ((v1 - v0) * (at - k0)) / (k1 - k0)
-    }
-  }
-  return values[values.length - 1] ?? 0
-}
+export type LeafAmounts = { shapes: number; leaves: number; fall: number }
 
 /**
- * The look of a tree's or bush's leaves at a point of its change: green, then half colorful, then fully
- * colorful (a third of the change each), then half of the leaves gone, then all of them gone.
+ * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
+ * three steps while all the small leaves stay; then half of the small leaves go; after the last of these, bare.
+ */
+export const STAGE_LOOKS: LeafAmounts[] = [
+  { shapes: 1, leaves: 1, fall: 0 },
+  { shapes: 1, leaves: 1, fall: 0.5 },
+  { shapes: 1, leaves: 1, fall: 1 },
+  { shapes: 2 / 3, leaves: 1, fall: 1 },
+  { shapes: 1 / 3, leaves: 1, fall: 1 },
+  { shapes: 0, leaves: 1, fall: 1 },
+  { shapes: 0, leaves: 0.5, fall: 1 },
+]
+
+/** After the last look. */
+const BARE_LOOK: LeafAmounts = { shapes: 0, leaves: 0, fall: 1 }
+
+/**
+ * Where along its change (0-1) a tree or bush passes from each look to the next (the last is to bare). The same
+ * for every one: only when its change starts is random (see `transitionProgress`).
+ */
+const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 0.58, 0.66, 0.74, 0.84, 0.94]
+
+/** Where along its change the fall color has come halfway and all the way. */
+const FALL_KEYS = { half: 1 / 6, full: 1 / 2 }
+
+/**
+ * The look of a tree's or bush's leaves at a point of its change, for objects painted at that moment: the color
+ * changes smoothly, and the shapes and leaves go in the steps of `STAGE_LOOKS`.
  *
  * @param progress - Its progress, 0-1 (see `transitionProgress`).
  */
-export function leafLook(progress: number): { presence: number; fall: number } {
-  return { presence: along(LEAF_KEYS, LEAF_PRESENCE, progress), fall: along(LEAF_KEYS, LEAF_FALL, progress) }
-}
-
-/**
- * The same look as the opacity of a green and of a fall-colored crown drawn over each other (for
- * objects drawn from ready-made images).
- *
- * @param progress - Its progress, 0-1.
- */
-export function leafAlphas(progress: number): { green: number; fall: number } {
-  const { presence, fall } = leafLook(progress)
-  return { green: presence * (1 - fall), fall: presence * fall }
+export function leafLook(progress: number): LeafAmounts {
+  const stage = STAGE_BOUNDARIES.filter((boundary) => progress >= boundary).length
+  const look = STAGE_LOOKS[stage] ?? BARE_LOOK
+  const fall =
+    progress <= FALL_KEYS.half
+      ? (0.5 * progress) / FALL_KEYS.half
+      : 0.5 + 0.5 * Math.min(1, (progress - FALL_KEYS.half) / (FALL_KEYS.full - FALL_KEYS.half))
+  return { shapes: look.shapes, leaves: look.leaves, fall: Math.max(0, fall) }
 }
 
 /** Segments between two sample moments (a sixth). */
@@ -180,20 +180,9 @@ export function buildHoldAt(time: number): boolean {
   return through > 0.5 - (FADE_SECONDS / 2 + BUILD_HOLD_LEAD) / SAMPLE_SECONDS && through < BUILD_HOLD_END
 }
 
-/** The looks of the leaves of a tree or bush it holds between changes: green, half colorful, fully colorful, half bare (then bare). */
-export const STAGE_LOOKS: { presence: number; fall: number }[] = [
-  { presence: 1, fall: 0 },
-  { presence: 1, fall: 0.5 },
-  { presence: 1, fall: 1 },
-  { presence: 0.5, fall: 1 },
-]
-
-/** Where along its change a tree or bush passes from one of those looks to the next (halfway between their keys). */
-const STAGE_BOUNDARIES = [1 / 12, 1 / 3, 2 / 3, 11 / 12]
-
 /**
  * The look of a tree's or bush's leaves for objects drawn from ready-made images: which look it holds
- * (`a`, 0-3, or 4 for bare), and while it passes to the next (`b`) over a few seconds, how far (`w`);
+ * (`a`, an index into `STAGE_LOOKS`, or its length for bare), and while it passes to the next (`b`) over a few seconds, how far (`w`);
  * `soon` is whether a change is about to start (the next look should be made).
  *
  * @param progress - Its progress, 0-1 (see `transitionProgress`).

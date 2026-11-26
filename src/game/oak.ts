@@ -1,15 +1,15 @@
 import { fallTones, newLeafSeason, parseRgb } from './leafColors'
 import { requestWork, workerUsable } from './vegClient'
 import { enqueueJob } from './work'
-import { STAGE_LOOKS } from './seasons'
+import { STAGE_LOOKS, type LeafAmounts } from './seasons'
 import type { TreeLobe, TreeSegment, TreeShape } from './types'
 
 /**
- * What a tree's leaves look like: `presence` is the share of its leaves still there (0 is bare), `fall` the
+ * What a tree's leaves look like: `shapes` and `leaves` are the shares of its large leafy shapes and small leaves still there (both 0 is bare), `fall` the
  * share of those in their fall color (the rest are green). `haze` blends fall colors toward the haze for
  * distant trees.
  */
-export type TreeLook = { presence: number; fall: number; haze?: { color: string; amount: number } }
+export type TreeLook = LeafAmounts & { haze?: { color: string; amount: number } }
 
 /**
  * A color between two others.
@@ -25,7 +25,7 @@ function lerpColor(a: string, b: string, t: number): string {
 }
 
 /** How some leaves of a clump differ from the green ones: which are missing and which are in fall color. */
-export type LeafMix = { tonesB: string[]; fall: number; presence: number; seed: number }
+export type LeafMix = LeafAmounts & { tonesB: string[]; seed: number; clump: number }
 
 /**
  * A repeatable pseudo-random number in [0, 1) from two integers.
@@ -374,8 +374,8 @@ function fillBlob(
  * @param rand - Deterministic random source.
  * @param detail - Leaf density from 0 (single plain blob) to 1 (full).
  * @param overlap - 0 for airy foliage with gaps (trees); toward 1 the sub-blobs pack tighter.
- * @param mix - Some leaves missing and some in a second set of tones (the same ones every time, so a leaf
- *   that is gone stays gone as more of them go).
+ * @param mix - Some shapes or leaves missing and some in a second set of tones (the same ones every time, so
+ *   what is gone stays gone as more goes).
  */
 export function drawLeafyDisk(
   ctx: CanvasRenderingContext2D,
@@ -407,27 +407,28 @@ export function drawLeafyDisk(
   }
   const colorOf = (set: string[], shade: number, amount: number): string =>
     amount <= 0 ? toneIn(set, shade) : lerpColor(toneIn(set, shade), toneIn(mix?.tonesB ?? set, shade), amount)
-  // The solid mass under the leaves thins out before the leaves do, so a half-bare crown shows branches.
-  const blobShare = mix ? Math.max(0, Math.min(1, (mix.presence - 0.15) / 0.55)) : 1
+  // Which large shape goes when is fixed, not random: the shapes are numbered through the clumps and ranked by
+  // steps of the golden ratio, which spreads each step's losses evenly over the whole plant.
+  const rank = (index: number): number => (index * 0.6180339887) % 1
   const blobColor = (j: number): string | null => {
     if (!mix) {
       return toneIn(tones, baseTone)
     }
-    if (hash01(mix.seed, 100 + j) >= blobShare) {
+    // A clump drawn as a single shape (far away, no small leaves) stands for both: it goes as a whole.
+    const gone = detail < 0.12 ? rank(mix.clump + 1) >= (mix.shapes + mix.leaves) / 2 : rank(mix.clump * 5 + j) >= mix.shapes
+    if (gone) {
       return null
     }
     return colorOf(tones, baseTone, amountOf(200 + j))
   }
-  // Each leaf is there or not, by its own fixed draw nudged by its lobe's (so a lobe loses its leaves a
-  // little before or after another one), and has its own amount of fall color.
+  // The small leaves go in two halves, every other one first, and each has its own amount of fall color.
   let leafCount = 0
-  const lobeShed = mix ? (hash01(mix.seed, 5001) - 0.5) * 0.4 * (4 * mix.presence * (1 - mix.presence)) : 0
   const leafLook = (): { set: string[]; amount: number } | null => {
     leafCount += 1
     if (!mix) {
       return { set: tones, amount: 0 }
     }
-    if (hash01(mix.seed, leafCount) >= mix.presence + lobeShed) {
+    if ((leafCount % 2 === 0 ? 0.25 : 0.75) >= mix.leaves) {
       return null
     }
     return { set: tones, amount: amountOf(1000 + leafCount) }
@@ -848,7 +849,7 @@ export function* drawOakSteps(
   trunkColor: string,
   leafDetail = 1,
   crownOnly = false,
-  look: TreeLook = { presence: 1, fall: 0 },
+  look: TreeLook = { shapes: 1, leaves: 1, fall: 0 },
 ): Generator<void> {
   ctx.save()
   ctx.translate(x, y)
@@ -879,7 +880,7 @@ export function* drawOakSteps(
     }
   }
   yield
-  if (look.presence > 0) {
+  if (look.shapes > 0 || look.leaves > 0) {
     const rand = seededRandom(shape.id * 7919 + 13)
     for (let index = 0; index < shape.lobes.length; index += 1) {
       const lobe = shape.lobes[index]
@@ -888,15 +889,17 @@ export function* drawOakSteps(
       }
       // Every lobe has the tree's fall color with its own small shift in hue.
       const mix: LeafMix | undefined =
-        look.fall > 0 || look.presence < 1
+        look.fall > 0 || look.shapes < 1 || look.leaves < 1
           ? {
               tonesB:
                 look.fall > 0
                   ? fallTones(shape.leaf.hue, (seededRandom(shape.id * 31 + index)() - 0.5) * 18, look.haze ?? null, shape.leaf.sat)
                   : tones,
               fall: look.fall,
-              presence: look.presence,
+              shapes: look.shapes,
+              leaves: look.leaves,
               seed: shape.id * 131 + index,
+              clump: index,
             }
           : undefined
       drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail, 0, mix)
@@ -928,7 +931,7 @@ export function drawOakVector(
   trunkColor: string,
   leafDetail = 1,
   crownOnly = false,
-  look: TreeLook = { presence: 1, fall: 0 },
+  look: TreeLook = { shapes: 1, leaves: 1, fall: 0 },
 ): void {
   for (const step of drawOakSteps(ctx, shape, x, y, tones, trunkColor, leafDetail, crownOnly, look)) {
     void step
@@ -936,23 +939,25 @@ export function drawOakVector(
 }
 
 /** The parts a foreground tree is drawn from: the trunk and branches, and its crown in each of the looks it holds (`STAGE_LOOKS`). */
-export type OakPart = 'trunk' | 'c0' | 'c1' | 'c2' | 'c3'
+export type OakPart = 'trunk' | `c${number}`
 
-const PART_LOOKS: Record<OakPart, TreeLook> = {
-  trunk: { presence: 0, fall: 0 },
-  c0: { ...(STAGE_LOOKS[0] ?? { presence: 1, fall: 0 }) },
-  c1: { ...(STAGE_LOOKS[1] ?? { presence: 1, fall: 0.5 }) },
-  c2: { ...(STAGE_LOOKS[2] ?? { presence: 1, fall: 1 }) },
-  c3: { ...(STAGE_LOOKS[3] ?? { presence: 0.5, fall: 1 }) },
+/**
+ * The leaves a part is painted with.
+ *
+ * @param part - The part.
+ */
+function partLook(part: OakPart): TreeLook {
+  const bare = { shapes: 0, leaves: 0, fall: 0 }
+  return part === 'trunk' ? bare : { ...(STAGE_LOOKS[Number(part.slice(1))] ?? bare) }
 }
 
 /**
  * The part of a crown for one of the looks.
  *
- * @param stage - 0-3.
+ * @param stage - An index into `STAGE_LOOKS`.
  */
 export function crownPart(stage: number): OakPart | null {
-  return stage === 0 ? 'c0' : stage === 1 ? 'c1' : stage === 2 ? 'c2' : stage === 3 ? 'c3' : null
+  return stage >= 0 && stage < STAGE_LOOKS.length ? `c${stage}` : null
 }
 
 /**
@@ -993,7 +998,7 @@ function* buildPartSteps(
   const ctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(scale, scale)
-    yield* drawOakSteps(ctx, shape, -minX, -minY, tones, trunkColor, 1, part !== 'trunk', PART_LOOKS[part])
+    yield* drawOakSteps(ctx, shape, -minX, -minY, tones, trunkColor, 1, part !== 'trunk', partLook(part))
   }
   return { canvas, offsetX: minX, offsetY: minY, width, height }
 }

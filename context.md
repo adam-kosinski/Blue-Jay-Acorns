@@ -565,3 +565,8 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## Drop rate 0.75 of the original again; faster NPC jays
 - `TIMELINE_RATE_FACTOR` is 0.75 (was 2/3, first 0.75 too); `NPC_SPEED_SCALE` 0.9 (was 0.75): the jays fly at 90% of the player's speed.
+
+## Fall: leaves go in fixed steps (large shapes first, then the small leaves in two halves)
+- Each whole tree or bush still has one random start in early fall and changes over two segments; everything after the start is fixed (`STAGE_BOUNDARIES` in `seasons.ts`): half colorful and fully colorful by 1/2 of the change, large shapes down to 2/3, 1/3 and none, half the small leaves, bare (changes at 1/12, 1/3, 0.58, 0.66, 0.74, 0.84, 0.94).
+- A look is `LeafAmounts` {shapes, leaves, fall} (was {presence, fall}). In `drawLeafyDisk` which shape goes when is a golden-ratio ranking over the plant's clumps (spread evenly); small leaves go every other one first. Far clumps drawn as a single shape (detail < 0.12) vanish whole, ranked the same way against the mean of the two shares.
+- Foreground trees and bushes hold seven crown looks (`c0`-`c6`), cross-faded as before; bushes now drop the looks that are over, as trees did.

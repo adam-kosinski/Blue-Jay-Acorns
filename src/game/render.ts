@@ -24,6 +24,7 @@ import {
   buildHoldAt,
   leafStageMix,
   STAGE_LOOKS,
+  type LeafAmounts,
   leafLook,
   sampleAt,
   sampleIndexAt,
@@ -3147,7 +3148,7 @@ function fernOverhangsWater(world: World, fern: Fern): boolean {
 }
 
 /** The parts a foreground bush is drawn from: its wood, and its leaves in each look it holds (`STAGE_LOOKS`). */
-type BushPart = 'wood' | 'c0' | 'c1' | 'c2' | 'c3'
+type BushPart = 'wood' | `c${number}`
 
 /** A bush part drawn once into a bitmap, since its many leaves are expensive to draw every frame. */
 type BushSprite = {
@@ -3245,25 +3246,27 @@ function* paintBushLeaves(
   bush: Bush,
   tonesFor: (lobe: BushLobe) => string[],
   haze: { color: string; amount: number } | null,
-  look: { presence: number; fall: number },
+  look: LeafAmounts,
   baseTone: number,
   detail: number,
 ): Generator<void> {
-  if (look.presence <= 0) {
+  if (look.shapes <= 0 && look.leaves <= 0) {
     return
   }
   const rand = seededRandom(Math.floor(bush.x * 13))
   for (const [index, lobe] of bush.lobes.entries()) {
     const mix =
-      look.fall > 0 || look.presence < 1
+      look.fall > 0 || look.shapes < 1 || look.leaves < 1
         ? {
             tonesB:
               look.fall > 0
                 ? fallTones(bush.leaf.hue, (seededRandom(Math.floor(bush.x * 5) + index)() - 0.5) * 16, haze, bush.leaf.sat)
                 : tonesFor(lobe),
             fall: look.fall,
-            presence: look.presence,
+            shapes: look.shapes,
+            leaves: look.leaves,
             seed: Math.floor(bush.x * 17) + index * 7,
+            clump: index,
           }
         : undefined
     drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, tonesFor(lobe), baseTone, rand, detail, 1, mix)
@@ -3303,7 +3306,7 @@ function* buildBushPart(bush: Bush, res: number, part: BushPart): Generator<void
     if (part === 'wood') {
       drawBushWood(ctx, bush, BUSH_WOOD_COLOR)
     } else {
-      yield* paintBushLeaves(ctx, bush, (lobe) => shadeRamp(lobe.color), null, STAGE_LOOKS[Number(part.slice(1))] ?? { presence: 1, fall: 0 }, 2, 0.9)
+      yield* paintBushLeaves(ctx, bush, (lobe) => shadeRamp(lobe.color), null, STAGE_LOOKS[Number(part.slice(1))] ?? { shapes: 1, leaves: 1, fall: 0 }, 2, 0.9)
     }
   }
   return { canvas, res, offsetX: minX - pad, offsetY: minY - pad, width, height }
@@ -3381,14 +3384,14 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
   const stages: [number, number][] = mix.w > 0 && mix.a !== mix.b ? [[mix.a, 1 - mix.w], [mix.b, mix.w]] : [[mix.a, 1]]
   const shown: { sprite: BushSprite; alpha: number }[] = []
   for (const [stage, alpha] of stages) {
-    if (stage > 3 || alpha <= 0) {
+    if (stage >= STAGE_LOOKS.length || alpha <= 0) {
       continue
     }
     let sprite = bushPartSprite(bush, res, `c${stage}` as BushPart, false)
     if (!sprite) {
       queueBushPart(bush, res, `c${stage}` as BushPart, 1)
       for (const other of [stage - 1, stage + 1, stage - 2, stage + 2]) {
-        sprite = other >= 0 && other <= 3 ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
+        sprite = other >= 0 && other < STAGE_LOOKS.length ? bushPartSprite(bush, res, `c${other}` as BushPart, false) : null
         if (sprite) {
           break
         }
@@ -3408,8 +3411,14 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
     }
     endCrossfade(bush)
     // Holding a look: the next one is made when its change is near.
-    if (mix.soon && mix.a < 3) {
+    if (mix.soon && mix.a < STAGE_LOOKS.length - 1) {
       queueBushPart(bush, res, `c${mix.a + 1}` as BushPart, 6)
+    }
+    // Let go of the looks that are over (memory), once the one held is there.
+    if (mix.a >= STAGE_LOOKS.length || bushPartSprite(bush, res, `c${mix.a}`, false)) {
+      for (let old = 0; old < Math.min(mix.a, STAGE_LOOKS.length); old += 1) {
+        bushParts.get(bush)?.delete(`c${old}|${res.toFixed(2)}`)
+      }
     }
   }
 }
