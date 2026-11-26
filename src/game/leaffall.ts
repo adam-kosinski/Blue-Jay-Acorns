@@ -22,7 +22,7 @@ const SPELLS: [number, number][] = [
 const RAMP_SECONDS = 3
 
 /** Leaves starting to fall per second at a spell's height, over the stretch leaves are made for. */
-const SPAWN_PER_SECOND = 0.9
+const SPAWN_PER_SECOND = 1.35
 
 /** How far past each side of the screen leaves are made too (so some are already there when the view moves). */
 const SPAWN_MARGIN = 300
@@ -105,7 +105,8 @@ function newLeaf(world: World, cameraX: number, cameraY: number, viewWidth: numb
     swing: between(28, 62),
     speed: between(60, 90),
     drift: between(-12, 12),
-    length: between(15, 22),
+    // About as big as the larger leaves of the litter.
+    length: between(26, 36),
     angle: Math.PI / 2,
     color: tones[1 + Math.floor(Math.random() * (tones.length - 1))] ?? '#b5702f',
     landed: false,
