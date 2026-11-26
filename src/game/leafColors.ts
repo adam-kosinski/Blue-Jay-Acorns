@@ -126,8 +126,14 @@ export function fallTones(hue: number, hueShift: number, haze: { color: string; 
   })
 }
 
-/** The new leaves of spring, dark to light: a light yellow-green (lime), well apart from the summer greens. */
+/** The hues and lightness of the new leaves of spring, dark to light: a light yellow-green (lime), well apart from the summer greens. */
 const SPRING_TONES = ['#6fa52c', '#86bb34', '#9ecf3e', '#b7e04e']
+
+/** How much of those colors' saturation the spring leaves have. */
+const SPRING_SATURATION = 0.7
+
+/** How far (degrees of hue) the spring leaves are turned from those colors toward green (they are about 87, summer about 130). */
+const SPRING_GREENER = 10
 
 /**
  * The four tones of the spring leaves.
@@ -135,7 +141,11 @@ const SPRING_TONES = ['#6fa52c', '#86bb34', '#9ecf3e', '#b7e04e']
  * @param haze - Blend toward this color by this amount (distant trees), or null.
  */
 export function springTones(haze: { color: string; amount: number } | null): string[] {
-  return haze ? SPRING_TONES.map((tone) => mixHex(tone, haze.color, haze.amount)) : SPRING_TONES
+  return SPRING_TONES.map((hex) => {
+    const { h, s, l } = hexToHsl(hex)
+    const tone = hslToHex(h + SPRING_GREENER, s * SPRING_SATURATION, l)
+    return haze ? mixHex(tone, haze.color, haze.amount) : tone
+  })
 }
 
 /** How much darker (lightness share) and less saturated (saturation share) greens are in winter. */

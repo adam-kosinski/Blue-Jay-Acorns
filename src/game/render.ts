@@ -15,6 +15,7 @@ import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type 
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
+import { drawLeafFall, updateLeafFall } from './leaffall'
 import { drawSnowfall } from './snowfall'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
@@ -23,6 +24,7 @@ import {
   SEGMENT_SECONDS,
   buildHoldAt,
   leafStageMixAt,
+  mossFadeAt,
   BARE_STAGE,
   STAGE_LOOKS,
   type LeafAmounts,
@@ -237,6 +239,8 @@ export function renderScene(
   drawCreek(ctx, world, camera, viewWidth, viewHeight)
   drawMounds(ctx, world, camera.x, viewWidth)
   beginNpcLabels()
+  updateLeafFall(world, camera.x, camera.y, viewWidth)
+  drawLeafFall(ctx, world, 'resting', camera.x, viewWidth)
   for (const npc of world.npcs) {
     const bx = npc.bird.x + npc.bird.size / 2
     if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
@@ -270,6 +274,7 @@ export function renderScene(
   if (showMinimap) {
     drawFollowArrows(ctx, world)
   }
+  drawLeafFall(ctx, world, 'air', camera.x, viewWidth)
 
   ctx.restore()
 
@@ -1175,7 +1180,7 @@ function* buildVegImage(
         ctx.save()
         ctx.translate(at.x, at.y)
         ctx.rotate(at.angle)
-        drawFallenLog(ctx, log, layer.trunkColor, layer.fog, transitionProgress(log.fadeStart, time))
+        drawFallenLog(ctx, log, layer.trunkColor, layer.fog, mossFadeAt(log.fadeStart, time))
         ctx.restore()
         yield
       }
@@ -2477,7 +2482,7 @@ function drawBuriedProps(
           groundYAt(world.terrain, rock.x),
           groundYAt(world.terrain, rock.x + reach),
         ),
-        fadeOf(rock.fadeStart, world),
+        mossFadeAt(rock.fadeStart, world.season.time),
       )
     }
   }
@@ -2491,7 +2496,7 @@ function drawBuriedProps(
         groundYAt(world.terrain, log.x + log.length / 4),
         groundYAt(world.terrain, log.x + log.length / 2),
       )
-      drawLog(ctx, log, under, fadeOf(log.fadeStart, world))
+      drawLog(ctx, log, under, mossFadeAt(log.fadeStart, world.season.time))
     }
   }
 }
@@ -2608,7 +2613,7 @@ function drawShoreRocks(ctx: CanvasRenderingContext2D, world: World, camera: Cam
   ctx.clip()
   for (const rock of world.rocks) {
     if (isCreekRock(world, rock) && rock.x + rock.rx * 1.5 > viewLeft && rock.x - rock.rx * 1.5 < viewRight) {
-      drawRock(ctx, rock, groundYAt(world.terrain, rock.x), fadeOf(rock.fadeStart, world))
+      drawRock(ctx, rock, groundYAt(world.terrain, rock.x), mossFadeAt(rock.fadeStart, world.season.time))
     }
   }
   ctx.restore()
@@ -2635,7 +2640,7 @@ function drawFrontProps(
   const items: { y: number; draw: () => void }[] = []
   for (const front of world.frontRocks) {
     if (front.rock.x + front.rock.rx * 1.5 > left && front.rock.x - front.rock.rx * 1.5 < right) {
-      items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y, fadeOf(front.rock.fadeStart, world)) })
+      items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y, mossFadeAt(front.rock.fadeStart, world.season.time)) })
     }
   }
   for (const front of world.frontBushes) {

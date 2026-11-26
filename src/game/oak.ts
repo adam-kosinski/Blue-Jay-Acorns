@@ -352,7 +352,7 @@ export function seededRandom(seed: number): () => number {
  * @param color - Fill color.
  * @param midrib - Whether to draw the faint midrib.
  */
-function drawLeaf(
+export function drawLeaf(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,

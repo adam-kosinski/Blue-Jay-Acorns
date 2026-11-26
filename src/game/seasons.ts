@@ -126,6 +126,18 @@ export function leafLookAt(start: number, time: number): LeafAmounts {
   return { shapes: look.shapes, leaves: look.leaves, fall: Math.max(0, fall) }
 }
 
+/**
+ * How far into its winter color a rock's or log's moss is, 0 (summer) to 1: it goes there in fall (see
+ * `transitionProgress`) and comes back over the whole of spring.
+ *
+ * @param start - The object's start, 0-1.
+ * @param time - Seconds along the timeline.
+ */
+export function mossFadeAt(start: number, time: number): number {
+  const spring = Math.max(0, Math.min(1, time / SEGMENT_SECONDS - 7))
+  return transitionProgress(start, time) * (1 - spring)
+}
+
 /** Segments between two sample moments (a sixth). */
 const SAMPLE_STEP = 1 / 6
 
@@ -133,9 +145,9 @@ const SAMPLE_STEP = 1 / 6
 const FALL_SAMPLES = 19
 
 /** The spring's sample moments, in segments along the timeline. */
-const SPRING_SAMPLES = [7.5, 7.625, 7.75, 7.875, 8]
+const SPRING_SAMPLES = [7.25, 7.5, 7.625, 7.75, 7.875, 8]
 
-/** From here (in segments) the images pass from the last of fall's moments to the first of spring's. */
+/** The start of spring (in segments): from here the images pass from the last of fall's moments on to spring's. */
 const SPRING_APPROACH = 7
 
 /** The number of moments along the timeline that images of the far layers are made for. */
@@ -174,15 +186,18 @@ function smooth(x: number): number {
 export function sampleIndexAt(time: number): number {
   const u = time / SEGMENT_SECONDS
   const lastFall = FALL_SAMPLES - 1
-  const firstSpring = SPRING_SAMPLES[0] ?? 7.5
   if (u < SPRING_APPROACH) {
     return Math.min(lastFall, (u - 1) / SAMPLE_STEP)
   }
-  if (u < firstSpring) {
-    return lastFall + (u - SPRING_APPROACH) / (firstSpring - SPRING_APPROACH)
+  // Through spring: the last of fall's moments stands at its start, followed by spring's.
+  let from = SPRING_APPROACH
+  for (const [index, to] of SPRING_SAMPLES.entries()) {
+    if (u < to || index === SPRING_SAMPLES.length - 1) {
+      return lastFall + index + (u - from) / (to - from)
+    }
+    from = to
   }
-  const step = (SPRING_SAMPLES[1] ?? 8) - firstSpring
-  return FALL_SAMPLES + (u - firstSpring) / step
+  return lastFall
 }
 
 /**

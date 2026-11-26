@@ -584,3 +584,8 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Late in spring trees and bushes get new single leaves (no large shapes) in light yellow-green (`springTones`): bare, a quarter, half, all. `STAGE_LOOKS` holds fall's looks, bare (`BARE_STAGE` 8) and three spring looks; each plant starts between 7.5 and 7.65 segments (by its same random start), takes 0.35 segment, with changes at 0.05, 0.45 and 0.85 of it (`SPRING` in `seasons.ts`); all are done before the year ends. `leafLookAt(start, time)` (far layers' images) and `leafStageMixAt(start, time)` (foreground) replace the progress-based functions.
 - Far layers have five spring sample moments (7.5 to 8 every eighth of a segment) after fall's 19; the position rests at the last fall moment through winter and the spring images are made from 7.0 on (no build hold in spring). In spring, far clumps are drawn with single leaves (detail at least 0.3).
 - The game's canvas context is opaque (`alpha: false`).
+
+## Spring leaf color, spring moss, falling leaves
+- `springTones`: the lime tones at 0.7 of their saturation and turned 10 degrees toward green.
+- Rock and log moss: `mossFadeAt` = the fall change, taken back linearly over spring (7 to 8 segments); ferns stay in winter color. Far layers have an added spring sample moment at 7.25 so their log moss changes gradually.
+- `leaffall.ts`: falling leaves in four spells in mid fall and the first half of late fall (`SPELLS`), a few at a time, spawned above the screen in world coordinates, swinging (fastest mid-swing, tipped at the ends), landing on the foreground ground (kept, at most 80; hidden under snow) or sinking in the creek. State is per world.
