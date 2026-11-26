@@ -11,7 +11,7 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
+import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type LeafLayer, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
@@ -3254,6 +3254,7 @@ function* paintBushLeaves(
     return
   }
   const rand = seededRandom(Math.floor(bush.x * 13))
+  const leaves: LeafLayer = []
   for (const [index, lobe] of bush.lobes.entries()) {
     const mix =
       look.fall > 0 || look.shapes < 1 || look.leaves < 1
@@ -3269,9 +3270,10 @@ function* paintBushLeaves(
             clump: index,
           }
         : undefined
-    drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, tonesFor(lobe), baseTone, rand, detail, 1, mix)
+    drawLeafyDisk(ctx, lobe.dx, lobe.dy, lobe.radius, tonesFor(lobe), baseTone, rand, detail, 1, leaves, mix)
     yield
   }
+  yield* drawLeafLayer(ctx, leaves, look.leaves)
 }
 
 /**

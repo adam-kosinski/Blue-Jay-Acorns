@@ -312,6 +312,56 @@ function drawLeaf(
   ctx.restore()
 }
 
+/** One small leaf waiting to be drawn. */
+type PendingLeaf = { x: number; y: number; length: number; angle: number; color: string; midrib: boolean }
+
+/**
+ * A plant's small leaves, gathered while its clumps' large shapes are drawn (`drawLeafyDisk`) and drawn after
+ * all of them (`drawLeafLayer`). Only the leaves that no later clump's shapes cover are kept, so none are
+ * made for the hidden insides of a crown.
+ */
+export type LeafLayer = PendingLeaf[]
+
+/**
+ * Whether a point is inside a blob (its outline taken a little smaller than its corners).
+ *
+ * @param x - Point X.
+ * @param y - Point Y.
+ * @param blob - The blob's center and outline corners.
+ */
+function insideBlob(x: number, y: number, blob: { cx: number; cy: number; pts: [number, number][] }): boolean {
+  // The point is moved outward from the center instead of every corner inward.
+  const px = blob.cx + (x - blob.cx) / 0.92
+  const py = blob.cy + (y - blob.cy) / 0.92
+  let inside = false
+  for (let i = 0, j = blob.pts.length - 1; i < blob.pts.length; j = i, i += 1) {
+    const a = blob.pts[i]
+    const b = blob.pts[j]
+    if (a && b && a[1] > py !== b[1] > py && px < a[0] + ((py - a[1]) / (b[1] - a[1])) * (b[0] - a[0])) {
+      inside = !inside
+    }
+  }
+  return inside
+}
+
+/**
+ * Draws a plant's small leaves, in steps. With a share of them gone, every other one goes first.
+ *
+ * @param ctx - 2D canvas context.
+ * @param layer - The leaves.
+ * @param share - The share of them still there, 0-1.
+ */
+export function* drawLeafLayer(ctx: CanvasRenderingContext2D, layer: LeafLayer, share: number): Generator<void> {
+  for (const [index, leaf] of layer.entries()) {
+    if ((index % 2 === 1 ? 0.25 : 0.75) < share) {
+      drawLeaf(ctx, leaf.x, leaf.y, leaf.length, leaf.angle, leaf.color, leaf.midrib)
+    }
+    if (index % 250 === 249) {
+      yield
+    }
+  }
+}
+
 /**
  * Fills one lumpy blob (random radii, stretch, and orientation) and returns its outline corners.
  *
@@ -362,8 +412,9 @@ function fillBlob(
 
 /**
  * Draws a leafy clump with an organic, fluffy look: several lumpy sub-blobs leave natural gaps
- * between them, leaves are scattered throughout (shaded lighter toward the upper left, hanging
- * mostly downward), and a few leaves straddle each outline so they poke partly outside.
+ * between them. Its small leaves (scattered throughout, shaded lighter toward the upper left, hanging
+ * mostly downward, a few straddling each outline so they poke partly outside) are not drawn here but
+ * added to the plant's leaf layer, and the leaves of earlier clumps that this clump covers are taken out of it.
  *
  * @param ctx - 2D canvas context.
  * @param x - Center X.
@@ -374,6 +425,7 @@ function fillBlob(
  * @param rand - Deterministic random source.
  * @param detail - Leaf density from 0 (single plain blob) to 1 (full).
  * @param overlap - 0 for airy foliage with gaps (trees); toward 1 the sub-blobs pack tighter.
+ * @param layer - The plant's small leaves so far (changed).
  * @param mix - Some shapes or leaves missing and some in a second set of tones (the same ones every time, so
  *   what is gone stays gone as more goes).
  */
@@ -386,7 +438,8 @@ export function drawLeafyDisk(
   baseTone: number,
   rand: () => number,
   detail: number,
-  overlap = 0,
+  overlap: number,
+  layer: LeafLayer,
   mix?: LeafMix,
 ): void {
   const toneIn = (set: string[], i: number): string =>
@@ -421,17 +474,11 @@ export function drawLeafyDisk(
     }
     return colorOf(tones, baseTone, amountOf(200 + j))
   }
-  // The small leaves go in two halves, every other one first, and each has its own amount of fall color.
+  // Each small leaf has its own amount of fall color.
   let leafCount = 0
-  const leafLook = (): { set: string[]; amount: number } | null => {
+  const leafColor = (shade: number): string => {
     leafCount += 1
-    if (!mix) {
-      return { set: tones, amount: 0 }
-    }
-    if ((leafCount % 2 === 0 ? 0.25 : 0.75) >= mix.leaves) {
-      return null
-    }
-    return { set: tones, amount: amountOf(1000 + leafCount) }
+    return colorOf(tones, shade, amountOf(1000 + leafCount))
   }
 
   if (detail < 0.12) {
@@ -456,6 +503,19 @@ export function drawLeafyDisk(
   const perBlob = Math.max(1, Math.round(innerTotal / count))
   const edgeLeaves = Math.max(1, Math.round(1 + 2 * detail))
 
+  // This clump's shapes lie over the leaves of the clumps before it: those they hide are dropped (whether or
+  // not the shapes are still there now, so that the same leaves are there at every time of year).
+  const reach = r * 1.5
+  let kept = 0
+  for (const leaf of layer) {
+    const near = Math.abs(leaf.x - x) < reach && Math.abs(leaf.y - y) < reach
+    if (!near || !blobs.some((blob) => insideBlob(leaf.x, leaf.y, blob))) {
+      layer[kept] = leaf
+      kept += 1
+    }
+  }
+  layer.length = kept
+
   for (const blob of blobs) {
     const corners = blob.pts.length
     const at = (i: number): [number, number] =>
@@ -477,10 +537,7 @@ export function drawLeafyDisk(
       const len = leafLen * (0.8 + rand() * 0.5)
       const angle = Math.PI + (rand() - 0.5) * 1.5
       const shade = baseTone + light * 1.5 + (rand() - 0.5) * 1.4
-      const look = leafLook()
-      if (look) {
-        drawLeaf(ctx, lx, ly, len, angle, colorOf(look.set, shade, look.amount), detail >= 0.6)
-      }
+      layer.push({ x: lx, y: ly, length: len, angle, color: leafColor(shade), midrib: detail >= 0.6 })
     }
 
     // A few leaves centered on the outline, so they stick partly outside for a fluffy edge.
@@ -495,10 +552,7 @@ export function drawLeafyDisk(
       const len = leafLen * (0.9 + rand() * 0.4)
       const angle = Math.PI + (rand() - 0.5) * 2 + (ex - blob.cx > 0 ? 0.4 : -0.4)
       const shade = baseTone + light * 1.1 + (rand() - 0.5) * 1.2
-      const look = leafLook()
-      if (look) {
-        drawLeaf(ctx, ex, ey, len, angle, colorOf(look.set, shade, look.amount), detail >= 0.6)
-      }
+      layer.push({ x: ex, y: ey, length: len, angle, color: leafColor(shade), midrib: detail >= 0.6 })
     }
   }
 }
@@ -882,6 +936,7 @@ export function* drawOakSteps(
   yield
   if (look.shapes > 0 || look.leaves > 0) {
     const rand = seededRandom(shape.id * 7919 + 13)
+    const leaves: LeafLayer = []
     for (let index = 0; index < shape.lobes.length; index += 1) {
       const lobe = shape.lobes[index]
       if (!lobe) {
@@ -902,9 +957,10 @@ export function* drawOakSteps(
               clump: index,
             }
           : undefined
-      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail, 0, mix)
+      drawLeafyDisk(ctx, lobe.x, lobe.y, lobe.r, tones, lobe.tone, rand, leafDetail, 0, leaves, mix)
       yield
     }
+    yield* drawLeafLayer(ctx, leaves, look.leaves)
   }
   ctx.restore()
 }
