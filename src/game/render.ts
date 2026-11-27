@@ -883,7 +883,8 @@ function drawForest(
 /** A far rock painted at its resolution, kept until what shows of it changes (see `drawFuzzyRock`): a slot of the shared rock atlas. */
 type FuzzyRock = { sx: number; sy: number; key: string; halfWidth: number; above: number; width: number; height: number; res: number }
 
-let fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
+/** Each far rock's images (at most a few: the two steps of its melt it is between, and one going out of use). */
+let fuzzyRocks = new WeakMap<Rock, FuzzyRock[]>()
 
 /**
  * All far rocks are painted into one shared bitmap (each in a slot of its own), not each into a small bitmap of
@@ -972,18 +973,34 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
   const step = (value: number): number => Math.round(value * steps + phase)
-  // (Its cap's shrinking while it melts takes 12 steps on every layer: coarser ones showed as jumps in its size,
-  // most of all on the rocks along the creek's banks.)
-  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(rockSnowSize(rock, seasonNow) * ROCK_MELT_STEPS + phase)}|${step(layers.thin)}|${step(layers.full)}`
-  let sprite = fuzzyRocks.get(rock)
-  if (!sprite || sprite.key !== key) {
+  // While it melts, its cap shrinks: a shrinking edge jumps at every step however fine, so the rock is painted at the
+  // two steps it is between and the two are blended by how far along it is (smooth, and still only repainted once
+  // a step).
+  const meltAt = rockSnowSize(rock, seasonNow) * ROCK_MELT_STEPS + phase
+  const lower = Math.floor(meltAt)
+  const along = meltAt - lower
+  const rest = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(layers.thin)}|${step(layers.full)}`
+  const pad = 3
+  const halfWidth = rock.rx * 1.4 + pad
+  const above = rock.ry * 1.7 + pad
+  const below = rock.ry * 0.6 + pad
+  const width = Math.max(1, Math.ceil(halfWidth * 2 * res))
+  const height = Math.max(1, Math.ceil((above + below) * res))
+  let held = fuzzyRocks.get(rock)
+  if (!held) {
+    held = []
+    fuzzyRocks.set(rock, held)
+  }
+  const list = held
+  const wanted = [`${lower}|${rest}`, `${lower + 1}|${rest}`]
+  // The image of one melt step: kept, or painted (into the slot of an image no longer wanted, if one fits).
+  const imageAt = (n: number): FuzzyRock | null => {
+    const key = `${n}|${rest}`
+    const found = list.find((sprite) => sprite.key === key)
+    if (found) {
+      return found
+    }
     ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
-    const pad = 3
-    const halfWidth = rock.rx * 1.4 + pad
-    const above = rock.ry * 1.7 + pad
-    const below = rock.ry * 0.6 + pad
-    const width = Math.max(1, Math.ceil(halfWidth * 2 * res))
-    const height = Math.max(1, Math.ceil((above + below) * res))
     if (!rockAtlas) {
       rockAtlas = document.createElement('canvas')
       rockAtlas.width = ROCK_ATLAS_SIZE
@@ -991,12 +1008,18 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
       rockAtlasCtx = rockAtlas.getContext('2d')
     }
     const actx = rockAtlasCtx
-    // The same slot while the rock's size stays the same, a new one if it changes.
-    const slot = sprite && sprite.width === width && sprite.height === height ? sprite : atlasSlot(width, height)
+    const spareIndex = list.findIndex((sprite) => !wanted.includes(sprite.key) && sprite.width === width && sprite.height === height)
+    const spare = spareIndex >= 0 ? list.splice(spareIndex, 1)[0] : undefined
+    const slot = spare ?? atlasSlot(width, height)
     if (!actx || !slot) {
-      drawRockSimple(ctx, rock, groundY)
-      return
+      return null
     }
+    // (A full atlas starts over, and with it every rock's list: this one's is taken up again.)
+    if (fuzzyRocks.get(rock) !== list) {
+      list.length = 0
+      fuzzyRocks.set(rock, list)
+    }
+    rockSnowSizeOverride = Math.max(0, Math.min(1, (n - phase) / ROCK_MELT_STEPS))
     actx.save()
     actx.setTransform(1, 0, 0, 1, 0, 0)
     actx.clearRect(slot.sx, slot.sy, width, height)
@@ -1006,13 +1029,39 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
     actx.setTransform(res, 0, 0, res, slot.sx + (halfWidth - rock.x) * res, slot.sy + (above - baseY) * res)
     drawRockSimple(actx, rock, groundY)
     actx.restore()
-    sprite = { sx: slot.sx, sy: slot.sy, key, halfWidth, above, width, height, res }
-    fuzzyRocks.set(rock, sprite)
+    rockSnowSizeOverride = null
+    const sprite: FuzzyRock = { sx: slot.sx, sy: slot.sy, key, halfWidth, above, width, height, res }
+    list.push(sprite)
+    // Images of steps long gone are let go (their slots are reused by the next ones).
+    while (list.length > 3) {
+      list.shift()
+    }
+    return sprite
   }
-  if (!rockAtlas) {
+  const atlas = (): HTMLCanvasElement | null => rockAtlas
+  const put = (sprite: FuzzyRock, alpha: number): void => {
+    const image = atlas()
+    if (!image) {
+      return
+    }
+    const was = ctx.globalAlpha
+    ctx.globalAlpha = was * alpha
+    ctx.drawImage(image, sprite.sx, sprite.sy, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
+    ctx.globalAlpha = was
+  }
+  const low = imageAt(lower)
+  if (!low) {
+    drawRockSimple(ctx, rock, groundY)
     return
   }
-  ctx.drawImage(rockAtlas, sprite.sx, sprite.sy, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
+  put(low, 1)
+  // (The step with more snow over the one with less: the rock itself is the same in both, so only the snow fades.)
+  if (along > 0.002) {
+    const high = imageAt(lower + 1)
+    if (high) {
+      put(high, along)
+    }
+  }
 }
 
 /**
@@ -5602,7 +5651,13 @@ function rockShape(
  * @param rock - The rock.
  * @param time - Seconds along the timeline.
  */
+/** While set, every rock's snow is this size (to paint a far rock's image at one of its steps: see `drawFuzzyRock`). */
+let rockSnowSizeOverride: number | null = null
+
 function rockSnowSize(rock: Rock, time: number): number {
+  if (rockSnowSizeOverride !== null) {
+    return rockSnowSizeOverride
+  }
   const key = (rock.jitter.reduce((a, b) => a + b, 0) * 997) % 1
   return snowCapSize(time, key)
 }
