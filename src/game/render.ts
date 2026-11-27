@@ -28,6 +28,7 @@ import {
   fernBrownAt,
   fernDroopAt,
   springShareAt,
+  SPRING_LEAVES_FROM,
   FERNS_APART_MOMENT,
   leafStageMixAt,
   mossFadeAt,
@@ -140,7 +141,9 @@ const BACKDROP_KEYS: [number, BackdropLook][] = [
   [0.5, BACKDROP_GREEN],
   [2.5, BACKDROP_FALL],
   [4, BACKDROP_WINTER],
-  [7.5, BACKDROP_SPRING],
+  // (It stays so until the spring leaves start to come in, and turns with them.)
+  [SPRING_LEAVES_FROM, BACKDROP_WINTER],
+  [8, BACKDROP_SPRING],
 ]
 
 /**
@@ -3244,16 +3247,25 @@ function drawBirdFloatingOrNot(ctx: CanvasRenderingContext2D, bird: Player, worl
   const surface = world.terrain.creek.waterY
   const left = bird.x - bird.size
   const width = bird.size * 3
+  // It rides gently up and down on the water (the water's line stays where it is).
+  let phase = floatPhases.get(bird)
+  if (phase === undefined) {
+    phase = Math.random() * Math.PI * 2
+    floatPhases.set(bird, phase)
+  }
+  const bob = Math.sin(bird.animTime * FLOAT_BOB_RATE + phase) * bird.size * FLOAT_BOB
   ctx.save()
   ctx.beginPath()
   ctx.rect(left, surface - bird.size * 3, width, bird.size * 3)
   ctx.clip()
+  ctx.translate(0, bob)
   drawBird(ctx, bird)
   ctx.restore()
   ctx.save()
   ctx.beginPath()
   ctx.rect(left, surface, width, bird.size * 2)
   ctx.clip()
+  ctx.translate(0, bob)
   ctx.globalAlpha = 0.4
   drawBird(ctx, bird)
   ctx.restore()
@@ -6080,13 +6092,26 @@ function drawAcorns(
 }
 
 /**
+ * How far a flying bird's body moves up and down with each wingbeat (sprite units). It sinks as the wings go up
+ * and rises as they come down (it is lowest with the wings at the top of their stroke, see `drawFlightWing`).
+ */
+const FLIGHT_BOB = 4.5
+
+/** How far a floating bird bobs (share of its size), and how fast (radians per second: about 2.5 s a bob). */
+const FLOAT_BOB = 0.03
+const FLOAT_BOB_RATE = 2.5
+
+/** Each floating bird's own point in its bob, so that they do not bob together. */
+const floatPhases = new WeakMap<Player, number>()
+
+/**
  * Vertical body offset in sprite units: a hop while walking, a wingbeat lift while flying.
  *
  * @param player - Bird pose.
  */
 function bodyBob(player: Player): number {
   if (player.state === 'flying') {
-    return Math.sin(player.animTime * 16) * 2.5
+    return Math.sin(player.animTime * 16) * FLIGHT_BOB
   }
   const hop = hopProgress(player)
   const lift = hop >= 0 ? -Math.sin(Math.PI * hop) * 8 : 0

@@ -190,7 +190,8 @@ export function snowAt(x: number, depth: number, time: number): number {
   const ci = Math.floor(x / SNOW_CELL_X)
   const cj = Math.floor(d / SNOW_CELL_DEPTH)
   for (let i = ci - 1; i <= ci + 1; i += 1) {
-    for (let j = cj - 1; j <= cj + 1; j += 1) {
+    // (There are no patches in rows above the surface: none are drawn there.)
+    for (let j = Math.max(0, cj - 1); j <= cj + 1; j += 1) {
       const blob = snowBlob(i, j, cover)
       if (!blob) {
         continue

@@ -448,7 +448,9 @@ export function trackHops(world: World, birds: Player[]): void {
     }
     const puffs = Math.round(SNOW_PUFFS_PER_HOP * share)
     for (let k = 0; k < puffs; k += 1) {
-      kickLeaf(world, bird, cx + (Math.random() - 0.5) * range * 1.6, bird.size * 0.04, true)
+      // A puff only comes down where snow lies: beside the patch the bird is on it is a leaf instead.
+      const rest = cx + (Math.random() - 0.5) * range * 1.6
+      kickLeaf(world, bird, rest, bird.size * 0.04, snowAt(rest, 0, world.season.time) > 0)
     }
     // A hop near a buried acorn counts toward hiding it (its mound shrinks and fades; no extra leaves).
     for (const acorn of world.acorns) {

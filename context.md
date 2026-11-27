@@ -633,3 +633,8 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - A quarter fewer flower plants everywhere (`PLENTY` 0.75).
 - No flowers on the creek's banks: foreground ones only beyond the whole bank (the lower ones also clear of where the widening front water can come), far-layer ones beyond 2.8 / 4 creek half-widths; all are now drawn before the water (foreground flowers are therefore behind the front rocks and bushes).
 - Spring leaves now start 10 s later (first plants at 7.63 segments, spread 0.15, length 0.22, so each step is about 2.4 s and the last ends by 7.99); far sample moments 7.25, 7.45, 7.63, 7.76, 7.85, 7.92, 8. The steps then speed up a little (boundaries 0.04, 0.31, 0.53, 0.7, 0.84, 0.95: about 3.3 s apart at first, 1.4 s at the end).
+
+## Snow kicks, bobbing, spring backdrop
+- `snowAt` no longer counts patches of a row above the surface (never drawn), and each snow puff of a hop is only snow if it comes down on snow.
+- Floating birds bob (3% of size, about 2.5 s). The flight bob was already opposite to the wings (lowest with wings up); it is now 4.5 units instead of 2.5 so it shows.
+- The backdrop keeps its winter color until `SPRING_LEAVES_FROM` (7.63) and fades to the greenish spring one by the year's end.

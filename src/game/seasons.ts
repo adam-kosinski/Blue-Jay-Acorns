@@ -98,6 +98,9 @@ export const BARE_STAGE = 8
  */
 const SPRING = { prepare: 7.3, from: 7.63, spread: 0.15, length: 0.22, boundaries: [0.04, 0.31, 0.53, 0.7, 0.84, 0.95] }
 
+/** When (in segments) the first spring leaves start to come in. */
+export const SPRING_LEAVES_FROM = SPRING.from
+
 /**
  * How far along its spring change an object is (below 0 before it starts, above 1 after it ends).
  *
