@@ -421,7 +421,7 @@ function drawForest(
 ): void {
   // The far layers' bitmaps are drawn smaller than they show: smooth (blurry) rather than blocky when blown up.
   ctx.imageSmoothingEnabled = true
-  ctx.imageSmoothingQuality = 'high'
+  ctx.imageSmoothingQuality = 'low'
   const maxCamY = Math.max(0, world.height - viewHeight)
   const snowing = snowfallAt(world.season.time)
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
@@ -614,7 +614,7 @@ function drawForest(
       const regionHeight = Math.min(viewHeight, base - strip.originY + regionBottom) - regionTop
       if (tctx && regionHeight > 0) {
         tctx.setTransform(deviceScale, 0, 0, deviceScale, 0, 0)
-        tctx.imageSmoothingQuality = 'high'
+        tctx.imageSmoothingQuality = 'low'
         tctx.globalCompositeOperation = 'source-over'
         tctx.globalAlpha = 1
         tctx.clearRect(0, regionTop - 1, viewWidth, regionHeight + 2)
@@ -6130,7 +6130,7 @@ function drawAcorns(
 const FLIGHT_BOB = 4.5
 
 /** How far a floating bird bobs (share of its size), and how fast (radians per second: about 1.1 s a bob). */
-const FLOAT_BOB = 0.03
+const FLOAT_BOB = 0.02
 const FLOAT_BOB_RATE = 5.8
 
 /** Each floating bird's own point in its bob, so that they do not bob together. */

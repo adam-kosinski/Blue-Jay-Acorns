@@ -331,6 +331,11 @@ export function generateOak(
 
   let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.7 : trunkWidth
   let top = trunkTopY
+  if (flare) {
+    // Room for the base as far down as it is drawn.
+    const widest = Math.max(flareAt(flare, -flare.depth, -1), flareAt(flare, -flare.depth, 1))
+    halfWidth = Math.max(halfWidth, trunkWidth / 2 + widest + 20)
+  }
   for (const lobe of lobes) {
     halfWidth = Math.max(halfWidth, Math.abs(lobe.x) + lobe.r)
     top = Math.min(top, lobe.y - lobe.r)
@@ -801,10 +806,18 @@ export function paintBark(
   }
 }
 
+/** How much a flared trunk goes on widening, far below its base: px outward (each side) per px down. */
+const ROOT_SPREAD = 0.24
+
+/** Over what depth (share of the flare's height) the flare's outward slope eases to that. */
+const ROOT_EASE = 0.5
+
 /**
  * Extra half-width a flared trunk has at a height above the ground, on one side: a smooth concave
  * flare (steep near the ground, easing off up the trunk) with a second, tighter lobe at the very
- * base. Below the ground it keeps its ground-level width.
+ * base. Below the base (where sloping ground shows it) the outline carries on in the same curve:
+ * it leaves the base at the slope it arrives with, which eases to a slight spread, so it never
+ * turns upright.
  *
  * @param flare - The tree's flare.
  * @param height - Height above the ground (negative below it).
@@ -812,7 +825,14 @@ export function paintBark(
  */
 export function flareAt(flare: NonNullable<TreeShape['flare']>, height: number, side: number): number {
   const reach = side < 0 ? flare.left : flare.right
-  const s = Math.max(0, height) / flare.height
+  if (height < 0) {
+    // The outward slope at the base (that of the curve above), easing away to `ROOT_SPREAD`.
+    const slope = (reach * (2.4 + 0.28 * 2 * 2.2)) / flare.height
+    const ease = flare.height * ROOT_EASE
+    const down = -height
+    return reach * 1.28 + ROOT_SPREAD * down + Math.max(0, slope - ROOT_SPREAD) * ease * (1 - Math.exp(-down / ease))
+  }
+  const s = height / flare.height
   if (s >= 1) {
     return 0
   }
@@ -858,7 +878,7 @@ function drawFlare(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
   if (!flare) {
     return
   }
-  const rows = 30
+  const rows = 48
   const left: [number, number][] = []
   const right: [number, number][] = []
   // From below the ground up to the top of the flare (y is negative upward).

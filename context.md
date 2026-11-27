@@ -646,3 +646,8 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Branch bark is clipped to outside the trunk's outline (`drawBark`), so no ridges cross the trunk.
 - The leaves on the surface (`world.kickedLeaves`) are drawn under the foreground flowers; only leaves in the air or on a showing mound are drawn over the mounds, which stay above the flowers (`drawKickedLeaves`, `mountedLeaf`).
 - The snowfall haze is whiter (`SNOW_HAZE_COLOR` #c6daee, was #8dbdf0).
+
+## Old oak base, float bob, smoothing
+- The old-growth trunk's outline carries on below its base in the same curve (`flareAt` for negative heights: leaves at the base slope, eases over half the flare's height to 0.24 outward per px), where it used to go straight down.
+- Float bob is 2% of size (was 3%).
+- Every `imageSmoothingQuality` is 'low' now (the user is trying the look and speed).
