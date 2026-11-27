@@ -13,6 +13,9 @@ export const FLOWER_KINDS = 4
 /** How many differently shaped plants are painted of each kind. */
 const VARIANTS = 3
 
+/** The share of the plants asked for that a patch gets (turns every patch's numbers up or down together). */
+const PLENTY = 0.75
+
 /** The earliest share of spring a plant comes. */
 const FIRST_START = 0.05
 
@@ -66,7 +69,7 @@ export const PLAIN_TINT: FlowerTint = { key: 'plain', color: (hex) => hex }
  * @param width - How wide it is.
  * @param spread - How far its plants lie up and down from there.
  * @param scale - Size of its plants.
- * @param count - How many plants.
+ * @param count - How many plants (before `PLENTY`).
  * @param turn - When it starts among the patches, 0 (first) to 1.
  * @param allowed - Whether a plant may stand at an x (those that may not are left out).
  * @param earliest - The earliest share of spring a plant at a point may come (while snow lies there it waits).
@@ -85,7 +88,7 @@ export function makeFlowerPatch(
   allowed: (x: number) => boolean = () => true,
   earliest: (x: number, y: number) => number = () => 0,
 ): FlowerPatch | null {
-  const plants = Array.from({ length: count }, (): Plant => {
+  const plants = Array.from({ length: Math.round(count * PLENTY) }, (): Plant => {
     // A little thicker in the middle, thinning out toward the edges.
     const across = (random() * 2 - 1) * 0.65 + (random() + random() - 1) * 0.35
     const down = random() * 2 - 1

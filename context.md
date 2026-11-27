@@ -630,3 +630,4 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Later change: plants arrive in groups of four, each group in one 0.75 s fade (drawn directly while fading, then painted into the patch's bitmap), earliest in the middle; foreground plants wait for the snow to leave their spot (`thaw`) instead of being dimmed by it.
 - Flower arrivals quicken through spring (`QUICKENING` 0.5, `LATE_PATCH` 0.4): roughly a tenth by mid-spring, a third by 0.7, three quarters by 0.9.
 - Far-layer ferns (with fiddleheads) are drawn from one bitmap each, captured at 12 winter and 8 spring moments and cross-faded over 0.75 s, each fern at its own point of a step (`fernSnapshot`): measured, per-frond drawing of them was about a third of a spring frame's time; the flower patches (already one bitmap each) about 3%.
+- A quarter fewer flower plants everywhere (`PLENTY` 0.75).
