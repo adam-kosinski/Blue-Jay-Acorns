@@ -20,11 +20,12 @@ import {
 } from './constants'
 import { acornReach } from './burial'
 import { createNpcs, createSquirrels } from './npc'
-import { generateOak } from './oak'
+import { generateOak, typicalOakSize } from './oak'
 import { buildFineNoise, buildTerrain, CREEK_DRIFT, groundYAt } from './terrain'
 import type {
   Acorn,
   BackdropTree,
+  TreeShape,
   Bush,
   BushLobe,
   Creek,
@@ -802,6 +803,26 @@ function spawnRocks(
 }
 
 /**
+ * A tree of a background layer: about half are full-sized, the rest vary down to half the average width (trunk
+ * and branches) and two thirds of the average height.
+ *
+ * @param height - The layer's reference tree height.
+ * @param trunkWidth - The layer's reference trunk width.
+ */
+function layerOak(height: number, trunkWidth: number): TreeShape {
+  if (Math.random() < 0.5) {
+    return generateOak(height * randRange(0.92, 1.08), trunkWidth)
+  }
+  const typical = typicalOakSize(height, trunkWidth)
+  const slim = randRange(0.5, 1)
+  return generateOak(height, trunkWidth, 0, undefined, {
+    height: typical.height * randRange(2 / 3, 1),
+    trunkWidth: typical.trunkWidth * slim,
+    slim,
+  })
+}
+
+/**
  * Builds the parallax forest layers, each lighter (hazier) the farther away it is.
  *
  * Each layer reuses the foreground oak design plus bush and log silhouettes along its base.
@@ -853,8 +874,7 @@ function spawnForest(
     let x = -viewHeight * 0.3 * SCENERY_SCALE
     while (x < span + viewHeight * 0.3 * SCENERY_SCALE) {
       if (!blocked(keepOut, x, trunkWidth) && !outsideWindow(x)) {
-        const shape = generateOak(height * randRange(0.92, 1.08), trunkWidth)
-        trees.push({ x, shape })
+        trees.push({ x, shape: layerOak(height, trunkWidth) })
       }
       x += viewHeight * layer.spacing * randRange(0.6, 1.6)
     }

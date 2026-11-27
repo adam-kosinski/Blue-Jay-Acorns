@@ -145,8 +145,9 @@ function growBranch(
  * @param segments - The branch pieces so far, the trunk's three first (added to).
  * @param lobes - The leaf clumps.
  * @param leafRadius - Cluster radius for this tree's scale.
+ * @param thinnest - The least width of a twig.
  */
-function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number): void {
+function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number, thinnest: number): void {
   /** The point of the wood (from the upper trunk on) that a twig to (x, y) would best start from. */
   const nearestWood = (x: number, y: number): { x: number; y: number; w: number; distance: number } => {
     let best = { x: 0, y: 0, w: 0, distance: Infinity }
@@ -196,7 +197,7 @@ function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number
     const reach = Math.min(1, (leafRadius * 2.2) / from.distance)
     const endX = from.x + (targetX - from.x) * reach
     const endY = from.y + (targetY - from.y) * reach
-    const width = Math.max(8, Math.min(from.w * 0.8, leafRadius * randRange(0.2, 0.3)))
+    const width = Math.max(thinnest, Math.min(from.w * 0.8, leafRadius * randRange(0.2, 0.3)))
     const mid = twig(from.x, from.y, endX, endY, width)
     if (Math.random() < 0.8) {
       const angle = Math.atan2(endX - mid.x, mid.y - endY) + (Math.random() < 0.5 ? -1 : 1) * randRange(0.6, 1.1)
@@ -204,6 +205,18 @@ function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number
       twig(mid.x, mid.y, mid.x + Math.sin(angle) * length, mid.y - Math.cos(angle) * length, width * 0.6)
     }
   }
+}
+
+/**
+ * The average height and trunk width of the oaks `generateOak` makes from some reference sizes (those that are
+ * not old growth).
+ *
+ * @param baseHeight - Reference tree height.
+ * @param baseTrunkWidth - Reference trunk thickness.
+ */
+export function typicalOakSize(baseHeight: number, baseTrunkWidth: number): { height: number; trunkWidth: number } {
+  // (The middle of the stretch, 1.5-2, and of the girth, 0.7-1.45.)
+  return { height: baseHeight * 1.75, trunkWidth: baseTrunkWidth * Math.sqrt(1.75) * 1.075 }
 }
 
 /**
@@ -221,20 +234,23 @@ function addTwigs(segments: TreeSegment[], lobes: TreeLobe[], leafRadius: number
  *   trunk's edge on each side; the trunk is then twice as wide and the branches 1.5 times as wide.
  * @param groundAt - For old growth: ground height relative to the tree base at a horizontal offset
  *   from it (negative is up), so the roots can follow the ground and sink into it.
+ * @param size - A height and trunk width to make it exactly (instead of random ones from the references), and
+ *   `slim`, how thin that is against the usual (its finest twigs are thinned by as much).
  */
 export function generateOak(
   baseHeight: number,
   baseTrunkWidth: number,
   rootReach = 0,
   groundAt: (dx: number) => number = () => 0,
+  size?: { height: number; trunkWidth: number; slim: number },
 ): TreeShape {
   const oldGrowth = rootReach > 0
   const stretch = randRange(1.5, 2)
-  const height = baseHeight * stretch
+  const height = size?.height ?? baseHeight * stretch
   // Trees differ a lot in girth, and their branches in thickness. An old-growth tree is exactly
   // twice the nominal trunk width and its branches 1.5x (scaled back from the doubled trunk's).
   const thickness = oldGrowth ? 2 : randRange(0.7, 1.45)
-  const trunkWidth = baseTrunkWidth * Math.sqrt(stretch) * thickness
+  const trunkWidth = size?.trunkWidth ?? baseTrunkWidth * Math.sqrt(stretch) * thickness
   const branchScale = oldGrowth ? 0.75 : randRange(0.7, 1.35)
   const segments: TreeSegment[] = []
   const lobes: TreeLobe[] = []
@@ -311,7 +327,7 @@ export function generateOak(
   addCluster(lobes, trunkTopX, trunkTopY - leafRadius * 0.6, leafRadius * 1.3)
   addCluster(lobes, trunkTopX + randRange(-0.3, 0.3) * leafRadius, trunkTopY + leafRadius * 0.3, leafRadius * 1.1)
 
-  addTwigs(segments, lobes, leafRadius)
+  addTwigs(segments, lobes, leafRadius, 8 * Math.min(1, size?.slim ?? 1))
 
   let halfWidth = oldGrowth ? trunkWidth / 2 + rootReach * 1.7 : trunkWidth
   let top = trunkTopY

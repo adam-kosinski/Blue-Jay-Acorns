@@ -11,6 +11,10 @@ export const FLOWER_KINDS = 4
 /** How many differently shaped plants are painted of each kind. */
 const VARIANTS = 3
 
+/** The earliest a patch starts (share of spring), and how long after that the latest ones do. */
+const FIRST_START = 0.05
+const START_SPREAD = 0.52
+
 /** The share of spring a plant takes to fade in. */
 const FADE_SHARE = 0.22
 
@@ -55,6 +59,9 @@ export const PLAIN_TINT: FlowerTint = { key: 'plain', color: (hex) => hex }
  * @param spread - How far its plants lie up and down from there.
  * @param scale - Size of its plants.
  * @param count - How many plants.
+ * @param turn - When it starts among the patches, 0 (first) to 1.
+ * @param allowed - Whether a plant may stand at an x (those that may not are left out).
+ * @returns The patch, or null if none of its plants may stand where they fell.
  */
 export function makeFlowerPatch(
   random: () => number,
@@ -65,11 +72,13 @@ export function makeFlowerPatch(
   spread: number,
   scale: number,
   count: number,
-): FlowerPatch {
-  const start = 0.1 + random() * 0.22
+  turn: number,
+  allowed: (x: number) => boolean = () => true,
+): FlowerPatch | null {
+  const start = FIRST_START + turn * START_SPREAD
   const plants = Array.from({ length: count }, (): Plant => {
-    // Thickest in the middle, thinning out toward the edges.
-    const across = (random() + random() + random()) / 1.5 - 1
+    // A little thicker in the middle, thinning out toward the edges.
+    const across = (random() * 2 - 1) * 0.65 + (random() + random() - 1) * 0.35
     const down = random() * 2 - 1
     const px = x + across * width * 0.5
     const out = Math.min(1, Math.hypot(across, down * 0.5))
@@ -81,7 +90,12 @@ export function makeFlowerPatch(
       scale: scale * (0.75 + random() * 0.45),
       appear: start + (1 - FADE_SHARE - start) * (0.55 * random() + 0.45 * out),
     }
-  }).sort((p, q) => p.y - q.y)
+  })
+    .filter((plant) => allowed(plant.x))
+    .sort((p, q) => p.y - q.y)
+  if (plants.length === 0) {
+    return null
+  }
   return {
     kind,
     x,

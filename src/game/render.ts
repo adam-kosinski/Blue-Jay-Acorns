@@ -16,7 +16,8 @@ import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
 import { drawLeafFall, updateLeafFall } from './leaffall'
-import { drawSnowfall } from './snowfall'
+import { drawSky } from './sky'
+import { drawSnowfall, snowfallAt } from './snowfall'
 import { drawFlowerPatch, FLOWER_KINDS, makeFlowerPatch, PLAIN_TINT, type FlowerPatch, type FlowerTint } from './flowers'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
@@ -38,7 +39,6 @@ import {
   sampleIndexAt,
   sampleTime,
   transitionProgress,
-  winterTintAt,
 } from './seasons'
 import { fallTones, mixHex, parseRgb, winterGreen, springTones } from './leafColors'
 import { BACKDROP_FOG, mixColor } from './world'
@@ -90,63 +90,45 @@ const BACKDROP_FALL: BackdropLook = {
 }
 /** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
 /** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
-const WINTER_HAZE_COLOR = '#8dbdf0'
+const SNOW_HAZE_COLOR = '#8dbdf0'
 
-/** How far a layer's colors go toward the winter haze at full winter, per unit of the layer's fog (its distance haze). */
-const WINTER_HAZE_STRENGTH = 1
+/** How far a layer's colors go toward the haze in falling snow, per unit of the layer's fog (its distance haze). */
+const SNOW_HAZE_STRENGTH = 1
 
 /**
- * How far a layer's own colors have gone toward the light blue winter haze: the farther (foggier) the
- * layer, the more, like the summer haze that is already part of its colors.
+ * How far a layer's colors go toward the light blue haze of falling snow: the farther (foggier) the layer, the
+ * more, like the haze that is already part of its colors.
  *
  * @param layer - Forest layer.
- * @param winter - How far the air is in its winter look, 0-1.
+ * @param snowing - How hard it is snowing, 0-1.
  */
-function winterAmount(layer: ForestLayer, winter: number): number {
-  return Math.min(0.95, layer.fog * WINTER_HAZE_STRENGTH) * winter
+function snowHazeAmount(layer: ForestLayer, snowing: number): number {
+  return Math.min(0.95, layer.fog * SNOW_HAZE_STRENGTH) * snowing
 }
 
 /**
- * A color of a layer as it is with the winter haze.
+ * Lays the haze of falling snow over what has been drawn so far, so that it ends up hazed by `was` and now
+ * is by `to`: called between the backdrop and the layers, farthest first, each takes on its own amount.
  *
- * @param color - The layer's (summer-hazed) color.
- * @param layer - Forest layer.
- * @param winter - How far the air is in its winter look, 0-1.
+ * @param ctx - 2D canvas context in screen space.
+ * @param was - How far toward the haze the farthest things drawn so far should end up.
+ * @param to - How far the next (nearer) thing should.
+ * @param width - Viewport width.
+ * @param height - Screen y below which nothing drawn so far can still be seen.
  */
-function winterHazed(color: string, layer: ForestLayer, winter: number): string {
-  return winter > 0 ? mixHex(color, WINTER_HAZE_COLOR, winterAmount(layer, winter)) : color
-}
-
-/**
- * A copy of a layer whose colors have the winter haze (for drawing its vegetation).
- *
- * @param layer - Forest layer.
- * @param winter - How far the air is in its winter look, 0-1.
- */
-function winterLayer(layer: ForestLayer, winter: number): ForestLayer {
-  if (winter <= 0) {
-    return layer
-  }
-  const tint = (color: string): string => winterHazed(color, layer, winter)
-  return {
-    ...layer,
-    groundColor: tint(layer.groundColor),
-    trunkColor: tint(layer.trunkColor),
-    tones: layer.tones.map(tint),
-    leafColors: layer.leafColors.map(tint),
-    rocks: layer.rocks.map((rock) => ({ ...rock, color: tint(rock.color), highlight: tint(rock.highlight), litter: rock.litter.map(tint) })),
+function layHaze(ctx: CanvasRenderingContext2D, was: number, to: number, width: number, height: number): void {
+  const alpha = 1 - (1 - was) / (1 - to)
+  if (alpha > 0.002 && height > 0) {
+    ctx.globalAlpha = Math.min(1, alpha)
+    ctx.fillStyle = SNOW_HAZE_COLOR
+    ctx.fillRect(0, 0, width, height)
+    ctx.globalAlpha = 1
   }
 }
 
-// The farthest trunks' color (the trunk color with the layer's haze, then its winter haze) taken one more step
-// of atmospheric perspective back: so the far background is a little hazier than the farthest layer's trunks.
-const BACKDROP_WINTER_COLOR = rgbOf(
-  mixHex(
-    mixHex(TRUNK_COLOR, FOREST_HAZE_COLOR, BACKDROP_WINTER_FOG),
-    WINTER_HAZE_COLOR,
-    Math.min(0.95, BACKDROP_WINTER_FOG * WINTER_HAZE_STRENGTH),
-  ),
-)
+// The farthest trunks' color (the trunk color with the layer's haze) taken one more step of atmospheric
+// perspective back: so the far background is a little hazier than the farthest layer's trunks.
+const BACKDROP_WINTER_COLOR = rgbOf(mixHex(TRUNK_COLOR, FOREST_HAZE_COLOR, BACKDROP_WINTER_FOG))
 const BACKDROP_WINTER: BackdropLook = { top: BACKDROP_WINTER_COLOR, bottom: BACKDROP_WINTER_COLOR }
 const BACKDROP_SPRING: BackdropLook = {
   top: BACKDROP_WINTER_COLOR,
@@ -225,6 +207,13 @@ export function renderScene(
   haze.addColorStop(1, backdropBottom)
   ctx.fillStyle = haze
   ctx.fillRect(0, 0, viewWidth, viewHeight)
+  // That color stands for the far trees; above their ragged top is the sky, which fades away while it snows.
+  const sky = 1 - snowfallAt(world.season.time)
+  if (sky > 0.003) {
+    ctx.globalAlpha = sky
+    drawSky(ctx, world, camera.x, camera.y, viewWidth, viewHeight)
+    ctx.globalAlpha = 1
+  }
 
   drawForest(ctx, world.forest, world, camera, viewWidth, viewHeight)
 
@@ -426,9 +415,9 @@ function drawForest(
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   const maxCamY = Math.max(0, world.height - viewHeight)
-  const winter = winterTintAt(world.season.time)
+  const snowing = snowfallAt(world.season.time)
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
-  const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999 && winter >= 0.999
+  const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999
   let stripsMade = 0
   tintBuildsLeft = 1
 
@@ -472,7 +461,18 @@ function drawForest(
     }
   }
 
+  // How far toward the haze the farthest thing drawn so far (at first the backdrop) should end up.
+  let hazed = Math.min(0.95, BACKDROP_WINTER_FOG * SNOW_HAZE_STRENGTH) * snowing
   for (const [index, layer] of layers.entries()) {
+    if (snowing > 0) {
+      const own = snowHazeAmount(layer, snowing)
+      let reach = 0
+      for (const value of limits[index] ?? []) {
+        reach = Math.max(reach, value)
+      }
+      layHaze(ctx, hazed, Math.min(hazed, own), viewWidth, reach || viewHeight)
+      hazed = Math.min(hazed, own)
+    }
     const p = layer.parallax
     const base = baseOf(layer)
     if (base >= viewHeight + 400) {
@@ -539,7 +539,7 @@ function drawForest(
     // Once the snow is complete (and the haze, and nothing is melting) the ground is one flat color: its shape in
     // that color is drawn alone.
     if (snowedIn && !hidden && !strip.frozenCanvas && stripsMade < 2) {
-      strip.frozenColor = winterHazed(mixHex(layer.groundColor, SNOW_TOP, 0.92), layer, 1)
+      strip.frozenColor = mixHex(layer.groundColor, SNOW_TOP, 0.92)
       strip.frozenCanvas = makeMask(strip, strip.frozenColor, 0.75, 1)
       stripsMade += 1
     }
@@ -547,8 +547,8 @@ function drawForest(
     const cover = snowCover(world.season.time)
     // While the snow and the haze lie evenly over the ground, the tinted ground is kept as a bitmap of its own.
     const evenTint =
-      !snowedIn && !hidden && (snow > 0 || winter > 0) && (snow <= 0 || cover >= 0.999)
-        ? tintedStrip(strip, snow > 0 ? thickness * 0.92 : 0, winter > 0 ? winterAmount(layer, winter) : 0)
+      !snowedIn && !hidden && snow > 0 && cover >= 0.999
+        ? tintedStrip(strip, thickness * 0.92)
         : null
     if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
       dropTintedStrip(strip)
@@ -577,7 +577,7 @@ function drawForest(
     } else if (evenTint) {
       blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
       blit(evenTint, false)
-    } else if ((snow > 0 || winter > 0) && !hidden) {
+    } else if (snow > 0 && !hidden) {
       // While the snow and the haze come in, and while the snow melts, the ground bitmap is drawn onto a
       // scratch canvas and tinted there (the tint only goes onto the pixels the ground painted, edge pixels
       // included, in the same share as the rest: tinted by a mask drawn over it instead, a soft edge pixel
@@ -634,11 +634,6 @@ function drawForest(
           tctx.fillRect(0, regionTop, viewWidth, regionHeight)
           tctx.restore()
         }
-        if (winter > 0) {
-          tctx.globalAlpha = winterAmount(layer, winter)
-          tctx.fillStyle = WINTER_HAZE_COLOR
-          tctx.fillRect(0, regionTop, viewWidth, regionHeight)
-        }
         tctx.globalAlpha = 1
         tctx.globalCompositeOperation = 'source-over'
         ctx.drawImage(tintCanvas, 0, regionTop * deviceScale, sw, regionHeight * deviceScale, 0, regionTop, viewWidth, regionHeight)
@@ -663,7 +658,7 @@ function drawForest(
       bottom = nextBase + nextStrip.waterLine
       bottomX = next.creek.x - camera.x * next.parallax
       bottomHalf = next.creek.halfWidth
-      bottomColor = winterHazed(next.waterColor, next, winter)
+      bottomColor = next.waterColor
     } else {
       bottom = world.terrain.creek.waterY - camera.y
       bottomX = world.terrain.creek.x - camera.x
@@ -679,7 +674,7 @@ function drawForest(
       const mid = (top + bottom) / 2
       const topHalf = layer.creek.halfWidth
       const water = ctx.createLinearGradient(0, top, 0, bottom)
-      water.addColorStop(0, winterHazed(layer.waterColor, layer, winter))
+      water.addColorStop(0, layer.waterColor)
       water.addColorStop(1, bottomColor)
       ctx.fillStyle = water
       // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
@@ -745,7 +740,7 @@ function drawForest(
         // Its resolution runs from this layer's to the next one's (the foreground's, full, after the last).
         const here = vegRes(layer)
         const nextRes = next ? vegRes(next) : ctx.getTransform().a
-        drawFuzzyRock(ctx, edge.rock, py, here + (nextRes - here) * t, layer, winter)
+        drawFuzzyRock(ctx, edge.rock, py, here + (nextRes - here) * t)
       }
     }
     if (!hidden) {
@@ -764,7 +759,7 @@ function drawForest(
         }
         ctx.save()
         ctx.translate(-shift, 0)
-        drawFuzzyRock(ctx, rock, groundY, vegRes(layer), layer, winter)
+        drawFuzzyRock(ctx, rock, groundY, vegRes(layer))
         ctx.restore()
       }
       drawLayerFlowers(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
@@ -772,6 +767,8 @@ function drawForest(
       drawLayerFerns(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
     }
   }
+  // The nearest layer's share.
+  layHaze(ctx, hazed, 0, viewWidth, viewHeight)
   ctx.imageSmoothingQuality = 'low'
 }
 
@@ -791,36 +788,17 @@ const fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
  * @param rock - The rock (it is drawn by `drawRockSimple`).
  * @param groundY - Ground Y at the rock.
  * @param res - Bitmap pixels per world pixel it is painted at.
- * @param layer - The layer it belongs to (for its winter haze).
- * @param winter - How far the air is in its winter look, 0-1.
  */
-function drawFuzzyRock(
-  ctx: CanvasRenderingContext2D,
-  rock: Rock,
-  groundY: number,
-  res: number,
-  layer: ForestLayer,
-  winter: number,
-): void {
+function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number): void {
   const direct = res >= ctx.getTransform().a * 0.97
-  const { color, highlight } = rock
-  const hazed = (): void => {
-    if (winter > 0) {
-      rock.color = winterHazed(color, layer, winter)
-      rock.highlight = winterHazed(highlight, layer, winter)
-    }
-  }
   if (direct) {
-    hazed()
     drawRockSimple(ctx, rock, groundY)
-    rock.color = color
-    rock.highlight = highlight
     return
   }
   const baseY = groundY + rock.ry * 0.4
   const layers = snowCapLayers(seasonNow)
   const step = (value: number): number => Math.round(value * 24)
-  const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(winter * 32)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
+  const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
   if (!sprite || sprite.key !== key) {
     const pad = 3
@@ -841,10 +819,7 @@ function drawFuzzyRock(
     sctx.setTransform(1, 0, 0, 1, 0, 0)
     sctx.clearRect(0, 0, width, height)
     sctx.setTransform(res, 0, 0, res, (halfWidth - rock.x) * res, (above - baseY) * res)
-    hazed()
     drawRockSimple(sctx, rock, groundY)
-    rock.color = color
-    rock.highlight = highlight
     sprite = { canvas, key, halfWidth, above, width, height, res }
     fuzzyRocks.set(rock, sprite)
   }
@@ -905,7 +880,7 @@ type ForestStrip = {
   /** That color. */
   frozenColor?: string
   /** The ground bitmap with the even snow and haze of the moment on it, and those two as steps of 1/255. */
-  tinted?: { canvas: HTMLCanvasElement; snow: number; haze: number }
+  tinted?: { canvas: HTMLCanvasElement; snow: number }
   /** The melting snow's patches in the layer's own coordinates: for which cover, and which grid cells they reach over. */
   patches?: { path: Path2D; cover: number; firstColumn: number; lastColumn: number; firstRow: number; lastRow: number }
 }
@@ -918,23 +893,21 @@ let tintBuildsLeft = 0
 const TINT_STALE_STEPS = 2
 
 /**
- * A layer's ground bitmap with an even tint over it (the tint only goes onto the pixels the ground painted), remade
- * only when the tint has changed by a step that can show, one layer per frame.
+ * A layer's ground bitmap with an even coat of snow over it (the tint only goes onto the pixels the ground
+ * painted), remade only when it has changed by a step that can show, one layer per frame.
  *
  * @param strip - The layer's ground bitmap.
  * @param snowAlpha - Opacity of the snow's color.
- * @param hazeAlpha - Opacity of the winter haze's color.
  * @returns The tinted bitmap, or null if it is not ready for this tint yet.
  */
-function tintedStrip(strip: ForestStrip, snowAlpha: number, hazeAlpha: number): HTMLCanvasElement | null {
+function tintedStrip(strip: ForestStrip, snowAlpha: number): HTMLCanvasElement | null {
   const snow = Math.round(snowAlpha * 255)
-  const haze = Math.round(hazeAlpha * 255)
   const held = strip.tinted
-  if (held && held.snow === snow && held.haze === haze) {
+  if (held && held.snow === snow) {
     return held.canvas
   }
   if (tintBuildsLeft <= 0) {
-    return held && Math.abs(held.snow - snow) <= TINT_STALE_STEPS && Math.abs(held.haze - haze) <= TINT_STALE_STEPS ? held.canvas : null
+    return held && Math.abs(held.snow - snow) <= TINT_STALE_STEPS ? held.canvas : null
   }
   const canvas = held?.canvas ?? document.createElement('canvas')
   if (canvas.width !== strip.canvas.width || canvas.height !== strip.canvas.height) {
@@ -956,14 +929,9 @@ function tintedStrip(strip: ForestStrip, snowAlpha: number, hazeAlpha: number): 
     tctx.fillStyle = SNOW_TOP
     tctx.fillRect(0, 0, canvas.width, canvas.height)
   }
-  if (hazeAlpha > 0) {
-    tctx.globalAlpha = hazeAlpha
-    tctx.fillStyle = WINTER_HAZE_COLOR
-    tctx.fillRect(0, 0, canvas.width, canvas.height)
-  }
   tctx.globalAlpha = 1
   tctx.globalCompositeOperation = 'source-over'
-  strip.tinted = { canvas, snow, haze }
+  strip.tinted = { canvas, snow }
   return canvas
 }
 
@@ -1137,16 +1105,13 @@ function vegKey(k: number, part: 'back' | 'front', chunk: number): string {
  * @param chunk - Which chunk of the layer.
  */
 function* buildVegImage(
-  plainLayer: ForestLayer,
+  layer: ForestLayer,
   veg: VegPlan,
   k: number,
   part: 'back' | 'front',
   chunk: number,
 ): Generator<void, VegImage> {
   const time = sampleTime(k)
-  const winter = winterTintAt(time)
-  // In winter the layer's colors (and the haze its leaves are blended with) have the light blue haze.
-  const layer = winterLayer(plainLayer, winter)
   const res = vegRes(layer)
   const rowTop = part === 'back' ? 0 : veg.frontTop
   const rowBottom = part === 'back' ? veg.backBottom : veg.frontBottom
@@ -1166,7 +1131,7 @@ function* buildVegImage(
   ctx.scale(res, res)
   ctx.translate(-left, -rowTop)
   const near = (x: number, reach: number): boolean => x + reach >= left && x - reach <= right
-  const haze = { color: mixHex(FOREST_HAZE_COLOR, WINTER_HAZE_COLOR, WINTER_HAZE_STRENGTH * winter), amount: layer.fog }
+  const haze = { color: FOREST_HAZE_COLOR, amount: layer.fog }
   if (part === 'back') {
     for (const [index, tree] of layer.trees.entries()) {
       const at = veg.trees[index]
@@ -1956,24 +1921,27 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     const bloom = seededRandom(Math.floor(layer.parallax * 77777) + 5)
     const size = Math.max(0.24, layer.scale)
     const room = Math.max(0.5, size)
+    // (The patches' starts are spread evenly, neighbours well apart.)
+    let turn = bloom()
     for (let x = bloom() * 200; x < layer.span; x += (150 + bloom() * 300) * room) {
-      const width = (150 + bloom() * 260) * room
-      if (Math.abs(x - creek.x) < creek.halfWidth + width / 2) {
-        continue
-      }
+      const width = (340 + bloom() * 480) * room
       const depth = bloom() * litterDepth * 0.45
-      flowers.push(
-        makeFlowerPatch(
-          bloom,
-          Math.floor(bloom() * FLOWER_KINDS),
-          x,
-          (px) => originY + offset(px) + Math.max(14 * size, Math.min(depth, depthAt(px))) + 2,
-          width,
-          14 * size,
-          size,
-          18 + Math.floor(bloom() * 26),
-        ),
+      turn = (turn + 0.618) % 1
+      const patch = makeFlowerPatch(
+        bloom,
+        Math.floor(bloom() * FLOWER_KINDS),
+        x,
+        (px) => originY + offset(px) + Math.max(22 * size, Math.min(depth, depthAt(px))) + 2,
+        width,
+        22 * size,
+        size,
+        18 + Math.floor(bloom() * 26),
+        turn,
+        (px) => Math.abs(px - creek.x) > creek.halfWidth + 24 * size,
       )
+      if (patch) {
+        flowers.push(patch)
+      }
     }
   }
   if (layer.localRadius !== null) {
@@ -2673,37 +2641,48 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
   const random = seededRandom(Math.floor(Math.random() * 1e9))
   const { terrain } = world
   const { creek } = terrain
-  const clear = (x: number, width: number): boolean => Math.abs(x - creek.x) > creek.halfWidth + creek.bank * 0.4 + width / 2
+  const clear = (x: number): boolean => Math.abs(x - creek.x) > creek.halfWidth + creek.bank * 0.4 + 30
+  // The patches' starts are spread evenly over their turns, neighbours well apart.
+  let turn = random()
+  const next = (): number => {
+    turn = (turn + 0.618) % 1
+    return turn
+  }
   const near: FlowerPatch[] = []
   for (let x = random() * 200; x < world.width; x += 250 + random() * 300) {
-    const width = 140 + random() * 220
-    if (clear(x, width)) {
-      const depth = 6 + random() * 22
-      const kind = Math.floor(random() * FLOWER_KINDS)
-      near.push(makeFlowerPatch(random, kind, x, (px) => groundYAt(terrain, px) + depth + 6, width, 10, 1, 12 + Math.floor(random() * 16)))
+    const width = 340 + random() * 420
+    const depth = 6 + random() * 22
+    const kind = Math.floor(random() * FLOWER_KINDS)
+    const count = 12 + Math.floor(random() * 16)
+    const patch = makeFlowerPatch(random, kind, x, (px) => groundYAt(terrain, px) + depth + 6, width, 15, 1, count, next(), clear)
+    if (patch) {
+      near.push(patch)
     }
   }
   const front: FlowerPatch[] = []
   for (let x = random() * 300; x < world.width; x += 300 + random() * 360) {
-    const width = 180 + random() * 260
+    const width = 400 + random() * 480
     // (Far enough down that the plants stay below the surface line, where the birds are.)
-    const room = world.height - groundYAt(terrain, x) - 100
-    if (clear(x, width) && room > 10) {
+    const room = world.height - groundYAt(terrain, x) - 112
+    if (room > 10) {
       const share = random()
-      const depth = 100 + share * room
+      const depth = 112 + share * room
       const kind = Math.floor(random() * FLOWER_KINDS)
-      front.push(
-        makeFlowerPatch(
-          random,
-          kind,
-          x,
-          (px) => Math.min(world.height - 4, groundYAt(terrain, px) + depth),
-          width,
-          24,
-          1.15 + 0.35 * share,
-          14 + Math.floor(random() * 18),
-        ),
+      const patch = makeFlowerPatch(
+        random,
+        kind,
+        x,
+        (px) => Math.min(world.height - 4, groundYAt(terrain, px) + depth),
+        width,
+        36,
+        1.15 + 0.35 * share,
+        14 + Math.floor(random() * 18),
+        next(),
+        clear,
       )
+      if (patch) {
+        front.push(patch)
+      }
     }
   }
   made = { near, front }
@@ -2776,7 +2755,7 @@ function drawLayerFlowers(
   const tint: FlowerTint = {
     key: `layer${layer.fog}`,
     // (A little less haze than the rest of the layer, so the flowers still tell.)
-    color: (hex) => winterHazed(mixHex(hex, FOREST_HAZE_COLOR, layer.fog * 0.8), layer, 0.8),
+    color: (hex) => mixHex(hex, FOREST_HAZE_COLOR, layer.fog * 0.8),
   }
   for (const patch of strip.flowers) {
     if (patch.right - shift < 0 || patch.left - shift > viewWidth || patch.top + top > limit) {
@@ -3626,12 +3605,12 @@ const FERN_TONES = ['#2f7a3a', '#3a8c40', '#27693a']
 const FERN_BROWNS = ['#8c6234', '#9a7038', '#7c562c']
 const FERN_BROWN_STEM = '#5c4022'
 
-/** The lean (radians from upright) a sinking frond tends to, and how much of the way there it goes at its lowest. */
-const FERN_FLAT_ANGLE = 1.45
-const FERN_TURN = 0.8
+/** How far above and below level (radians) a frond may come to rest at its lowest. */
+const FERN_REST_ABOVE = 0.42
+const FERN_REST_BELOW = 0.24
 
 /** How much a fern's height is also pressed down at its lowest. */
-const FERN_PRESS = 0.5
+const FERN_PRESS = 0.2
 
 /** The shape of a frond from its root: its length, the control point of its midrib and the midrib's end. */
 type FrondCurve = { length: number; cx: number; cy: number; ex: number; ey: number }
@@ -3794,12 +3773,16 @@ function fernLayout(fern: Fern): FernLayout {
     const pad = curve.length * 0.27 + fern.size * 0.03 + 2
     const left = Math.min(...xs) - pad
     const top = Math.min(...ys) - pad
+    // Where this frond comes to rest when it has sunk: some a little above level, some a little below.
+    const hash = Math.sin(frond.angle * 917.3 + frond.base * 313.7 + fern.size * 1.7) * 43758.5453
+    const sag = -FERN_REST_ABOVE + (hash - Math.floor(hash)) * (FERN_REST_ABOVE + FERN_REST_BELOW)
+    const rest = (frond.angle >= 0 ? 1 : -1) * (Math.PI / 2 + sag)
     const cell: FrondCell = {
       curve,
       rootX: frond.base * fern.size,
       rootY: fern.size * 0.1,
       tilt,
-      turn: ((frond.angle >= 0 ? FERN_FLAT_ANGLE : -FERN_FLAT_ANGLE) - frond.angle) * FERN_TURN,
+      turn: rest - tilt,
       x,
       left,
       top,
@@ -3830,6 +3813,16 @@ function fernScale(layout: FernLayout, res: number): number {
 type FernSprite = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; res: number; offsetX: number; offsetY: number; width: number; height: number }
 
 const fernSprites = new WeakMap<Fern, Map<string, FernSprite>>()
+
+/**
+ * How far toward brown a fern has turned by the end of spring: half to three quarters of the way, each its own.
+ *
+ * @param fern - The fern.
+ */
+function fernBrownLimit(fern: Fern): number {
+  const hash = Math.sin(fern.x * 12.9898 + fern.size * 4.1414) * 43758.5453
+  return 0.5 + 0.25 * (hash - Math.floor(hash))
+}
 
 /** The colors a foreground fern's bitmap can be in. */
 type FernLook = 'summer' | 'winter' | 'brown'
@@ -4202,7 +4195,8 @@ function drawFern(
     fernSprites.set(fern, map)
   }
   const droop = fernDroopAt(time)
-  const brown = fernBrownAt(time)
+  const spring = fernBrownAt(time)
+  const brown = spring * fernBrownLimit(fern)
   /** A later bitmap if it is made; if not, it is asked for. */
   const later = (look: FernLook): FernSprite | undefined => {
     const sprite = map.get(`${look}|${res.toFixed(2)}`)
@@ -4231,10 +4225,10 @@ function drawFern(
   if (dead && brown > 0) {
     looks.push({ sprite: dead, alpha: brown })
   }
-  const lift = rooted ? droop * (fern.size * 0.17 + 6) : 0
+  const lift = rooted ? droop * (fern.size * 0.2 + 6) : 0
   drawFronds(ctx, fern, fern.x, groundY - lift, droop, looks)
-  if (brown > 0) {
-    drawFiddleheads(ctx, fern, fern.x, groundY - lift + fern.size * 0.1, brown, res, FIDDLEHEAD_COLORS)
+  if (spring > 0) {
+    drawFiddleheads(ctx, fern, fern.x, groundY - lift + fern.size * 0.1, spring, res, FIDDLEHEAD_COLORS)
   }
 }
 
@@ -4269,7 +4263,7 @@ function drawLayerFerns(
   const res = vegRes(layer)
   const shift = cameraX * layer.parallax
   const droop = fernDroopAt(time)
-  const brown = fernBrownAt(time)
+  const spring = fernBrownAt(time)
   for (const prop of strip.veg.props) {
     const fern = prop.kind === 'fern' ? layer.ferns[prop.index] : undefined
     if (!fern) {
@@ -4285,6 +4279,7 @@ function drawLayerFerns(
     if (alpha <= 0) {
       continue
     }
+    const brown = spring * fernBrownLimit(fern)
     let map = fernSprites.get(fern)
     if (!map) {
       map = new Map()
@@ -4299,8 +4294,8 @@ function drawLayerFerns(
         const stemTone = layer.tones[0] ?? layer.trunkColor
         const color = (green: string, dead: string): string =>
           look === 'winter'
-            ? winterGreen(winterHazed(green, layer, 1), 1)
-            : winterHazed(mixHex(dead, FOREST_HAZE_COLOR, layer.fog), layer, 1)
+            ? winterGreen(green, 1)
+            : mixHex(dead, FOREST_HAZE_COLOR, layer.fog)
         sprite = paintFernSprite(
           fern,
           res,
@@ -4320,10 +4315,10 @@ function drawLayerFerns(
     }
     ctx.globalAlpha = alpha
     drawFronds(ctx, fern, x, y, droop, looks)
-    if (brown > 0) {
+    if (spring > 0) {
       // In the layer's haze, like the rest of it.
-      const hazed = (color: string): string => winterHazed(mixHex(color, FOREST_HAZE_COLOR, layer.fog), layer, 1)
-      drawFiddleheads(ctx, fern, x, y + fern.size * 0.1, brown, res, {
+      const hazed = (color: string): string => mixHex(color, FOREST_HAZE_COLOR, layer.fog)
+      drawFiddleheads(ctx, fern, x, y + fern.size * 0.1, spring, res, {
         stalk: hazed(FIDDLEHEAD_COLORS.stalk),
         coil: hazed(FIDDLEHEAD_COLORS.coil),
         shade: hazed(FIDDLEHEAD_COLORS.shade),
@@ -5162,15 +5157,12 @@ function snowGeometry(
 }
 
 /**
- * The colors of a rock's snow (it takes some of the rock's distance haze).
+ * The colors of a rock's or log's snow (the same far or near: the falling snow's haze is laid over it all).
  *
- * @param fog - The rock's distance haze.
+ * @param _fog - The distance haze of what it lies on.
  */
-function snowColors(fog: number): { top: string; bottom: string } {
-  return {
-    top: fog > 0 ? mixHex(SNOW_TOP, WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)) : SNOW_TOP,
-    bottom: mixHex('#d4e3f3', WINTER_HAZE_COLOR, Math.min(0.7, fog * 0.7)),
-  }
+function snowColors(_fog: number): { top: string; bottom: string } {
+  return { top: SNOW_TOP, bottom: '#d4e3f3' }
 }
 
 /**

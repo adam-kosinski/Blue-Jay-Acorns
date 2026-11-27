@@ -615,3 +615,15 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Far layers: patches made with each strip (`strip.flowers`), smaller by layer, hazed, drawn after the layer's rocks and before its bushes (`drawLayerFlowers`).
 - Spring leaves are staggered more: each plant starts between 7.45 and 7.65 segments (length 0.34), far sample moments 7.25, 7.45, 7.55, 7.65, 7.75, 7.86, 8, and in spring each chunk of each far layer fades at its own point of the interval (`sampleAt(time, turn)`, `SPRING_TURNS`).
 - Opening the debug tools while the win screen is up removes it and the game goes on.
+
+## Background tree sizes
+- `layerOak` (world.ts): about half the far layers' trees are as before; the rest get a trunk 0.5-1 times and a height 2/3-1 times the average (`typicalOakSize`), chosen independently; branches follow the trunk, and the twigs' least width thins with it.
+
+## Sky and treeline (`src/game/sky.ts`)
+- Over the backdrop gradient (now read as the far trees) a blue sky is drawn down to a Perlin-noise treeline (three swells plus a 2D fringe, blurred), painted once per world at quarter resolution and stretched. Its middle sits at 0.19 of the view height with the camera at the bottom; parallax 0.06 sideways, 0.12 vertically. Same blue in all seasons.
+- Later changes: sunken fronds rest between 0.42 rad above and 0.24 below level, each its own (press now 0.2, rooted ferns raised a bit more). Flower patches are about twice as wide with the same plants, and their starts are spread evenly from 0.05 to 0.57 of spring (golden-ratio turns). The sky is a deeper blue, paler toward the treeline.
+- Ferns only go 50-75% of the way to brown by the end of spring (`fernBrownLimit`, each its own); fiddleheads still follow spring's progress.
+- While it snows the sky is gone (the backdrop's own color only), cross-faded with the snowfall's 4 s ramps (`1 - snowfallAt`).
+
+## Haze only in falling snow
+- The light blue haze on the far layers and backdrop no longer comes with the season (no late-fall ramp, none baked into layer images, rocks, water, snow on rocks and logs). It follows `snowfallAt`: `layHaze` fills the screen translucently before each layer (and once after the nearest) so each ends up at `min(0.95, fog) * snowfall`, the backdrop at its own amount.
