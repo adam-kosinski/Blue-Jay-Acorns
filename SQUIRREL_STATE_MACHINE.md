@@ -4,6 +4,8 @@ Source: `src/game/squirrel.ts` (tree, sniffing, home stretch) plus the shared an
 
 - **Rectangles** are states; **diamonds** are decision points (checks made when entering a state or once per second).
 - Probabilistic transitions are mostly rolled **once per second** per animal (the follow rolls are event-based, see `context.md`); everything else is checked every frame.
+- **Perception (by sight):** every frame while on the ground, sniffing or not (nothing on the trunk or hidden in the tree). The region is a third of a typical screen width ahead, about one bird width behind, and as far up and down as ahead. A free acorn in it is always noticed (a squirrel never flies). Another animal's buried acorn gets one roll each time it newly comes into view (certain if fresh, falling with each hop that disguises it, none at 10 hops). Another animal burying or digging up in view is noticed.
+- **Sniffing** is an extra chance on top of sight, for buried acorns at the nose only.
 - **Differences from a blue jay:** one per oak, never flies (hops), fuzzy home stretch around its oak, idle = up the tree (hunger 0.8 / 0.7), double-size hunger bar, secrecy 0.5 with no oak term in burial quality, 0.1-0.4 s pause between hops while wandering, sniffing every 2-4 hops, no nosiness / follow / hide. Details in `context.md`, section "NPC squirrel behaviour reference".
 
 ```mermaid
@@ -21,6 +23,8 @@ flowchart TD
     hungry -- "no" --> idle
 
     explore["<b>explore</b><br/>outside the home stretch: walk back to it (no sniffing);<br/>inside: hop around it, turning at its edges;<br/>after every 2-4 hops: pause and <b>sniff</b> 0.9 s (rolling to notice<br/>buried acorns within 1 squirrel width of the nose, double chance),<br/>then keep going the same way"]
+    sight["<b>sight</b> (every frame on the ground, in any state, sniffing or not)<br/>in the perception region: free acorns are always noticed;<br/>others' buried acorns get one roll each time they come into view (the fewer hops on it, the likelier);<br/>others' burying and digging up is noticed"]
+    sight -. "something new noticed: decide at once<br/>(a sniff in progress finishes first)" .-> sees
     explore --> sees{"Each second: a remembered acorn<br/>or site currently in view (also outside the home stretch)?"}
     sees -- "yes" --> gather
     sees -- "no" --> starving{"Hunger below 1/3<br/>and remembers a burial spot?"}
