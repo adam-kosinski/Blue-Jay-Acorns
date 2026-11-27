@@ -13,7 +13,14 @@ import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
-import { forestReady, renderScene, setBurialHeatmap, setShowMinimap, warmUpScene } from './render'
+import {
+  forestReady,
+  renderScene,
+  setBurialHeatmap,
+  setShowMinimap,
+  setSquirrelRegions,
+  warmUpScene,
+} from './render'
 import { advanceSeason, baseDropRate } from './seasons'
 import { Timeline } from './Timeline'
 import type { Player, World } from './types'
@@ -74,6 +81,7 @@ export function GameCanvas() {
   const pauseHungerRef = useRef<boolean>(pauseHunger)
   const timePausedRef = useRef<boolean>(false)
   const [showBurialQuality, setShowBurialQuality] = useState<boolean>(false)
+  const [showRegions, setShowRegions] = useState<boolean>(false)
   const [invisible, setInvisible] = useState<boolean>(false)
   const [debugOpen, setDebugOpen] = useState<boolean>(loadDebugOpen)
   const [buriedCount, setBuriedCount] = useState<number>(0)
@@ -93,6 +101,10 @@ export function GameCanvas() {
   useEffect(() => {
     setBurialHeatmap(showBurialQuality)
   }, [showBurialQuality])
+
+  useEffect(() => {
+    setSquirrelRegions(showRegions)
+  }, [showRegions])
 
   useEffect(() => {
     setShowMinimap(debugOpen)
@@ -350,6 +362,17 @@ export function GameCanvas() {
                   }}
                 />
                 Burial quality heatmap
+              </label>
+              <label className="debug-toggle">
+                <input
+                  type="checkbox"
+                  checked={showRegions}
+                  onChange={(event) => {
+                    setShowRegions(event.target.checked)
+                    event.currentTarget.blur()
+                  }}
+                />
+                Squirrel regions
               </label>
               <label className="debug-toggle">
                 <input
