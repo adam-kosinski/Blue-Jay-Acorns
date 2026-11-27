@@ -849,7 +849,7 @@ function drawForest(
         // Its resolution runs from this layer's to the next one's (the foreground's, full, after the last).
         const here = vegRes(layer)
         const nextRes = next ? vegRes(next) : ctx.getTransform().a
-        drawFuzzyRock(ctx, edge.rock, py, here + (nextRes - here) * t)
+        drawFuzzyRock(ctx, edge.rock, py, here + (nextRes - here) * t, rockSnowSteps(layers.length - 1 - index))
       }
     }
     if (!hidden) {
@@ -868,7 +868,7 @@ function drawForest(
         }
         ctx.save()
         ctx.translate(-shift, 0)
-        drawFuzzyRock(ctx, rock, groundY, vegRes(layer))
+        drawFuzzyRock(ctx, rock, groundY, vegRes(layer), rockSnowSteps(layers.length - 1 - index))
         ctx.restore()
       }
       if (!profSkip('vegfront')) drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
@@ -930,6 +930,16 @@ function atlasSlot(width: number, height: number): { sx: number; sy: number } | 
 }
 
 /**
+ * How many steps a background layer's rocks take their snow in: the nearest two layers in fine steps, the ones
+ * farther back (smaller, hazier, where a step shows less) in coarser ones, so fewer rocks are repainted.
+ *
+ * @param back - How many layers this one is behind the nearest background layer (0 for the nearest).
+ */
+function rockSnowSteps(back: number): number {
+  return back <= 1 ? 24 : Math.max(6, Math.round(24 / back))
+}
+
+/**
  * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel into a small bitmap of its own
  * and drawn up to size (smoothed), so that it is as soft as the layer's images are, and as soft as the ground
  * next to it. The bitmap is kept and only remade when something that shows of the rock has changed (its size, the
@@ -940,8 +950,9 @@ function atlasSlot(width: number, height: number): { sx: number; sy: number } | 
  * @param rock - The rock (it is drawn by `drawRockSimple`).
  * @param groundY - Ground Y at the rock.
  * @param res - Bitmap pixels per world pixel it is painted at.
+ * @param steps - How many steps its snow changes in (see `rockSnowSteps`).
  */
-function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number): void {
+function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number, steps = 24): void {
   if (profSkip('rocks')) {
     return
   }
@@ -955,8 +966,8 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   // Each rock steps at its own offset within a step (all of them stepping in the same frame, a hundred repaints at
   // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
-  const step = (value: number): number => Math.round(value * 24 + phase)
-  const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
+  const step = (value: number): number => Math.round(value * steps + phase)
+  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
   if (!sprite || sprite.key !== key) {
     ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
