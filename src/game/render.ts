@@ -2648,13 +2648,22 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
     turn = (turn + 0.618) % 1
     return turn
   }
+  /** The share of spring by which the snow has left a spot (a plant there waits for that). */
+  const thaw = (x: number, y: number): number => {
+    const depth = y - groundYAt(terrain, x)
+    let share = 0
+    while (share < 0.45 && snowAt(x, depth, (7 + share) * SEGMENT_SECONDS) > 0.5) {
+      share += 0.02
+    }
+    return share
+  }
   const near: FlowerPatch[] = []
   for (let x = random() * 200; x < world.width; x += 250 + random() * 300) {
     const width = 340 + random() * 420
     const depth = 6 + random() * 22
     const kind = Math.floor(random() * FLOWER_KINDS)
     const count = 12 + Math.floor(random() * 16)
-    const patch = makeFlowerPatch(random, kind, x, (px) => groundYAt(terrain, px) + depth + 6, width, 15, 1, count, next(), clear)
+    const patch = makeFlowerPatch(random, kind, x, (px) => groundYAt(terrain, px) + depth + 6, width, 15, 1, count, next(), clear, thaw)
     if (patch) {
       near.push(patch)
     }
@@ -2679,6 +2688,7 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
         14 + Math.floor(random() * 18),
         next(),
         clear,
+        thaw,
       )
       if (patch) {
         front.push(patch)
@@ -2691,17 +2701,14 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
 }
 
 /**
- * Draws one of the foreground's flower patches (snow still lying hides its plants).
+ * Draws one of the foreground's flower patches.
  *
  * @param ctx - 2D canvas context in world space.
- * @param world - Play space.
  * @param patch - The patch.
  * @param spring - How far through spring it is, 0-1.
  */
-function drawGroundPatch(ctx: CanvasRenderingContext2D, world: World, patch: FlowerPatch, spring: number): void {
-  drawFlowerPatch(ctx, patch, spring, ctx.getTransform().a, PLAIN_TINT, 0, 0, (x, y) =>
-    snowAt(x, y - groundYAt(world.terrain, x), world.season.time),
-  )
+function drawGroundPatch(ctx: CanvasRenderingContext2D, patch: FlowerPatch, spring: number): void {
+  drawFlowerPatch(ctx, patch, spring, ctx.getTransform().a, PLAIN_TINT)
 }
 
 /**
@@ -2719,7 +2726,7 @@ function drawNearFlowers(ctx: CanvasRenderingContext2D, world: World, cameraX: n
   }
   for (const patch of worldFlowers(world).near) {
     if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
-      drawGroundPatch(ctx, world, patch, spring)
+      drawGroundPatch(ctx, patch, spring)
     }
   }
 }
@@ -2793,7 +2800,7 @@ function drawFrontProps(
   if (spring > 0) {
     for (const patch of worldFlowers(world).front) {
       if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
-        items.push({ y: patch.bottom, draw: () => drawGroundPatch(ctx, world, patch, spring) })
+        items.push({ y: patch.bottom, draw: () => drawGroundPatch(ctx, patch, spring) })
       }
     }
   }

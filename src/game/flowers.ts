@@ -1,9 +1,11 @@
 /**
  * Spring ephemerals: patches of small wildflowers that come up on the forest floor in spring (trout lilies,
- * trilliums, bluebells and anemones). A patch is of one kind; its plants fade in a few at a time, from the
- * middle outward, all fully there by the end of spring. Each patch is painted onto a bitmap of its own that is
- * repainted only about once a second while it grows.
+ * trilliums, bluebells and anemones). A patch is of one kind; its plants come a few at a time, from the
+ * middle outward, each group in one quick fade, so the patch seems to grow; all are there by the end of
+ * spring. The plants that have arrived are painted onto a bitmap of the patch's own, repainted only when a
+ * group has finished arriving.
  */
+import { SEGMENT_SECONDS } from './seasons'
 
 /** The kinds: trout lily, trillium, bluebell, anemone. */
 export const FLOWER_KINDS = 4
@@ -15,11 +17,11 @@ const VARIANTS = 3
 const FIRST_START = 0.05
 const START_SPREAD = 0.52
 
-/** The share of spring a plant takes to fade in. */
-const FADE_SHARE = 0.22
+/** The share of spring (which lasts a segment) a group of plants takes to fade in: three quarters of a second. */
+const FADE_SHARE = 0.75 / SEGMENT_SECONDS
 
-/** How many times over spring a growing patch is repainted. */
-const STEPS = 48
+/** How many plants come together. */
+const GROUP = 4
 
 /** The box (px at scale 1, from the plant's foot) every plant is painted in. */
 const BOX = { left: -34, top: -58, width: 68, height: 64 }
@@ -36,10 +38,8 @@ export type FlowerPatch = {
   top: number
   right: number
   bottom: number
-  /** When its first plant comes (share of spring). */
+  /** When its first plants come (share of spring). */
   first: number
-  /** Which part of a step it is repainted at (so that patches are not all repainted at once). */
-  phase: number
 }
 
 /** How a patch's colors are changed (haze), with a name for the change (bitmaps are cached by it). */
@@ -61,6 +61,7 @@ export const PLAIN_TINT: FlowerTint = { key: 'plain', color: (hex) => hex }
  * @param count - How many plants.
  * @param turn - When it starts among the patches, 0 (first) to 1.
  * @param allowed - Whether a plant may stand at an x (those that may not are left out).
+ * @param earliest - The earliest share of spring a plant at a point may come (while snow lies there it waits).
  * @returns The patch, or null if none of its plants may stand where they fell.
  */
 export function makeFlowerPatch(
@@ -74,6 +75,7 @@ export function makeFlowerPatch(
   count: number,
   turn: number,
   allowed: (x: number) => boolean = () => true,
+  earliest: (x: number, y: number) => number = () => 0,
 ): FlowerPatch | null {
   const start = FIRST_START + turn * START_SPREAD
   const plants = Array.from({ length: count }, (): Plant => {
@@ -96,6 +98,16 @@ export function makeFlowerPatch(
   if (plants.length === 0) {
     return null
   }
+  // The plants come in small groups, in the order of their own times: each group at its middle one's.
+  const order = plants.map((plant) => ({ plant, due: Math.max(plant.appear, earliest(plant.x, plant.y)) }))
+  order.sort((p, q) => p.due - q.due)
+  for (let from = 0; from < order.length; from += GROUP) {
+    const group = order.slice(from, from + GROUP)
+    const due = Math.min(1 - FADE_SHARE, group[Math.floor(group.length / 2)]?.due ?? 0)
+    for (const { plant } of group) {
+      plant.appear = due
+    }
+  }
   return {
     kind,
     x,
@@ -105,7 +117,6 @@ export function makeFlowerPatch(
     right: Math.max(...plants.map((p) => p.x - BOX.left * p.scale)),
     bottom: Math.max(...plants.map((p) => p.y + (BOX.top + BOX.height) * p.scale)),
     first: Math.min(...plants.map((p) => p.appear)),
-    phase: random(),
   }
 }
 
@@ -336,11 +347,41 @@ function plantSprite(kind: number, variant: number, res: number, tint: FlowerTin
   return canvas
 }
 
-/** Each patch's bitmap as last painted. */
+/** Each patch's bitmap of the plants that have arrived, as last painted. */
 const patchBitmaps = new WeakMap<FlowerPatch, { canvas: HTMLCanvasElement; key: string }>()
 
 /**
- * Draws a patch as far as it has come up.
+ * Draws one plant of a patch.
+ *
+ * @param ctx - 2D canvas context.
+ * @param patch - The patch.
+ * @param plant - The plant.
+ * @param res - Bitmap pixels per pixel of the patch's coordinates.
+ * @param tint - Its colors' change.
+ * @param offsetX - Added to the patch's coordinates.
+ * @param offsetY - Added to the patch's coordinates.
+ */
+function drawPlant(
+  ctx: CanvasRenderingContext2D,
+  patch: FlowerPatch,
+  plant: Plant,
+  res: number,
+  tint: FlowerTint,
+  offsetX: number,
+  offsetY: number,
+): void {
+  // (Painted a little finer than shown at scale 1, for the bigger plants.)
+  const sprite = plantSprite(patch.kind, plant.variant, res * Math.max(0.5, Math.ceil(plant.scale * 4) / 4), tint)
+  ctx.save()
+  ctx.translate(plant.x + offsetX, plant.y + offsetY)
+  ctx.scale(plant.flip * plant.scale, plant.scale)
+  ctx.drawImage(sprite, BOX.left, BOX.top, BOX.width, BOX.height)
+  ctx.restore()
+}
+
+/**
+ * Draws a patch as far as it has come up: the plants that have arrived from its bitmap, and over them the ones
+ * fading in now.
  *
  * @param ctx - 2D canvas context.
  * @param patch - The patch.
@@ -349,7 +390,6 @@ const patchBitmaps = new WeakMap<FlowerPatch, { canvas: HTMLCanvasElement; key: 
  * @param tint - Its colors' change.
  * @param offsetX - Added to the patch's coordinates.
  * @param offsetY - Added to the patch's coordinates.
- * @param snow - How much snow lies at a plant's foot, 0-1 (it hides the plant), if any can.
  */
 export function drawFlowerPatch(
   ctx: CanvasRenderingContext2D,
@@ -359,42 +399,41 @@ export function drawFlowerPatch(
   tint: FlowerTint,
   offsetX = 0,
   offsetY = 0,
-  snow?: (x: number, y: number) => number,
 ): void {
-  const now = Math.min(1, Math.floor(spring * STEPS + patch.phase) / STEPS)
-  if (spring <= 0 || now <= patch.first) {
+  if (spring <= patch.first) {
     return
   }
-  const width = patch.right - patch.left
-  const height = patch.bottom - patch.top
-  const key = `${res.toFixed(2)}|${tint.key}|${now.toFixed(4)}`
-  let bitmap = patchBitmaps.get(patch)
-  if (!bitmap || bitmap.key !== key) {
-    const canvas = bitmap?.canvas ?? document.createElement('canvas')
-    // (Setting the size clears it.)
-    canvas.width = Math.max(1, Math.ceil(width * res))
-    canvas.height = Math.max(1, Math.ceil(height * res))
-    const paint = canvas.getContext('2d')
-    if (paint) {
-      paint.scale(res, res)
-      paint.translate(-patch.left, -patch.top)
-      for (const plant of patch.plants) {
-        const alpha = Math.min(1, (now - plant.appear) / FADE_SHARE) * (1 - (snow?.(plant.x, plant.y) ?? 0))
-        if (alpha <= 0.01) {
-          continue
+  // (A hair of slack, so that the last group is counted as arrived at the very end of spring.)
+  const arrived = patch.plants.filter((plant) => plant.appear + FADE_SHARE <= spring + 1e-6)
+  if (arrived.length > 0) {
+    const width = patch.right - patch.left
+    const height = patch.bottom - patch.top
+    const key = `${res.toFixed(2)}|${tint.key}|${arrived.length}`
+    let bitmap = patchBitmaps.get(patch)
+    if (!bitmap || bitmap.key !== key) {
+      const canvas = bitmap?.canvas ?? document.createElement('canvas')
+      // (Setting the size clears it.)
+      canvas.width = Math.max(1, Math.ceil(width * res))
+      canvas.height = Math.max(1, Math.ceil(height * res))
+      const paint = canvas.getContext('2d')
+      if (paint) {
+        paint.scale(res, res)
+        for (const plant of arrived) {
+          drawPlant(paint, patch, plant, res, tint, -patch.left, -patch.top)
         }
-        // (Painted a little finer than shown at scale 1, for the bigger plants.)
-        const sprite = plantSprite(patch.kind, plant.variant, res * Math.max(0.5, Math.ceil(plant.scale * 4) / 4), tint)
-        paint.save()
-        paint.globalAlpha = alpha
-        paint.translate(plant.x, plant.y)
-        paint.scale(plant.flip * plant.scale, plant.scale)
-        paint.drawImage(sprite, BOX.left, BOX.top, BOX.width, BOX.height)
-        paint.restore()
       }
+      bitmap = { canvas, key }
+      patchBitmaps.set(patch, bitmap)
     }
-    bitmap = { canvas, key }
-    patchBitmaps.set(patch, bitmap)
+    ctx.drawImage(bitmap.canvas, patch.left + offsetX, patch.top + offsetY, bitmap.canvas.width / res, bitmap.canvas.height / res)
   }
-  ctx.drawImage(bitmap.canvas, patch.left + offsetX, patch.top + offsetY, bitmap.canvas.width / res, bitmap.canvas.height / res)
+  const before = ctx.globalAlpha
+  for (const plant of patch.plants) {
+    const through = (spring + 1e-6 - plant.appear) / FADE_SHARE
+    if (through > 0 && through < 1) {
+      ctx.globalAlpha = before * through
+      drawPlant(ctx, patch, plant, res, tint, offsetX, offsetY)
+    }
+  }
+  ctx.globalAlpha = before
 }

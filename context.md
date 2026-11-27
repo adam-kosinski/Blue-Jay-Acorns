@@ -610,7 +610,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Later change: all the spring leaves now arrive. Six spring looks (`STAGE_LOOKS` 9-14), `sizes` = [first quarter, second quarter, last half]; the last half comes in at the fifth look (0.25) and ends at 0.45 of full size while the others end full. Boundaries 0.04, 0.23, 0.42, 0.6, 0.77, 0.95.
 
 ## Spring ephemeral flowers (`src/game/flowers.ts`)
-- Patches of one kind (trout lily, trillium, bluebell, anemone); each plant fades in over 0.22 of spring, earliest in the middle of the patch, all full by the year's end. A patch is one bitmap, repainted at 48 steps over spring (staggered).
+- Patches of one kind (trout lily, trillium, bluebell, anemone); each plant fades in over 0.22 of spring, earliest in the middle of the patch, all full by the year's end. A patch is one bitmap.
 - Foreground (`worldFlowers`): patches by the surface line (drawn before mounds, birds and acorns) and farther down (sorted with the front props, at least 100 px below the surface); snow hides plants under it; none on the creek.
 - Far layers: patches made with each strip (`strip.flowers`), smaller by layer, hazed, drawn after the layer's rocks and before its bushes (`drawLayerFlowers`).
 - Spring leaves are staggered more: each plant starts between 7.45 and 7.65 segments (length 0.34), far sample moments 7.25, 7.45, 7.55, 7.65, 7.75, 7.86, 8, and in spring each chunk of each far layer fades at its own point of the interval (`sampleAt(time, turn)`, `SPRING_TURNS`).
@@ -627,3 +627,4 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## Haze only in falling snow
 - The light blue haze on the far layers and backdrop no longer comes with the season (no late-fall ramp, none baked into layer images, rocks, water, snow on rocks and logs). It follows `snowfallAt`: `layHaze` fills the screen translucently before each layer (and once after the nearest) so each ends up at `min(0.95, fog) * snowfall`, the backdrop at its own amount.
+- Later change: plants arrive in groups of four, each group in one 0.75 s fade (drawn directly while fading, then painted into the patch's bitmap), earliest in the middle; foreground plants wait for the snow to leave their spot (`thaw`) instead of being dimmed by it.
