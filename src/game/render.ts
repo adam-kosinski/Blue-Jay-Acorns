@@ -934,31 +934,31 @@ function atlasSlot(width: number, height: number): { sx: number; sy: number } | 
 const ROCK_MELT_STEPS = 12
 
 /**
- * How many steps a background layer's rocks take the snow coming in (see `ROCK_MELT_STEPS` for its melting): the
- * nearest three layers (the ones seen most clearly) in fine steps, the ones farther back (smaller, hazier, where a
- * step shows less) in coarser ones, so fewer rocks are repainted (rocks are a small detail: their repaints cost more
- * than finer steps were worth).
+ * How many steps a background layer's rocks take each of the two layers of the snow coming in, the dusting and the
+ * full cap (see `ROCK_MELT_STEPS` for its melting): the nearest three layers (the ones seen most clearly) in finer
+ * steps, the ones farther back (smaller, hazier, where a step shows less) in coarser ones, so fewer rocks are
+ * repainted (rocks are a small detail: their repaints cost more than finer steps were worth).
  *
  * @param back - How many layers this one is behind the nearest background layer (0 for the nearest).
  */
 function rockSnowSteps(back: number): number {
-  return back <= 2 ? 12 : Math.max(3, Math.round(12 / (back - 1)))
+  return back <= 2 ? 6 : Math.max(2, Math.round(6 / (back - 1)))
 }
 
 /**
  * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel into a small bitmap of its own
  * and drawn up to size (smoothed), so that it is as soft as the layer's images are, and as soft as the ground
- * next to it. The bitmap is kept and only remade when something that shows of the rock has changed (its size, the
- * winter haze, its snow, each in steps of 1/24 or finer), so that most frames only draw it. A resolution at or
- * above the screen's is drawn directly.
+ * next to it. The bitmaps are kept and only made anew when something that shows of the rock has changed (its size,
+ * or its snow, which changes in steps with a crossfade between them), so that most frames only draw them. A
+ * resolution at or above the screen's is drawn directly.
  *
  * @param ctx - 2D canvas context (the rock's coordinates are its coordinates).
  * @param rock - The rock (it is drawn by `drawRockSimple`).
  * @param groundY - Ground Y at the rock.
  * @param res - Bitmap pixels per world pixel it is painted at.
- * @param steps - How many steps its snow changes in (see `rockSnowSteps`).
+ * @param steps - How many steps its snow comes in by (see `rockSnowSteps`).
  */
-function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number, steps = 24): void {
+function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number, steps = 6): void {
   if (profSkip('rocks')) {
     return
   }
@@ -970,16 +970,31 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   const baseY = groundY + rock.ry * 0.4
   const layers = snowCapLayers(seasonNow)
   // Each rock steps at its own offset within a step (all of them stepping in the same frame, a hundred repaints at
-  // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
+  // once, stalled the graphics card): the repaints spread evenly over time.
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
-  const step = (value: number): number => Math.round(value * steps + phase)
-  // While it melts, its cap shrinks: a shrinking edge jumps at every step however fine, so the rock is painted at the
-  // two steps it is between and the two are blended by how far along it is (smooth, and still only repainted once
-  // a step).
-  const meltAt = rockSnowSize(rock, seasonNow) * ROCK_MELT_STEPS + phase
-  const lower = Math.floor(meltAt)
-  const along = meltAt - lower
-  const rest = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(layers.thin)}|${step(layers.full)}`
+  // Its snow as one amount that changes: while it comes in, the dusting (0 to 1) and then the full cap (1 to 2);
+  // after that, how big the cap still is as it melts (1 to 0). Either way the rock is painted at the two steps the
+  // amount is between and the two are blended by how far along it is: smooth, and still only repainted once a step.
+  // (A shrinking edge would jump at every step however fine.)
+  const coming = layers.thin + layers.full
+  const melting = coming >= 2
+  const amount = melting ? rockSnowSize(rock, seasonNow) : coming
+  const perUnit = melting ? ROCK_MELT_STEPS : steps
+  const most = melting ? 1 : 2
+  const lower = Math.floor(amount * perUnit + phase)
+  const amountAt = (n: number): number => Math.max(0, Math.min(most, (n - phase) / perUnit))
+  const from = amountAt(lower)
+  const to = amountAt(lower + 1)
+  // (Measured between the two amounts as painted, so that the first and last are reached exactly.)
+  const along = to > from ? Math.max(0, Math.min(1, (amount - from) / (to - from))) : 0
+  /** The snow as painted for an amount. */
+  const snowFor = (value: number): { size: number; thin: number; full: number } =>
+    melting ? { size: value, thin: 1, full: 1 } : { size: 1, thin: Math.min(1, value), full: Math.max(0, value - 1) }
+  // (Named by what is painted, so that the whole cap at the end of its coming and at the start of its melt is one image.)
+  const keyFor = (value: number): string => {
+    const snow = snowFor(value)
+    return `${snow.size.toFixed(4)}|${snow.thin.toFixed(4)}|${snow.full.toFixed(4)}|${res.toFixed(3)}|${rock.rx.toFixed(1)}`
+  }
   const pad = 3
   const halfWidth = rock.rx * 1.4 + pad
   const above = rock.ry * 1.7 + pad
@@ -992,10 +1007,10 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
     fuzzyRocks.set(rock, held)
   }
   const list = held
-  const wanted = [`${lower}|${rest}`, `${lower + 1}|${rest}`]
-  // The image of one melt step: kept, or painted (into the slot of an image no longer wanted, if one fits).
-  const imageAt = (n: number): FuzzyRock | null => {
-    const key = `${n}|${rest}`
+  const wanted = [keyFor(from), keyFor(to)]
+  // The image for one amount of snow: kept, or painted (into the slot of an image no longer wanted, if one fits).
+  const imageAt = (value: number): FuzzyRock | null => {
+    const key = keyFor(value)
     const found = list.find((sprite) => sprite.key === key)
     if (found) {
       return found
@@ -1019,7 +1034,7 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
       list.length = 0
       fuzzyRocks.set(rock, list)
     }
-    rockSnowSizeOverride = Math.max(0, Math.min(1, (n - phase) / ROCK_MELT_STEPS))
+    rockSnowOverride = snowFor(value)
     actx.save()
     actx.setTransform(1, 0, 0, 1, 0, 0)
     actx.clearRect(slot.sx, slot.sy, width, height)
@@ -1029,7 +1044,7 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
     actx.setTransform(res, 0, 0, res, slot.sx + (halfWidth - rock.x) * res, slot.sy + (above - baseY) * res)
     drawRockSimple(actx, rock, groundY)
     actx.restore()
-    rockSnowSizeOverride = null
+    rockSnowOverride = null
     const sprite: FuzzyRock = { sx: slot.sx, sy: slot.sy, key, halfWidth, above, width, height, res }
     list.push(sprite)
     // Images of steps long gone are let go (their slots are reused by the next ones).
@@ -1049,17 +1064,19 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
     ctx.drawImage(image, sprite.sx, sprite.sy, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
     ctx.globalAlpha = was
   }
-  const low = imageAt(lower)
-  if (!low) {
+  // (At the very end of a step only the later image shows.)
+  const done = along > 0.998
+  const first = imageAt(done ? to : from)
+  if (!first) {
     drawRockSimple(ctx, rock, groundY)
     return
   }
-  put(low, 1)
-  // (The step with more snow over the one with less: the rock itself is the same in both, so only the snow fades.)
-  if (along > 0.002) {
-    const high = imageAt(lower + 1)
-    if (high) {
-      put(high, along)
+  put(first, 1)
+  // (The later step over the earlier one: the rock itself is the same in both, so only the snow fades.)
+  if (!done && along > 0.002) {
+    const next = imageAt(to)
+    if (next) {
+      put(next, along)
     }
   }
 }
@@ -5674,11 +5691,11 @@ function rockShape(
  * @param time - Seconds along the timeline.
  */
 /** While set, every rock's snow is this size (to paint a far rock's image at one of its steps: see `drawFuzzyRock`). */
-let rockSnowSizeOverride: number | null = null
+let rockSnowOverride: { size: number; thin: number; full: number } | null = null
 
 function rockSnowSize(rock: Rock, time: number): number {
-  if (rockSnowSizeOverride !== null) {
-    return rockSnowSizeOverride
+  if (rockSnowOverride !== null) {
+    return rockSnowOverride.size
   }
   const key = (rock.jitter.reduce((a, b) => a + b, 0) * 997) % 1
   return snowCapSize(time, key)
@@ -6421,7 +6438,7 @@ function drawRockSimple(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numb
   ctx.globalAlpha = 1
   // Snow over the top (after the highlight, so nothing shows through it).
   const snowSize = rockSnowSize(rock, seasonNow)
-  const snowLayers = snowCapLayers(seasonNow)
+  const snowLayers = rockSnowOverride ?? snowCapLayers(seasonNow)
   if (snowSize > 0.04 && snowLayers.thin > 0.02) {
     paintSnowCap(ctx, outline, rock.x, baseY, rock.rx, rock.ry, snowPhase(rock), snowSize, snowLayers, rock.fog)
   }
