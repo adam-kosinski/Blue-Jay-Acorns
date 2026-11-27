@@ -6,9 +6,9 @@ const COLLAPSED_STORAGE_KEY = 'blue-jay-acorns:controls-collapsed'
 /** The keys and what they do. */
 const CONTROLS: [string, string][] = [
   ['WASD', 'move'],
+  ['Left click / Shift', 'pick up, bury, dig up'],
+  ['Right click / E', 'eat when hungry'],
   ['Q', 'drop'],
-  ['Shift / Left click', 'pick up, bury, dig up'],
-  ['E / Right click', 'eat when hungry'],
 ]
 
 /**
