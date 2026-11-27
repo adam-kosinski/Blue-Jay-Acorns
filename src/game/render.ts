@@ -968,8 +968,8 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
   const step = (value: number): number => Math.round(value * steps + phase)
-  // (Its cap's shrinking while it melts always takes the fine steps: a coarse one shows as a jump in its size.)
-  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(rockSnowSize(rock, seasonNow) * 24 + phase)}|${step(layers.thin)}|${step(layers.full)}`
+  // (Its cap's shrinking while it melts takes steps twice as fine: a coarse one shows as a jump in its size.)
+  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(rockSnowSize(rock, seasonNow) * steps * 2 + phase)}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
   if (!sprite || sprite.key !== key) {
     ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
