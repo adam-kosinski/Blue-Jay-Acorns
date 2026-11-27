@@ -929,11 +929,14 @@ function atlasSlot(width: number, height: number): { sx: number; sy: number } | 
   return slot
 }
 
+/** How many steps every far rock's snow cap shrinks in while it melts. */
+const ROCK_MELT_STEPS = 12
+
 /**
- * How many steps a background layer's rocks take their snow in: the nearest three layers (the ones seen most
- * clearly) in fine steps, the ones
- * farther back (smaller, hazier, where a step shows less) in coarser ones, so fewer rocks are repainted (rocks are
- * a small detail: their repaints cost more than finer steps were worth).
+ * How many steps a background layer's rocks take the snow coming in (see `ROCK_MELT_STEPS` for its melting): the
+ * nearest three layers (the ones seen most clearly) in fine steps, the ones farther back (smaller, hazier, where a
+ * step shows less) in coarser ones, so fewer rocks are repainted (rocks are a small detail: their repaints cost more
+ * than finer steps were worth).
  *
  * @param back - How many layers this one is behind the nearest background layer (0 for the nearest).
  */
@@ -969,8 +972,9 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
   const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
   const step = (value: number): number => Math.round(value * steps + phase)
-  // (Its cap's shrinking while it melts takes steps twice as fine: a coarse one shows as a jump in its size.)
-  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(rockSnowSize(rock, seasonNow) * steps * 2 + phase)}|${step(layers.thin)}|${step(layers.full)}`
+  // (Its cap's shrinking while it melts takes 12 steps on every layer: coarser ones showed as jumps in its size,
+  // most of all on the rocks along the creek's banks.)
+  const key = `${steps}|${res.toFixed(3)}|${rock.rx.toFixed(1)}|${Math.round(rockSnowSize(rock, seasonNow) * ROCK_MELT_STEPS + phase)}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
   if (!sprite || sprite.key !== key) {
     ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
