@@ -187,6 +187,11 @@ function backdropColors(time: number): [string, string] {
  */
 /** Frame profiling (dev only): set `window.__prof = { acc: {}, frames: 0, sync: false }` to collect ms per section of `renderScene`; `sync` reads a pixel back after each section so the graphics card's work is counted too. */
 let profLast = 0
+let stressSerial = 0
+/** Profiling (dev only): `window.__skip = new Set(['forest', ...])` leaves those sections out of the frame. */
+function profSkip(name: string): boolean {
+  return (globalThis as { __skip?: Set<string> }).__skip?.has(name) ?? false
+}
 let profFrame: Record<string, number> = {}
 function prof(ctx: CanvasRenderingContext2D, name: string): void {
   const p = (globalThis as { __prof?: { acc: Record<string, number>; frames: number; sync: boolean; worst?: Record<string, number>; worstMs?: number } }).__prof
@@ -247,39 +252,39 @@ export function renderScene(
   const sky = 1 - snowfallAt(world.season.time)
   if (sky > 0.003) {
     ctx.globalAlpha = sky
-    drawSky(ctx, world, camera.x, camera.y, viewWidth, viewHeight)
+    if (!profSkip('sky')) drawSky(ctx, world, camera.x, camera.y, viewWidth, viewHeight)
     ctx.globalAlpha = 1
   prof(ctx, 'sky')
   }
 
-  drawForest(ctx, world.forest, world, camera, viewWidth, viewHeight)
+  if (!profSkip('forest')) drawForest(ctx, world.forest, world, camera, viewWidth, viewHeight)
   prof(ctx, 'forest')
 
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
 
   // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
-  drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
+  if (!profSkip('trees')) drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
   prof(ctx, 'trees')
-  drawBuriedProps(ctx, world, camera.x, viewWidth)
+  if (!profSkip('props')) drawBuriedProps(ctx, world, camera.x, viewWidth)
   prof(ctx, 'buried')
-  drawGround(ctx, world, camera.x, viewWidth)
+  if (!profSkip('ground')) drawGround(ctx, world, camera.x, viewWidth)
   prof(ctx, 'ground')
   // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
-  drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
+  if (!profSkip('litter')) drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   prof(ctx, 'litter')
-  drawSnow(ctx, world, camera.x, viewWidth)
+  if (!profSkip('snow')) drawSnow(ctx, world, camera.x, viewWidth)
   prof(ctx, 'snow')
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
-  drawCreek(ctx, world, camera, viewWidth, viewHeight)
+  if (!profSkip('creek')) drawCreek(ctx, world, camera, viewWidth, viewHeight)
   prof(ctx, 'creek')
   // The leaves lying on the surface go under the flowers; flowers stay under the mounds (and the leaves on
   // them), the birds and the acorns.
   const onMound = mountedLeaf(world)
   drawKickedLeaves(ctx, world, camera.x, viewWidth, (leaf) => !onMound(leaf))
-  drawGroundFlowers(ctx, world, camera.x, viewWidth)
+  if (!profSkip('flowers')) drawGroundFlowers(ctx, world, camera.x, viewWidth)
   prof(ctx, 'kicked+flowers')
   drawMounds(ctx, world, camera.x, viewWidth)
   prof(ctx, 'mounds')
@@ -318,7 +323,7 @@ export function renderScene(
   // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
   // never look like they sit on a bush.
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
-  drawFrontProps(ctx, world, camera.x, viewWidth)
+  if (!profSkip('frontprops')) drawFrontProps(ctx, world, camera.x, viewWidth)
   prof(ctx, 'acorns+frontprops')
   drawNoticeLines(ctx, world, player)
   prof(ctx, 'notice')
@@ -331,7 +336,7 @@ export function renderScene(
   ctx.restore()
 
   // Falling snow, in front of the scene (screen space; the background layers have none).
-  drawSnowfall(ctx, world.season.time, camera.x, camera.y, viewWidth, viewHeight)
+  if (!profSkip('snowfall')) drawSnowfall(ctx, world.season.time, camera.x, camera.y, viewWidth, viewHeight)
   prof(ctx, 'snowfall')
 
   if (showMinimap) {
@@ -340,7 +345,7 @@ export function renderScene(
   drawHungerBar(ctx, viewWidth, viewHeight, player)
   prof(ctx, 'minimap+hunger')
 
-  drawControlsOverlay(ctx, viewHeight)
+  if (!profSkip('controls')) drawControlsOverlay(ctx, viewHeight)
   lastSceneMs = performance.now() - sceneStart
   prof(ctx, 'controls')
 
@@ -478,7 +483,8 @@ function drawForest(
   const snow = snowThickness(world.season.time) * snowCover(world.season.time)
   const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999
   let stripsMade = 0
-  tintBuildsLeft = 1
+  tintBuildsLeft = 2
+  fuzzyBuildsLeft = FUZZY_BUILDS_PER_FRAME
 
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
@@ -523,13 +529,16 @@ function drawForest(
   // How far toward the haze the farthest thing drawn so far (at first the backdrop) should end up.
   let hazed = Math.min(0.95, BACKDROP_WINTER_FOG * SNOW_HAZE_STRENGTH) * snowing
   for (const [index, layer] of layers.entries()) {
+    if (profSkip('L' + index)) {
+      continue
+    }
     if (snowing > 0) {
       const own = snowHazeAmount(layer, snowing)
       let reach = 0
       for (const value of limits[index] ?? []) {
         reach = Math.max(reach, value)
       }
-      layHaze(ctx, hazed, Math.min(hazed, own), viewWidth, reach || viewHeight)
+      if (!profSkip('haze')) layHaze(ctx, hazed, Math.min(hazed, own), viewWidth, reach || viewHeight)
       hazed = Math.min(hazed, own)
     }
     const p = layer.parallax
@@ -562,6 +571,8 @@ function drawForest(
       groundColor = layer.groundColor,
       image = true,
       dst: CanvasRenderingContext2D = ctx,
+      res = strip.resolution,
+      originX = 0,
     ): void => {
       dst.globalAlpha = alpha
       // Neighbouring slabs whose cull lines are close are drawn as one (cut at the lowest of them): the few
@@ -583,18 +594,18 @@ function drawForest(
         }
         const runWidth = (e - s) * FOREST_SLAB
         const bottomRow = Math.min(stripHeight, hi - base + strip.originY)
-        const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * strip.resolution)
-        const srcW = Math.min((runWidth + 1) * strip.resolution, source.width - srcX)
+        const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * res - originX)
+        const srcW = Math.min((runWidth + 1) * res, source.width - srcX)
         if (image && bottomRow > topRow && !hidden && srcW > 0) {
           dst.drawImage(
             source,
             srcX,
-            topRow * strip.resolution,
+            topRow * res,
             srcW,
-            (bottomRow - topRow) * strip.resolution,
+            (bottomRow - topRow) * res,
             s * FOREST_SLAB,
             base - strip.originY + topRow,
-            srcW / strip.resolution,
+            srcW / res,
             bottomRow - topRow,
           )
         }
@@ -609,8 +620,8 @@ function drawForest(
     // The ground first; then the creek's water over it (below); then the props, so the water only
     // ever covers the ground and what lies behind it, never a bush or rock standing in front.
     if (!hidden) {
-      drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'back')
-      drawLayerLogSnow(ctx, layer, strip, base, camera.x, viewWidth, limit)
+      if (!profSkip('vegback')) drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'back')
+      if (!profSkip('logsnow')) drawLayerLogSnow(ctx, layer, strip, base, camera.x, viewWidth, limit)
     }
     // Once the snow is complete (and the haze, and nothing is melting) the ground is one flat color: its shape in
     // that color is drawn alone.
@@ -624,36 +635,21 @@ function drawForest(
     // While the snow and the haze lie evenly over the ground, the tinted ground is kept as a bitmap of its own.
     const evenTint =
       !snowedIn && !hidden && snow > 0 && cover >= 0.999
-        ? tintedStrip(strip, thickness * 0.92)
+        ? tintedStrip(strip, thickness * 0.92, camera.x * p * strip.resolution, (camera.x * p + viewWidth + FOREST_SLAB * 2) * strip.resolution)
         : null
     if (snowedIn && strip.frozenCanvas && strip.frozenColor) {
       dropTintedStrip(strip)
       blit(strip.canvas, true, 1, strip.frozenColor, false)
-      if (!hidden) {
-        // (in one piece: see below)
-        ctx.save()
-        ctx.beginPath()
-        let deepest = topRow
-        for (let sl = 0; sl < slabs; sl += 1) {
-          const bottomRow = Math.min(stripHeight, (layerLimits[sl] ?? viewHeight) - base + strip.originY)
-          if (bottomRow > topRow) {
-            ctx.rect(sl * FOREST_SLAB, base - strip.originY + topRow, FOREST_SLAB, bottomRow - topRow)
-            deepest = Math.max(deepest, bottomRow)
-          }
-        }
-        ctx.clip()
+      if (!hidden && !profSkip('frozen')) {
+        // Cut at each slab's cull line, as plain cropped draws: a clip to the union of the slabs made the
+        // graphics card render a mask of the whole screen every frame, which halved the frame rate.
         const maskRes = (strip.frozenCanvas.width / strip.canvas.width) * strip.resolution
-        const srcX = Math.max(0, camera.x * p * maskRes)
-        const srcW = Math.min(viewWidth * maskRes, strip.frozenCanvas.width - srcX)
-        if (srcW > 0 && deepest > topRow) {
-          ctx.drawImage(strip.frozenCanvas, srcX, topRow * maskRes, srcW, (deepest - topRow) * maskRes, 0, base - strip.originY + topRow, srcW / maskRes, deepest - topRow)
-        }
-        ctx.restore()
+        blit(strip.frozenCanvas, false, 1, layer.groundColor, true, ctx, maskRes)
       }
     } else if (evenTint) {
       blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
-      blit(evenTint, false)
-    } else if (snow > 0 && !hidden) {
+      if (!profSkip('eventint')) blit(evenTint.canvas, false, 1, layer.groundColor, true, ctx, strip.resolution, evenTint.x0)
+    } else if (snow > 0 && !hidden && !profSkip('scratch')) {
       // While the snow and the haze come in, and while the snow melts, the ground bitmap is drawn onto a
       // scratch canvas and tinted there (the tint only goes onto the pixels the ground painted, edge pixels
       // included, in the same share as the rest: tinted by a mask drawn over it instead, a soft edge pixel
@@ -661,6 +657,7 @@ function drawForest(
       blit(strip.canvas, true, 1, snow > 0 ? mixColor(layer.groundColor, SNOW_TOP, snow * 0.92) : layer.groundColor, false)
       // (At the layer's own resolution, like its images and rocks, so the melting snow's patches are as soft as the rest of it.)
       const deviceScale = Math.min(ctx.getTransform().a, vegRes(layer))
+      ;(globalThis as { __scratch?: number }).__scratch = ((globalThis as { __scratch?: number }).__scratch ?? 0) + 1
       const sw = Math.ceil(viewWidth * deviceScale)
       const sh = Math.ceil(viewHeight * deviceScale)
       // One scratch canvas per resolution, so that layers of different resolutions do not resize a shared one every frame.
@@ -747,7 +744,7 @@ function drawForest(
     }
     bottom = Math.max(bottom, top + 1)
     const topX = layer.creek.x - camera.x * p
-    if (top < limit && bottom > 0) {
+    if (top < limit && bottom > 0 && !profSkip('ribbon')) {
       // The ribbon's edge is made as soft as the layer's ground is (the farther back, the fuzzier): the path is
       // filled, then stroked a few times with a faint, widening line, which spreads the edge outward.
       const ribbonRes = vegRes(layer)
@@ -789,6 +786,16 @@ function drawForest(
       const ownUnit = (world.viewHeight / 8) * 2 * layer.scale
       const nextUnit = (world.viewHeight / 8) * 2 * (next ? next.scale : 1)
       const nextParallax = next ? next.parallax : 1
+      const slabLimits = layerLimits
+      const edgeLimit = (x: number, half: number): number => {
+        const s0 = Math.max(0, Math.min(slabs - 1, Math.floor((x - half) / FOREST_SLAB)))
+        const s1 = Math.max(0, Math.min(slabs - 1, Math.floor((x + half) / FOREST_SLAB)))
+        let most = 0
+        for (let sl = s0; sl <= s1; sl += 1) {
+          most = Math.max(most, slabLimits[sl] ?? viewHeight)
+        }
+        return most
+      }
       for (const edge of layer.edgeRocks) {
         const t = edge.s
         const u = 1 - t
@@ -811,7 +818,8 @@ function drawForest(
             continue
           }
         }
-        if (px < -rx - 40 || px > viewWidth + rx + 40) {
+        // (Off screen, or wholly below the line the nearer layers cover the screen from.)
+        if (px < -rx - 40 || px > viewWidth + rx + 40 || py - rx * 1.2 > edgeLimit(px, rx * 1.4 + 4)) {
           continue
         }
         edge.rock.rx = rx
@@ -842,8 +850,8 @@ function drawForest(
         drawFuzzyRock(ctx, rock, groundY, vegRes(layer))
         ctx.restore()
       }
-      drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
-      drawLayerFerns(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
+      if (!profSkip('vegfront')) drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
+      if (!profSkip('ferns')) drawLayerFerns(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
     }
   }
   // The nearest layer's share.
@@ -855,6 +863,12 @@ function drawForest(
 type FuzzyRock = { canvas: HTMLCanvasElement; key: string; halfWidth: number; above: number; width: number; height: number; res: number }
 
 const fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
+
+/** How many more fuzzy rock images may be remade for a snow step in the current frame. */
+let fuzzyBuildsLeft = 0
+
+/** How many fuzzy rock images may be remade for a snow step each frame. */
+const FUZZY_BUILDS_PER_FRAME = 4
 
 /**
  * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel into a small bitmap of its own
@@ -869,6 +883,9 @@ const fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
  * @param res - Bitmap pixels per world pixel it is painted at.
  */
 function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: number, res: number): void {
+  if (profSkip('rocks')) {
+    return
+  }
   const direct = res >= ctx.getTransform().a * 0.97
   if (direct) {
     drawRockSimple(ctx, rock, groundY)
@@ -879,7 +896,11 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   const step = (value: number): number => Math.round(value * 24)
   const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
-  if (!sprite || sprite.key !== key) {
+  // A rock whose snow has moved on by a step waits its turn (a few are remade a frame): all of them stepping in the
+  // same frame stalled the graphics card while the snow came in. A step is too small to see the wait.
+  if (!sprite || (sprite.key !== key && (fuzzyBuildsLeft > 0 || sprite.res !== res))) {
+    fuzzyBuildsLeft -= 1
+    ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
     const pad = 3
     const halfWidth = rock.rx * 1.4 + pad
     const above = rock.ry * 1.7 + pad
@@ -959,7 +980,7 @@ type ForestStrip = {
   /** That color. */
   frozenColor?: string
   /** The ground bitmap with the even snow and haze of the moment on it, and those two as steps of 1/255. */
-  tinted?: { canvas: HTMLCanvasElement; snow: number }
+  tinted?: { canvas: HTMLCanvasElement; snow: number; x0: number; x1: number }
   /** The melting snow's patches in the layer's own coordinates: for which cover, and which grid cells they reach over. */
   patches?: { path: Path2D; cover: number; firstColumn: number; lastColumn: number; firstRow: number; lastRow: number }
 }
@@ -969,7 +990,10 @@ let tintBuildsLeft = 0
 
 
 /** How many steps of 1/255 a tinted ground may lag behind while it waits for its turn to be remade (too little to see). */
-const TINT_STALE_STEPS = 2
+const TINT_STALE_STEPS = 4
+
+/** How far past the screen's edges (in layer pixels at scale 1) a tinted stretch of ground reaches. */
+const TINT_MARGIN = 400
 
 /**
  * A layer's ground bitmap with an even coat of snow over it (the tint only goes onto the pixels the ground
@@ -979,18 +1003,25 @@ const TINT_STALE_STEPS = 2
  * @param snowAlpha - Opacity of the snow's color.
  * @returns The tinted bitmap, or null if it is not ready for this tint yet.
  */
-function tintedStrip(strip: ForestStrip, snowAlpha: number): HTMLCanvasElement | null {
+function tintedStrip(strip: ForestStrip, snowAlpha: number, needX0: number, needX1: number): { canvas: HTMLCanvasElement; x0: number } | null {
   const snow = Math.round(snowAlpha * 255)
   const held = strip.tinted
-  if (held && held.snow === snow) {
-    return held.canvas
+  const covers = held !== undefined && held.x0 <= needX0 && held.x1 >= needX1
+  if (held && covers && held.snow === snow) {
+    return held
   }
-  if (tintBuildsLeft <= 0) {
-    return held && Math.abs(held.snow - snow) <= TINT_STALE_STEPS ? held.canvas : null
+  if (tintBuildsLeft <= 0 || profSkip('tintbuild')) {
+    return held && covers && Math.abs(held.snow - snow) <= TINT_STALE_STEPS ? held : null
   }
+  // Only the stretch of the layer on screen (and a margin either side, so it can be reused while the camera
+  // moves) is tinted: the whole layer is many screens wide, and tinting all of it many times a second while the
+  // snow came in stalled the graphics card.
+  const margin = TINT_MARGIN * strip.resolution
+  const x0 = Math.max(0, Math.floor(needX0 - margin))
+  const x1 = Math.min(strip.canvas.width, Math.ceil(needX1 + margin))
   const canvas = held?.canvas ?? document.createElement('canvas')
-  if (canvas.width !== strip.canvas.width || canvas.height !== strip.canvas.height) {
-    canvas.width = strip.canvas.width
+  if (canvas.width !== x1 - x0 || canvas.height !== strip.canvas.height) {
+    canvas.width = Math.max(1, x1 - x0)
     canvas.height = strip.canvas.height
   }
   const tctx = canvas.getContext('2d')
@@ -998,10 +1029,11 @@ function tintedStrip(strip: ForestStrip, snowAlpha: number): HTMLCanvasElement |
     return null
   }
   tintBuildsLeft -= 1
+  ;(globalThis as { __tintBuilds?: number }).__tintBuilds = ((globalThis as { __tintBuilds?: number }).__tintBuilds ?? 0) + 1
   tctx.globalCompositeOperation = 'source-over'
   tctx.globalAlpha = 1
   tctx.clearRect(0, 0, canvas.width, canvas.height)
-  tctx.drawImage(strip.canvas, 0, 0)
+  tctx.drawImage(strip.canvas, -x0, 0)
   tctx.globalCompositeOperation = 'source-atop'
   if (snowAlpha > 0) {
     tctx.globalAlpha = snowAlpha
@@ -1010,8 +1042,8 @@ function tintedStrip(strip: ForestStrip, snowAlpha: number): HTMLCanvasElement |
   }
   tctx.globalAlpha = 1
   tctx.globalCompositeOperation = 'source-over'
-  strip.tinted = { canvas, snow }
-  return canvas
+  strip.tinted = { canvas, snow, x0, x1 }
+  return strip.tinted
 }
 
 /**
@@ -1406,6 +1438,27 @@ function planVegetation(world: World, cameraX: number, viewWidth: number): void 
     const exact = visibleChunks(layer, cameraX, viewWidth, 0)
     vegWanted.set(layer, { first: first - 1, last: last + 1, lo: k - 1, hi: k + 3 })
     const workerId = workerLayerIds.get(layer)
+    // Profiling (dev only): `window.__vegStress = true` keeps the worker drawing throwaway images of this layer nonstop.
+    if ((globalThis as { __vegStress?: boolean }).__vegStress && workerId !== undefined && workerUsable() && pendingRequests() < 3) {
+      for (let chunk = exact.first; chunk <= exact.last; chunk += 1) {
+        if (chunkHasContent(layer, strip.veg, 'back', chunk)) {
+          stressSerial += 1
+          requestImage({
+            key: `stress|${stressSerial}`,
+            priority: 1,
+            id: workerId,
+            k: Math.min(SAMPLE_COUNT - 1, k),
+            part: 'back',
+            chunk,
+            wanted: () => true,
+            onDone: (bitmap) => {
+              bitmap.close()
+            },
+          })
+          break
+        }
+      }
+    }
     for (const [list, priority] of [[now, 2], [ahead, 7]] as const) {
       for (const moment of list) {
         if (moment >= SAMPLE_COUNT) {
