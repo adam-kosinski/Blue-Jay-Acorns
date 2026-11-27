@@ -603,7 +603,7 @@ function drawForest(
         let e = s + 1
         while (e < slabs) {
           const v = layerLimits[e] ?? viewHeight
-          if (Math.max(hi, v) - Math.min(lo, v) > SLAB_MERGE_PX) {
+          if (Math.max(hi, v) - Math.min(lo, v) > SLAB_MERGE_PX || profSkip('merge')) {
             break
           }
           lo = Math.min(lo, v)
@@ -1933,6 +1933,9 @@ function drawVegetation(
     }
     const first = map.get(vegKey(k, part, chunk))
     const second = map.get(vegKey(k + 1, part, chunk))
+    if (t > 0 && t < 1 && (!first || !second)) {
+      ;(globalThis as { __vegMissing?: string[] }).__vegMissing?.push(`${layer.parallax.toFixed(2)}|${part}|${chunk}|k${k}|${first ? 1 : 0}${second ? 1 : 0}|t${t.toFixed(2)}`)
+    }
     // A chunk whose image for these moments is not made yet shows the nearest moment's image that exists.
     let any = first ?? second
     for (let distance = 1; !any && distance < SAMPLE_COUNT; distance += 1) {
