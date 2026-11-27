@@ -109,6 +109,22 @@ function snowHazeAmount(layer: ForestLayer, snowing: number): number {
 }
 
 /**
+ * The color to paint so that, under a haze of falling snow, it comes out as under a thinner one: pushed away
+ * from the haze's color.
+ *
+ * @param color - The color to end up with under the thinner haze.
+ * @param by - How much more of it the thinner haze lets through than the haze laid over it (1 or more).
+ */
+function beforeHaze(color: string, by: number): string {
+  if (by <= 1.001) {
+    return color
+  }
+  const haze = rgbOf(SNOW_HAZE_COLOR)
+  const own = rgbOf(color)
+  return `rgb(${haze.map((h, i) => Math.max(0, Math.min(255, Math.round(h + ((own[i] ?? 0) - h) * by)))).join(',')})`
+}
+
+/**
  * Lays the haze of falling snow over what has been drawn so far, so that it ends up hazed by `was` and now
  * is by `to`: called between the backdrop and the layers, farthest first, each takes on its own amount.
  *
@@ -704,7 +720,10 @@ function drawForest(
       const topHalf = layer.creek.halfWidth
       const water = ctx.createLinearGradient(0, top, 0, bottom)
       water.addColorStop(0, layer.waterColor)
-      water.addColorStop(1, bottomColor)
+      // While it snows, all of this ribbon takes on this layer's haze, but its near end meets water that takes on
+      // only the next one's: that end is colored to come out so under this layer's, or the creek would be banded.
+      const nearer = next && snowing > 0 ? Math.min(hazed, snowHazeAmount(next, snowing)) : 0
+      water.addColorStop(1, beforeHaze(bottomColor, (1 - nearer) / (1 - hazed)))
       ctx.fillStyle = water
       // Curved sides (vertical at both ends) let the creek wind smoothly from layer to layer.
       ctx.beginPath()
@@ -1045,7 +1064,8 @@ const MELT_COLUMN_MARGIN = 4
 export type VegPlan = {
   trees: { x: number; y: number }[]
   logs: { x: number; y: number; angle: number }[]
-  props: { kind: 'rock' | 'fern' | 'bush'; index: number; y: number }[]
+  /** (`ground`, for a fern: the heights of the land around it, see `lieFrom`.) */
+  props: { kind: 'rock' | 'fern' | 'bush'; index: number; y: number; ground?: number[] }[]
   /** The trees' and logs' image covers rows from 0 down to here (the ground hides what is below). */
   backBottom: number
   /** The props' image covers rows from here down to ... */
@@ -1206,6 +1226,7 @@ function* buildVegImage(
             fern,
             mixHex(asHex(summerLeaf), winterGreen(summerLeaf, 1), fade),
             mixHex(asHex(summerStem), winterGreen(summerStem, 1), fade),
+            lieFrom(fern, prop.ground),
           )
           ctx.restore()
         }
@@ -1941,7 +1962,14 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       veg.props.push({ kind: 'rock', index, y: originY + offset(rock.x) + dropOf(rock.x) })
     }
     for (const [index, fern] of layer.ferns.entries()) {
-      veg.props.push({ kind: 'fern', index, y: originY + offset(fern.x) + dropOf(fern.x + 1) })
+      // (The water's surface counts as the land over the creek.)
+      const surface = (x: number): number =>
+        Math.abs(x - creek.x) < creek.halfWidth ? Math.min(offset(x), waterLine) : offset(x)
+      const ground = Array.from(
+        { length: FERN_LIE_STEPS * 2 + 1 },
+        (_, i) => surface(fern.x + ((i - FERN_LIE_STEPS) / FERN_LIE_STEPS) * FERN_LIE_REACH * fern.size) - surface(fern.x),
+      )
+      veg.props.push({ kind: 'fern', index, y: originY + offset(fern.x) + dropOf(fern.x + 1), ground })
     }
     for (const [index, bush] of layer.bushes.entries()) {
       veg.props.push({ kind: 'bush', index, y: originY + offset(bush.x) + dropOf(bush.x + 2) * 0.6 })
@@ -2014,7 +2042,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       prop.kind === 'rock'
         ? (layer.rocks[prop.index]?.ry ?? 0) * 1.6
         : prop.kind === 'fern'
-          ? (layer.ferns[prop.index]?.size ?? 0) * 1.3
+          ? (layer.ferns[prop.index]?.size ?? 0) * 1.3 - Math.min(0, ...(prop.ground ?? []))
           : Math.max(0, ...(layer.bushes[prop.index]?.lobes.map((lobe) => lobe.radius - lobe.dy) ?? [0])) + 8
     highest = Math.min(highest, prop.y - reach)
   }
@@ -2527,7 +2555,8 @@ function drawBuriedProps(
   // bases, so a bird on the surface never looks like it is standing on top of a bush.
   for (const fern of world.ferns) {
     if (fern.x > left && fern.x < right && !fernOverhangsWater(world, fern)) {
-      drawFern(ctx, fern, groundYAt(world.terrain, fern.x) + 6, fadeOf(fern.fadeStart, world), world.season.time, true)
+      const y = groundYAt(world.terrain, fern.x) + 6
+      drawFern(ctx, fern, y, fadeOf(fern.fadeStart, world), world.season.time, terrainLie(world, fern.x), true)
     }
   }
   for (const bush of world.bushes) {
@@ -2884,7 +2913,8 @@ function drawFrontProps(
   }
   for (const front of world.frontFerns) {
     if (front.fern.x > left && front.fern.x < right) {
-      items.push({ y: front.y, draw: () => drawFern(ctx, front.fern, front.y, fadeOf(front.fern.fadeStart, world), world.season.time) })
+      const lie = terrainLie(world, front.fern.x)
+      items.push({ y: front.y, draw: () => drawFern(ctx, front.fern, front.y, fadeOf(front.fern.fadeStart, world), world.season.time, lie) })
     }
   }
   // Bushes and ferns reaching over the creek are drawn in front of the water (not cut off by it) but
@@ -2899,7 +2929,8 @@ function drawFrontProps(
   for (const fern of world.ferns) {
     if (fernOverhangsWater(world, fern) && fern.x > left && fern.x < right) {
       const y = groundYAt(world.terrain, fern.x) + fern.size * 1.05 + 6
-      items.push({ y, draw: () => drawFern(ctx, fern, y, fadeOf(fern.fadeStart, world), world.season.time) })
+      const lie = terrainLie(world, fern.x)
+      items.push({ y, draw: () => drawFern(ctx, fern, y, fadeOf(fern.fadeStart, world), world.season.time, lie) })
     }
   }
   items.sort((p, q) => p.y - q.y)
@@ -3696,6 +3727,80 @@ const FERN_REST_BELOW = 0.24
 /** How much a fern's height is also pressed down at its lowest. */
 const FERN_PRESS = 0.2
 
+/** The land under a fern: how far below the ground at its base the ground is, `dx` px to the side. */
+type Lie = (dx: number) => number
+
+const LEVEL: Lie = () => 0
+
+/** The steepest slope a frond is leaned along. */
+const FERN_SLOPE_LIMIT = 1.2
+
+/** How far to each side of a far fern its ground is recorded (in fern sizes), and in how many steps per side. */
+const FERN_LIE_REACH = 1.5
+const FERN_LIE_STEPS = 6
+
+/**
+ * The land under a far fern, from the heights recorded around it (see `forestStripFor`).
+ *
+ * @param fern - The fern.
+ * @param heights - The ground at even steps from one side to the other, relative to that at its base.
+ */
+function lieFrom(fern: Fern, heights: number[] | undefined): Lie {
+  if (!heights) {
+    return LEVEL
+  }
+  const last = heights.length - 1
+  return (dx) => {
+    const at = Math.max(0, Math.min(last, (dx / (fern.size * FERN_LIE_REACH) + 1) * FERN_LIE_STEPS))
+    const i = Math.min(last - 1, Math.floor(at))
+    const a = heights[i] ?? 0
+    return a + ((heights[i + 1] ?? a) - a) * (at - i)
+  }
+}
+
+/**
+ * The land under a foreground fern: the terrain's contour around it (the water's surface over the creek).
+ *
+ * @param world - Play space.
+ * @param x - X of the fern's base.
+ */
+function terrainLie(world: World, x: number): Lie {
+  const { creek } = world.terrain
+  const surface = (at: number): number => {
+    const ground = groundYAt(world.terrain, at)
+    return Math.abs(at - creek.x) < creek.halfWidth ? Math.min(ground, creek.waterY) : ground
+  }
+  const base = surface(x)
+  return (dx) => surface(x + dx) - base
+}
+
+/**
+ * Moves to a frond's root on the ground and leans what is drawn next along the slope on that frond's side:
+ * upright parts stay upright, and what reaches out sideways rises or falls with the land, so no frond hangs
+ * in the air over falling ground or runs into rising ground.
+ *
+ * @param ctx - 2D canvas context.
+ * @param frond - The side the frond leans to, and its length.
+ * @param x - X of the fern's base.
+ * @param y - Y of the fern's root line at its base.
+ * @param rootX - The frond's root, px to the side of the base.
+ * @param lie - The land under the fern.
+ */
+function toFrondRoot(
+  ctx: CanvasRenderingContext2D,
+  frond: { side: 1 | -1; length: number },
+  x: number,
+  y: number,
+  rootX: number,
+  lie: Lie,
+): void {
+  const root = lie(rootX)
+  const reach = frond.side * frond.length * 0.85
+  const slope = Math.max(-FERN_SLOPE_LIMIT, Math.min(FERN_SLOPE_LIMIT, (lie(rootX + reach) - root) / reach))
+  ctx.translate(x + rootX, y + root)
+  ctx.transform(1, slope, 0, 1, 0, 0)
+}
+
 /** The shape of a frond from its root: its length, the control point of its midrib and the midrib's end. */
 type FrondCurve = { length: number; cx: number; cy: number; ex: number; ey: number }
 
@@ -3797,13 +3902,15 @@ function paintFrond(ctx: CanvasRenderingContext2D, fern: Fern, curve: FrondCurve
  * @param fern - Fern to paint.
  * @param leaf - Leaflet color.
  * @param stem - Stalk and midrib color.
+ * @param lie - The land under it.
  */
-function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem: string): void {
+function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem: string, lie: Lie): void {
   for (const frond of frondsInOrder(fern)) {
     // Every frond is painted from its own point on the ground (the crown is hidden below it).
+    const curve = frondCurve(fern, frond)
     ctx.save()
-    ctx.translate(frond.base * fern.size, fern.size * 0.1)
-    paintFrond(ctx, fern, frondCurve(fern, frond), leaf, stem)
+    toFrondRoot(ctx, { side: frond.angle >= 0 ? 1 : -1, length: curve.length }, 0, fern.size * 0.1, frond.base * fern.size, lie)
+    paintFrond(ctx, fern, curve, leaf, stem)
     ctx.restore()
   }
 }
@@ -3818,6 +3925,7 @@ type FrondCell = {
   curve: FrondCurve
   rootX: number
   rootY: number
+  side: 1 | -1
   tilt: number
   turn: number
   x: number
@@ -3860,11 +3968,13 @@ function fernLayout(fern: Fern): FernLayout {
     // Where this frond comes to rest when it has sunk: some a little above level, some a little below.
     const hash = Math.sin(frond.angle * 917.3 + frond.base * 313.7 + fern.size * 1.7) * 43758.5453
     const sag = -FERN_REST_ABOVE + (hash - Math.floor(hash)) * (FERN_REST_ABOVE + FERN_REST_BELOW)
-    const rest = (frond.angle >= 0 ? 1 : -1) * (Math.PI / 2 + sag)
+    const side = frond.angle >= 0 ? 1 : -1
+    const rest = side * (Math.PI / 2 + sag)
     const cell: FrondCell = {
       curve,
       rootX: frond.base * fern.size,
       rootY: fern.size * 0.1,
+      side,
       tilt,
       turn: rest - tilt,
       x,
@@ -3980,6 +4090,8 @@ function* fernLookJob(fern: Fern, res: number, look: FernLook): Generator<void> 
  * @param y - Y of its base.
  * @param droop - How far its fronds have sunk, 0-1.
  * @param looks - The bitmaps to draw each frond from, one over the other, and how opaque each is.
+ * @param lie - The land under it.
+ * @param rooted - The ground in front is drawn over it, so no frond comes to rest below the land's line.
  */
 function drawFronds(
   ctx: CanvasRenderingContext2D,
@@ -3988,16 +4100,24 @@ function drawFronds(
   y: number,
   droop: number,
   looks: { sprite: FernSprite; alpha: number }[],
+  lie: Lie,
+  rooted = false,
 ): void {
   const layout = fernLayout(fern)
   const before = ctx.globalAlpha
   for (const cell of layout.cells) {
     ctx.save()
-    ctx.translate(x + cell.rootX, y + cell.rootY)
+    toFrondRoot(ctx, { side: cell.side, length: cell.curve.length }, x, y + cell.rootY, cell.rootX, lie)
     if (droop > 0) {
       ctx.scale(1, 1 - FERN_PRESS * droop)
     }
-    ctx.rotate(cell.tilt + cell.turn * droop)
+    let angle = cell.tilt + cell.turn * droop
+    const level = Math.PI / 2 - 0.14
+    if (rooted && Math.abs(angle) > level) {
+      // (Turned back up as far again as it would have gone under.)
+      angle = Math.sign(angle) * (level - (Math.abs(angle) - level))
+    }
+    ctx.rotate(angle)
     for (const { sprite, alpha } of looks) {
       const scale = fernScale(layout, sprite.res)
       ctx.globalAlpha = before * alpha
@@ -4224,6 +4344,7 @@ function fiddleheadSprite(shape: number, res: number, colors: FiddleheadColors):
  * @param spring - How far into spring it is, 0-1.
  * @param res - Bitmap pixels per world pixel for their bitmaps.
  * @param colors - Their colors.
+ * @param lie - The land under the fern.
  */
 function drawFiddleheads(
   ctx: CanvasRenderingContext2D,
@@ -4233,6 +4354,7 @@ function drawFiddleheads(
   spring: number,
   res: number,
   colors: FiddleheadColors,
+  lie: Lie,
 ): void {
   for (const head of fiddleheadsOf(fern)) {
     const grown = (spring - head.delay) / (1 - head.delay)
@@ -4243,7 +4365,7 @@ function drawFiddleheads(
     const sprite = fiddleheadSprite(head.shape, res, colors)
     const scale = head.height / FIDDLEHEAD_HEIGHT
     ctx.save()
-    ctx.translate(x + head.dx, y)
+    ctx.translate(x + head.dx, y + lie(head.dx))
     ctx.rotate(head.lean)
     // (A young one is stouter for its height.)
     ctx.scale(head.curl * scale * size ** 0.7, scale * size)
@@ -4262,7 +4384,8 @@ function drawFiddleheads(
  * @param groundY - Ground Y at the fern.
  * @param fade - How far into its winter color it is, 0-1.
  * @param time - Seconds along the timeline.
- * @param rooted - The ground in front hides its base (it is then raised as it sinks, so as not to go under).
+ * @param lie - The land under it.
+ * @param rooted - The ground in front hides its base (it is then raised as it sinks, to come to rest on it).
  */
 function drawFern(
   ctx: CanvasRenderingContext2D,
@@ -4270,6 +4393,7 @@ function drawFern(
   groundY: number,
   fade: number,
   time: number,
+  lie: Lie,
   rooted = false,
 ): void {
   const res = ctx.getTransform().a
@@ -4309,10 +4433,11 @@ function drawFern(
   if (dead && brown > 0) {
     looks.push({ sprite: dead, alpha: brown })
   }
-  const lift = rooted ? droop * (fern.size * 0.2 + 6) : 0
-  drawFronds(ctx, fern, fern.x, groundY - lift, droop, looks)
+  // (Raised by what it is set into the ground, and a little more: its roots end up just on the surface.)
+  const lift = rooted ? droop * (fern.size * 0.13 + 6) : 0
+  drawFronds(ctx, fern, fern.x, groundY - lift, droop, looks, lie, rooted)
   if (spring > 0) {
-    drawFiddleheads(ctx, fern, fern.x, groundY - lift + fern.size * 0.1, spring, res, FIDDLEHEAD_COLORS)
+    drawFiddleheads(ctx, fern, fern.x, groundY - lift + fern.size * 0.1, spring, res, FIDDLEHEAD_COLORS, lie)
   }
 }
 
@@ -4354,8 +4479,9 @@ function fernStepAt(fern: Fern, time: number): { k: number; fade: number } {
  * @param layer - Forest layer.
  * @param fern - The fern.
  * @param k - Which moment.
+ * @param ground - The heights of the land around it (see `lieFrom`).
  */
-function fernSnapshot(layer: ForestLayer, fern: Fern, k: number): FernSnapshot {
+function fernSnapshot(layer: ForestLayer, fern: Fern, k: number, ground: number[] | undefined): FernSnapshot {
   let taken = fernSnapshots.get(fern)
   if (!taken) {
     taken = new Map()
@@ -4388,10 +4514,13 @@ function fernSnapshot(layer: ForestLayer, fern: Fern, k: number): FernSnapshot {
     }
     return sprite
   }
+  // (Taller by as much as the land rises and falls under it.)
+  const rise = Math.max(0, -Math.min(...(ground ?? [0])))
+  const fall = Math.max(0, ...(ground ?? [0]))
   const left = -fern.size * 1.35
-  const top = -fern.size * 1.15
+  const top = -fern.size * 1.15 - rise
   const width = -left * 2
-  const height = fern.size * 1.75
+  const height = fern.size * 1.75 + rise + fall
   const canvas = document.createElement('canvas')
   canvas.width = Math.max(1, Math.ceil(width * res))
   canvas.height = Math.max(1, Math.ceil(height * res))
@@ -4404,7 +4533,8 @@ function fernSnapshot(layer: ForestLayer, fern: Fern, k: number): FernSnapshot {
     if (brown > 0) {
       looks.push({ sprite: of('brown'), alpha: brown })
     }
-    drawFronds(ctx, fern, 0, 0, droop, looks)
+    const lie = lieFrom(fern, ground)
+    drawFronds(ctx, fern, 0, 0, droop, looks, lie)
     if (spring > 0) {
       // In the layer's haze, like the rest of it.
       const hazed = (color: string): string => mixHex(color, FOREST_HAZE_COLOR, layer.fog)
@@ -4414,7 +4544,7 @@ function fernSnapshot(layer: ForestLayer, fern: Fern, k: number): FernSnapshot {
         shade: hazed(FIDDLEHEAD_COLORS.shade),
         hair: hazed(FIDDLEHEAD_COLORS.hair),
         scale: hazed(FIDDLEHEAD_COLORS.scale),
-      })
+      }, lie)
     }
   }
   taken.set(k, snapshot)
@@ -4465,7 +4595,7 @@ function drawLayerFerns(
     const x = fern.x - shift
     const y = base - strip.originY + prop.y + 2
     const reach = fern.size * 1.35
-    if (x < -reach || x > viewWidth + reach || y - fern.size * 1.2 > limit) {
+    if (x < -reach || x > viewWidth + reach || y - fern.size * 2.5 > limit) {
       continue
     }
     const alpha = windowFade(layer, fern.x)
@@ -4473,10 +4603,10 @@ function drawLayerFerns(
       continue
     }
     const step = fernStepAt(fern, time)
-    const now = fernSnapshot(layer, fern, step.k)
+    const now = fernSnapshot(layer, fern, step.k, prop.ground)
     ctx.globalAlpha = alpha
     if (step.fade < 1) {
-      const before = fernSnapshot(layer, fern, step.k - 1)
+      const before = fernSnapshot(layer, fern, step.k - 1, prop.ground)
       drawCrossfade(ctx, fern, before.canvas, now.canvas, step.fade, x + now.left, y + now.top, now.width, now.height)
     } else {
       endCrossfade(fern)

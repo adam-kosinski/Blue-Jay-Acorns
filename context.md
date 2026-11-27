@@ -651,3 +651,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - The old-growth trunk's outline carries on below its base in the same curve (`flareAt` for negative heights: leaves at the base slope, eases over half the flare's height to 0.24 outward per px), where it used to go straight down.
 - Float bob is 2% of size (was 3%).
 - Every `imageSmoothingQuality` is 'low' now (the user is trying the look and speed).
+
+## Ferns follow the land; creek banding
+- Each frond starts on the ground at its own root and is sheared along the slope on its side (`toFrondRoot`, `Lie`): foreground ferns use the terrain (`terrainLie`, water surface over the creek), far ones the heights recorded in their veg plan entry (`ground`, `lieFrom`). Fiddleheads stand on the same line. Ferns behind the land are raised less as they sink, and their below-level fronds are turned back up.
+- Creek banding while snowing came from `layHaze` between layers: each water ribbon took one layer's haze throughout, stepping at every waterline. Its near-end color is now pre-compensated (`beforeHaze`).
