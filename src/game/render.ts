@@ -342,7 +342,7 @@ export function renderScene(
   if (!profSkip('frontprops')) drawFrontProps(ctx, world, camera.x, viewWidth)
   prof(ctx, 'acorns+frontprops')
   if (showMinimap && showSquirrelRegions) {
-    drawSquirrelRegions(ctx, world, camera, viewWidth, viewHeight)
+    drawSquirrelRegions(ctx, world, camera, viewWidth, viewHeight, player.size)
   }
   drawNoticeLines(ctx, world, player)
   prof(ctx, 'notice')
@@ -2470,13 +2470,14 @@ export function setSquirrelRegions(on: boolean): void {
 
 /**
  * Debug view: marks the stretch each squirrel lives on. At each of its two edges, a band as tall as the view is
- * half-transparent gold at the edge and fades out toward the middle of the stretch.
+ * half-transparent gold at the edge and fades out within `width` px toward the middle of the stretch.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - The squirrels.
  * @param camera - View origin.
  * @param viewWidth - Viewport width.
  * @param viewHeight - Viewport height.
+ * @param width - How wide each band is (a bird's width).
  */
 function drawSquirrelRegions(
   ctx: CanvasRenderingContext2D,
@@ -2484,18 +2485,20 @@ function drawSquirrelRegions(
   camera: Camera,
   viewWidth: number,
   viewHeight: number,
+  width: number,
 ): void {
   for (const { home } of world.squirrels) {
     if (!home || home.right < camera.x || home.left > camera.x + viewWidth) {
       continue
     }
-    const middle = (home.left + home.right) / 2
-    for (const edge of [home.left, home.right]) {
-      const fade = ctx.createLinearGradient(edge, 0, middle, 0)
+    // (Never past the middle of a stretch narrower than two of them.)
+    const reach = Math.min(width, (home.right - home.left) / 2)
+    for (const [edge, inward] of [[home.left, home.left + reach], [home.right, home.right - reach]] as const) {
+      const fade = ctx.createLinearGradient(edge, 0, inward, 0)
       fade.addColorStop(0, 'rgba(255, 196, 0, 0.5)')
       fade.addColorStop(1, 'rgba(255, 196, 0, 0)')
       ctx.fillStyle = fade
-      ctx.fillRect(Math.min(edge, middle), camera.y, Math.abs(middle - edge), viewHeight)
+      ctx.fillRect(Math.min(edge, inward), camera.y, reach, viewHeight)
     }
   }
 }

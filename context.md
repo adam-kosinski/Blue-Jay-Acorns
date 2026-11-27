@@ -660,4 +660,4 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Spring ends with half the small leaves again (the user found all of them too many): the first quarter at full size, the second at half size. When they come (`SPRING` in `seasons.ts`) is unchanged; this supersedes the earlier "all leaves, last half small".
 
 ## Squirrel regions (debug)
-- Debug checkbox "Squirrel regions" (off at each load): `drawSquirrelRegions` marks each squirrel's `home.left` and `home.right` with a view-tall gold band, half transparent at the edge, clear at the middle of the stretch. Shown only while the debug display is on.
+- Debug checkbox "Squirrel regions" (off at each load): `drawSquirrelRegions` marks each squirrel's `home.left` and `home.right` with a view-tall gold band, half transparent at the edge, clear one bird width inward. Shown only while the debug display is on.
