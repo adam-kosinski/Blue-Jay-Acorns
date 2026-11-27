@@ -59,6 +59,7 @@ import type {
   Rock,
   Terrain,
   World,
+  KickedLeaf,
 } from './types'
 
 /** Backdrop gradient: leaf tones blended toward the haze by the farthest layer's atmospheric perspective. */
@@ -90,8 +91,8 @@ const BACKDROP_FALL: BackdropLook = {
   bottom: rgbOf(fallTones(30, 0, { color: FOREST_HAZE_COLOR, amount: BACKDROP_FOG })[3] ?? '#d88a3a'),
 }
 /** The tree trunks' color with one more level of atmospheric perspective past the farthest layer. */
-/** The atmosphere's color in winter: a light blue (the haze of the farther layers and the backdrop). */
-const SNOW_HAZE_COLOR = '#8dbdf0'
+/** The haze while it snows, over the farther layers and the backdrop: a pale blue-white. */
+const SNOW_HAZE_COLOR = '#c6daee'
 
 /** How far a layer's colors go toward the haze in falling snow, per unit of the layer's fog (its distance haze). */
 const SNOW_HAZE_STRENGTH = 1
@@ -230,13 +231,17 @@ export function renderScene(
   // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   drawSnow(ctx, world, camera.x, viewWidth)
-  // Flowers are behind the water, birds, acorns and mounds, so they never lie over them.
-  drawGroundFlowers(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
   drawCreek(ctx, world, camera, viewWidth, viewHeight)
+  // The leaves lying on the surface go under the flowers; flowers stay under the mounds (and the leaves on
+  // them), the birds and the acorns.
+  const onMound = mountedLeaf(world)
+  drawKickedLeaves(ctx, world, camera.x, viewWidth, (leaf) => !onMound(leaf))
+  drawGroundFlowers(ctx, world, camera.x, viewWidth)
   drawMounds(ctx, world, camera.x, viewWidth)
+  drawKickedLeaves(ctx, world, camera.x, viewWidth, onMound)
   beginNpcLabels()
   updateLeafFall(world, camera.x, camera.y, viewWidth)
   drawLeafFall(ctx, world, 'resting', camera.x, viewWidth)
@@ -2333,12 +2338,11 @@ function drawBurialHeatmap(
 }
 
 /**
- * Draws the dirt mounds over buried acorns, and the leaves hopping birds kicked onto them. Every hop
- * near a mound flattens it a little and fades it toward the ground's color; after three hops it is
+ * Draws the dirt mounds over buried acorns. Every hop near a mound flattens it a little and fades it toward the ground's color; after three hops it is
  * gone completely (the acorn is still buried there, and can still be dug up).
  *
  * @param ctx - 2D canvas context in world space.
- * @param world - Acorns, terrain and kicked leaves.
+ * @param world - Acorns and terrain.
  * @param cameraX - View left edge.
  * @param viewWidth - Viewport width.
  */
@@ -2367,9 +2371,37 @@ function drawMounds(
     )
     ctx.fill()
   }
-  // Kicked leaves, in flight or lying on a mound.
+}
+
+/**
+ * Which kicked leaves are drawn over the mounds: those in the air, and those lying on a mound that shows.
+ *
+ * @param world - Acorns and kicked leaves.
+ */
+function mountedLeaf(world: World): (leaf: KickedLeaf) => boolean {
+  const mounds = world.acorns.filter((acorn) => acorn.state === 'buried' && acorn.conceal <= 0.985)
+  return (leaf) => !leaf.landed || mounds.some((acorn) => Math.abs(leaf.x - acorn.x) < acorn.radius * 2.2)
+}
+
+/**
+ * Draws some of the leaves (and puffs of snow) on the ground's surface and in the air above it: those the
+ * world starts with and those hopping birds kick up.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Terrain and kicked leaves.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ * @param which - Whether to draw a leaf.
+ */
+function drawKickedLeaves(
+  ctx: CanvasRenderingContext2D,
+  world: World,
+  cameraX: number,
+  viewWidth: number,
+  which: (leaf: KickedLeaf) => boolean,
+): void {
   for (const leaf of world.kickedLeaves) {
-    if (leaf.x < cameraX - 40 || leaf.x > cameraX + viewWidth + 40) {
+    if (leaf.x < cameraX - 40 || leaf.x > cameraX + viewWidth + 40 || !which(leaf)) {
       continue
     }
     // A disturbed leaf shrinks, sinks and fades into the ground's color.
@@ -6097,9 +6129,9 @@ function drawAcorns(
  */
 const FLIGHT_BOB = 4.5
 
-/** How far a floating bird bobs (share of its size), and how fast (radians per second: about 2.5 s a bob). */
+/** How far a floating bird bobs (share of its size), and how fast (radians per second: about 1.1 s a bob). */
 const FLOAT_BOB = 0.03
-const FLOAT_BOB_RATE = 2.5
+const FLOAT_BOB_RATE = 5.8
 
 /** Each floating bird's own point in its bob, so that they do not bob together. */
 const floatPhases = new WeakMap<Player, number>()

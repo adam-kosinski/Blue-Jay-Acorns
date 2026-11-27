@@ -30,6 +30,7 @@ import {
   NPC_SPEED_SCALE,
   NPC_STARVING_HUNGER,
   NPC_WAIT_SECONDS,
+  WALK_SPEED_FACTOR,
 } from './constants'
 import { acornReach } from './burial'
 import {
@@ -602,6 +603,40 @@ function moveBeakTo(npc: Npc, targetX: number, world: World): boolean {
 }
 
 /**
+ * Keeps a bird on dry land from walking into the creek: if this frame's walking would carry it over the water,
+ * it stays where it is (facing that way). Without this, a bird heading for something at or beyond the water
+ * steps in, is made to hop straight out again (a floating bird can only do that), steps back in, and so
+ * flickers between standing and floating, turning back and forth. (Flying over the water is not affected.)
+ *
+ * @param npc - The NPC, its keys set for this frame.
+ * @param world - Play space.
+ * @param dt - Elapsed seconds.
+ * @param speedScale - How fast it moves compared with the player.
+ */
+function stayOutOfWater(npc: Npc, world: World, dt: number, speedScale: number): void {
+  const { bird, keys } = npc
+  if (bird.state !== 'standing' || bird.floating || keys.w || keys.a === keys.d) {
+    return
+  }
+  const dir = keys.d ? 1 : -1
+  const cx = bird.x + bird.size / 2
+  // (A hop is quickest at its start: 1.4 times the average walking speed.)
+  const step = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * 1.4 * speedScale * npc.scaleX * bird.size * dt
+  if (inWater(world.terrain, cx + dir * (step + 1))) {
+    keys.a = false
+    keys.d = false
+    bird.facing = dir
+    // A stroll that way is called off, and wandering turns back.
+    if (npc.state === 'idle') {
+      npc.idleTargetX = null
+    } else if (npc.state === 'explore' || npc.state === 'findBurialSpot') {
+      npc.direction = dir === 1 ? -1 : 1
+      npc.searchDir = npc.direction
+    }
+  }
+}
+
+/**
  * Releases all simulated keys.
  *
  * @param keys - Key state to clear.
@@ -1154,7 +1189,12 @@ function runFollow(npc: Npc, world: World, dt: number): void {
     }
   } else if (!near) {
     // Land beside it: far away is flown to (and landed at), near is hopped to.
-    const point = tx + (cx >= tx ? 1 : -1) * size * npc.followDistance * 0.8
+    let point = tx + (cx >= tx ? 1 : -1) * size * npc.followDistance * 0.8
+    if (inWater(world.terrain, point)) {
+      // Not onto the water: on the bank on this side of it.
+      const { creek } = world.terrain
+      point = creek.x + (cx >= creek.x ? 1 : -1) * (creek.halfWidth + size * 0.5)
+    }
     if (bird.state === 'flying' || Math.abs(dx) > FLY_MIN_DISTANCE_IN_SIZES * size) {
       glideTo(npc, point, world)
     } else {
@@ -1810,6 +1850,8 @@ export function updateNpcs(world: World, dt: number, player: Player): void {
     if (!rests) {
       bird.hopRest = 0
     }
+    // (A floating bird is on its way out and is left to it.)
+    stayOutOfWater(npc, world, dt, npc.home ? SQUIRREL_SPEED_SCALE : NPC_SPEED_SCALE)
     updatePlayer(
       bird,
       npc.keys,

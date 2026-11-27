@@ -636,5 +636,13 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## Snow kicks, bobbing, spring backdrop
 - `snowAt` no longer counts patches of a row above the surface (never drawn), and each snow puff of a hop is only snow if it comes down on snow.
-- Floating birds bob (3% of size, about 2.5 s). The flight bob was already opposite to the wings (lowest with wings up); it is now 4.5 units instead of 2.5 so it shows.
+- Floating birds bob (3% of size, about 1.1 s a bob). The flight bob was already opposite to the wings (lowest with wings up); it is now 4.5 units instead of 2.5 so it shows.
 - The backdrop keeps its winter color until `SPRING_LEAVES_FROM` (7.63) and fades to the greenish spring one by the year's end.
+
+## NPCs at the water's edge
+- Cause of the flicker (reproduced by simulation, all while following): a standing NPC walked into the creek toward the followed bird, the floating rule hopped it straight out, and so on. `stayOutOfWater` now stops any walking step that would carry a dry bird over the water (it faces that way and waits), and the follow landing point is moved to the bank if it falls on water.
+
+## Branch bark and surface leaves
+- Branch bark is clipped to outside the trunk's outline (`drawBark`), so no ridges cross the trunk.
+- The leaves on the surface (`world.kickedLeaves`) are drawn under the foreground flowers; only leaves in the air or on a showing mound are drawn over the mounds, which stay above the flowers (`drawKickedLeaves`, `mountedLeaf`).
+- The snowfall haze is whiter (`SNOW_HAZE_COLOR` #c6daee, was #8dbdf0).

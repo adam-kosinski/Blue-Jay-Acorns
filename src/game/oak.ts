@@ -951,7 +951,25 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
     rand,
   )
 
-  // Thick branches (and old-growth roots) get a few furrows of their own.
+  // Thick branches (and old-growth roots) get a few furrows of their own, only outside the trunk's outline
+  // (where a branch joins, or passes in front of, the trunk its ridges stop at the trunk's edge).
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(-1e5, -1e5, 2e5, 2e5)
+  const edge = 60
+  for (let i = 0; i <= edge; i += 1) {
+    const [x, y] = trunkPoint(i / edge, -1.02)
+    if (i === 0) {
+      ctx.moveTo(x, y)
+    } else {
+      ctx.lineTo(x, y)
+    }
+  }
+  for (let i = edge; i >= 0; i -= 1) {
+    ctx.lineTo(...trunkPoint(i / edge, 1.02))
+  }
+  ctx.closePath()
+  ctx.clip('evenodd')
   for (const seg of shape.segments.slice(3)) {
     if (seg.w0 < 26) {
       continue
@@ -975,6 +993,7 @@ function drawBark(ctx: CanvasRenderingContext2D, shape: TreeShape): void {
       rand,
     )
   }
+  ctx.restore()
 }
 
 /**
