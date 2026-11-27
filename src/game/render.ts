@@ -4239,9 +4239,121 @@ function drawFern(
   }
 }
 
+/** How many moments a far fern is captured at after the first: through winter as it sinks, then through spring. */
+const FERN_WINTER_STEPS = 12
+const FERN_SPRING_STEPS = 8
+
+/** Seconds a far fern takes to fade from one captured moment to the next. */
+const FERN_STEP_FADE = 0.75
+
+/** A far fern as captured at one moment: its bitmap, and where its box begins from the fern's base. */
+type FernSnapshot = { canvas: HTMLCanvasElement; left: number; top: number; width: number; height: number }
+
+/** Each far fern's captured moments that are in use. */
+const fernSnapshots = new WeakMap<Fern, Map<number, FernSnapshot>>()
+
+/**
+ * Which captured moments a far fern is between: it shows `k`, fading to it from the one before while `fade` is
+ * below 1. Each fern changes at its own point of a step, so that they do not all change together.
+ *
+ * @param fern - The fern.
+ * @param time - Seconds along the timeline.
+ */
+function fernStepAt(fern: Fern, time: number): { k: number; fade: number } {
+  const winter = fernDroopAt(time)
+  const spring = fernBrownAt(time)
+  const along = winter * FERN_WINTER_STEPS + spring * FERN_SPRING_STEPS
+  const hash = Math.sin(fern.x * 78.233 + fern.size * 37.719) * 43758.5453
+  const turned = along + 0.15 + 0.8 * (hash - Math.floor(hash))
+  const k = Math.min(FERN_WINTER_STEPS + FERN_SPRING_STEPS, Math.floor(turned))
+  const seconds = SEGMENT_SECONDS * (spring > 0 ? 1 / FERN_SPRING_STEPS : 3 / FERN_WINTER_STEPS)
+  return { k, fade: k === 0 ? 1 : Math.min(1, ((turned - k) * seconds) / FERN_STEP_FADE) }
+}
+
+/**
+ * A far fern as it is at one of its captured moments (see `fernStepAt`), in its layer's colors and at its
+ * resolution: its fronds, and in spring its fiddleheads.
+ *
+ * @param layer - Forest layer.
+ * @param fern - The fern.
+ * @param k - Which moment.
+ */
+function fernSnapshot(layer: ForestLayer, fern: Fern, k: number): FernSnapshot {
+  let taken = fernSnapshots.get(fern)
+  if (!taken) {
+    taken = new Map()
+    fernSnapshots.set(fern, taken)
+  }
+  const made = taken.get(k)
+  if (made) {
+    return made
+  }
+  const res = vegRes(layer)
+  const droop = Math.min(1, k / FERN_WINTER_STEPS)
+  const spring = Math.max(0, (k - FERN_WINTER_STEPS) / FERN_SPRING_STEPS)
+  const brown = spring * fernBrownLimit(fern)
+  let map = fernSprites.get(fern)
+  if (!map) {
+    map = new Map()
+    fernSprites.set(fern, map)
+  }
+  const sprites = map
+  /** The fern's fronds in the layer's winter or brown colors (small, so made when first needed). */
+  const of = (look: 'winter' | 'brown'): FernSprite => {
+    let sprite = sprites.get(`far-${look}`)
+    if (!sprite) {
+      const leafTone = layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor
+      const stemTone = layer.tones[0] ?? layer.trunkColor
+      const color = (green: string, dead: string): string =>
+        look === 'winter' ? winterGreen(green, 1) : mixHex(dead, FOREST_HAZE_COLOR, layer.fog)
+      sprite = paintFernSprite(fern, res, color(leafTone, FERN_BROWNS[fern.tone] ?? '#8c6234'), color(stemTone, FERN_BROWN_STEM))
+      sprites.set(`far-${look}`, sprite)
+    }
+    return sprite
+  }
+  const left = -fern.size * 1.35
+  const top = -fern.size * 1.15
+  const width = -left * 2
+  const height = fern.size * 1.75
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.ceil(width * res))
+  canvas.height = Math.max(1, Math.ceil(height * res))
+  const snapshot: FernSnapshot = { canvas, left, top, width: canvas.width / res, height: canvas.height / res }
+  const ctx = canvas.getContext('2d')
+  if (ctx) {
+    ctx.scale(res, res)
+    ctx.translate(-left, -top)
+    const looks = [{ sprite: of('winter'), alpha: 1 }]
+    if (brown > 0) {
+      looks.push({ sprite: of('brown'), alpha: brown })
+    }
+    drawFronds(ctx, fern, 0, 0, droop, looks)
+    if (spring > 0) {
+      // In the layer's haze, like the rest of it.
+      const hazed = (color: string): string => mixHex(color, FOREST_HAZE_COLOR, layer.fog)
+      drawFiddleheads(ctx, fern, 0, fern.size * 0.1, spring, res, {
+        stalk: hazed(FIDDLEHEAD_COLORS.stalk),
+        coil: hazed(FIDDLEHEAD_COLORS.coil),
+        shade: hazed(FIDDLEHEAD_COLORS.shade),
+        hair: hazed(FIDDLEHEAD_COLORS.hair),
+        scale: hazed(FIDDLEHEAD_COLORS.scale),
+      })
+    }
+  }
+  taken.set(k, snapshot)
+  // Moments no longer in use are let go.
+  for (const other of [...taken.keys()]) {
+    if (other < k - 1 || other > k + 1) {
+      taken.delete(other)
+    }
+  }
+  return snapshot
+}
+
 /**
  * Draws a layer's ferns on their own, once its images leave them out (see `FERNS_APART_MOMENT`): their
- * fronds sink through winter and turn brown in spring, which the images could not show.
+ * fronds sink through winter and turn brown in spring, which the images could not show. Each is drawn from a
+ * bitmap captured at one of a score of moments, cross-faded into the next.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param layer - Forest layer.
@@ -4267,10 +4379,7 @@ function drawLayerFerns(
   if (k < FERNS_APART_MOMENT - 1 || (k === FERNS_APART_MOMENT - 1 && t <= 0)) {
     return
   }
-  const res = vegRes(layer)
   const shift = cameraX * layer.parallax
-  const droop = fernDroopAt(time)
-  const spring = fernBrownAt(time)
   for (const prop of strip.veg.props) {
     const fern = prop.kind === 'fern' ? layer.ferns[prop.index] : undefined
     if (!fern) {
@@ -4278,7 +4387,7 @@ function drawLayerFerns(
     }
     const x = fern.x - shift
     const y = base - strip.originY + prop.y + 2
-    const reach = fern.size * 1.3
+    const reach = fern.size * 1.35
     if (x < -reach || x > viewWidth + reach || y - fern.size * 1.2 > limit) {
       continue
     }
@@ -4286,52 +4395,15 @@ function drawLayerFerns(
     if (alpha <= 0) {
       continue
     }
-    const brown = spring * fernBrownLimit(fern)
-    let map = fernSprites.get(fern)
-    if (!map) {
-      map = new Map()
-      fernSprites.set(fern, map)
-    }
-    const sprites = map
-    /** The fern's bitmap in the layer's winter or brown colors (small, so made when first needed). */
-    const of = (look: 'winter' | 'brown'): FernSprite => {
-      let sprite = sprites.get(`far-${look}`)
-      if (!sprite) {
-        const leafTone = layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor
-        const stemTone = layer.tones[0] ?? layer.trunkColor
-        const color = (green: string, dead: string): string =>
-          look === 'winter'
-            ? winterGreen(green, 1)
-            : mixHex(dead, FOREST_HAZE_COLOR, layer.fog)
-        sprite = paintFernSprite(
-          fern,
-          res,
-          color(leafTone, FERN_BROWNS[fern.tone] ?? '#8c6234'),
-          color(stemTone, FERN_BROWN_STEM),
-        )
-        sprites.set(`far-${look}`, sprite)
-      }
-      return sprite
-    }
-    const looks: { sprite: FernSprite; alpha: number }[] = []
-    if (brown < 1) {
-      looks.push({ sprite: of('winter'), alpha: 1 })
-    }
-    if (brown > 0) {
-      looks.push({ sprite: of('brown'), alpha: brown })
-    }
+    const step = fernStepAt(fern, time)
+    const now = fernSnapshot(layer, fern, step.k)
     ctx.globalAlpha = alpha
-    drawFronds(ctx, fern, x, y, droop, looks)
-    if (spring > 0) {
-      // In the layer's haze, like the rest of it.
-      const hazed = (color: string): string => mixHex(color, FOREST_HAZE_COLOR, layer.fog)
-      drawFiddleheads(ctx, fern, x, y + fern.size * 0.1, spring, res, {
-        stalk: hazed(FIDDLEHEAD_COLORS.stalk),
-        coil: hazed(FIDDLEHEAD_COLORS.coil),
-        shade: hazed(FIDDLEHEAD_COLORS.shade),
-        hair: hazed(FIDDLEHEAD_COLORS.hair),
-        scale: hazed(FIDDLEHEAD_COLORS.scale),
-      })
+    if (step.fade < 1) {
+      const before = fernSnapshot(layer, fern, step.k - 1)
+      drawCrossfade(ctx, fern, before.canvas, now.canvas, step.fade, x + now.left, y + now.top, now.width, now.height)
+    } else {
+      endCrossfade(fern)
+      ctx.drawImage(now.canvas, x + now.left, y + now.top, now.width, now.height)
     }
     ctx.globalAlpha = 1
   }

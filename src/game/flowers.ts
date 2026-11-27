@@ -13,9 +13,17 @@ export const FLOWER_KINDS = 4
 /** How many differently shaped plants are painted of each kind. */
 const VARIANTS = 3
 
-/** The earliest a patch starts (share of spring), and how long after that the latest ones do. */
+/** The earliest share of spring a plant comes. */
 const FIRST_START = 0.05
-const START_SPREAD = 0.52
+
+/** How much of the run of arrivals a late patch skips: the latest start after this share of it. */
+const LATE_PATCH = 0.4
+
+/**
+ * How arrivals bunch toward the end of spring: below 1, few come early and ever more as the end nears (at 0.5
+ * the number there grows with the square of the time gone).
+ */
+const QUICKENING = 0.5
 
 /** The share of spring (which lasts a segment) a group of plants takes to fade in: three quarters of a second. */
 const FADE_SHARE = 0.75 / SEGMENT_SECONDS
@@ -77,7 +85,6 @@ export function makeFlowerPatch(
   allowed: (x: number) => boolean = () => true,
   earliest: (x: number, y: number) => number = () => 0,
 ): FlowerPatch | null {
-  const start = FIRST_START + turn * START_SPREAD
   const plants = Array.from({ length: count }, (): Plant => {
     // A little thicker in the middle, thinning out toward the edges.
     const across = (random() * 2 - 1) * 0.65 + (random() + random() - 1) * 0.35
@@ -90,7 +97,8 @@ export function makeFlowerPatch(
       variant: Math.floor(random() * VARIANTS),
       flip: random() < 0.5 ? -1 : 1,
       scale: scale * (0.75 + random() * 0.45),
-      appear: start + (1 - FADE_SHARE - start) * (0.55 * random() + 0.45 * out),
+      // (For now its place in the patch's own order: from the middle outward, roughly.)
+      appear: 0.55 * random() + 0.45 * out,
     }
   })
     .filter((plant) => allowed(plant.x))
@@ -98,12 +106,21 @@ export function makeFlowerPatch(
   if (plants.length === 0) {
     return null
   }
-  // The plants come in small groups, in the order of their own times: each group at its middle one's.
-  const order = plants.map((plant) => ({ plant, due: Math.max(plant.appear, earliest(plant.x, plant.y)) }))
+  // Each plant's time, from its place in that order: few early in spring, ever more toward its end. A patch
+  // with a later turn starts later.
+  const order = [...plants]
+    .sort((p, q) => p.appear - q.appear)
+    .map((plant, i) => {
+      const rank = (i + random()) / plants.length
+      const along = turn * LATE_PATCH + rank * (1 - turn * LATE_PATCH)
+      const due = FIRST_START + (1 - FADE_SHARE - FIRST_START) * along ** QUICKENING
+      return { plant, due: Math.max(due, earliest(plant.x, plant.y)) }
+    })
+  // The plants come in small groups, in the order of those times: each group when its last one is due.
   order.sort((p, q) => p.due - q.due)
   for (let from = 0; from < order.length; from += GROUP) {
     const group = order.slice(from, from + GROUP)
-    const due = Math.min(1 - FADE_SHARE, group[Math.floor(group.length / 2)]?.due ?? 0)
+    const due = Math.min(1 - FADE_SHARE, group[group.length - 1]?.due ?? 0)
     for (const { plant } of group) {
       plant.appear = due
     }
