@@ -1,5 +1,6 @@
 TODO
 - Fix performance
+- Instructions screen, to the point. Extra instructions can come naturally as the game is played
 - Tutorial tip about hopping to hide burial, on first bury
 - Animation of forgotten acorns sprouting after the player has won
   - hunger bar translates out of screen, bird does a dance, then flies to the nearest buried acorn,
@@ -10,8 +11,11 @@ TODO
   - maybe or maybe not for acorn spawns?
   - or potentially a slightly wider world would help too?
     - Consider making birds fly faster, so that they can visit further away ideal burial spots
+- Allow hiding acorns in tree hollows or nooks?
+  - a little message pops up if it's a valid hiding spot, then the burying command will work
+  - I'm not sure blue jays actually do this though... (other jays do) would want to stay realistic
 - Read a research paper, learn more about caching sites
-- Maybe have birds dig in the vicinity of a observed cache?
+- Maybe have NPCs dig in the vicinity of a observed cache to penalize the player more for their cache getting noticed?
 - Perhaps nosy birds should keep following even when really hungry if the acorn rate is 0 and they've already explored the whole world
   - until they lose patience, that is
 - Assess burial quality algorithm by watching birds bury acorns while invisible

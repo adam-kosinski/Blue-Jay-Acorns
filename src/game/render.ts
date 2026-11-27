@@ -1,4 +1,5 @@
 import {
+  ACORN_SINK_DEPTH_IN_RADII,
   HOP_DURATION,
   CROWN_COLOR,
   EAT_DURATION,
@@ -338,7 +339,7 @@ export function renderScene(
   prof(ctx, 'player')
   // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
   // never look like they sit on a bush.
-  drawAcorns(ctx, world.acorns, camera.x, viewWidth)
+  drawAcorns(ctx, world.acorns, world.terrain.creek.waterY, camera.x, viewWidth)
   if (!profSkip('frontprops')) drawFrontProps(ctx, world, camera.x, viewWidth)
   prof(ctx, 'acorns+frontprops')
   if (showMinimap && showSquirrelRegions) {
@@ -6545,13 +6546,14 @@ function drawAcornShape(
 function drawAcorns(
   ctx: CanvasRenderingContext2D,
   acorns: Acorn[],
+  waterY: number,
   cameraX: number,
   viewWidth: number,
 ): void {
   const left = cameraX - 16
   const right = cameraX + viewWidth + 16
   for (const acorn of acorns) {
-    if (acorn.state !== 'ground') {
+    if (acorn.state !== 'ground' && acorn.state !== 'sinking') {
       continue
     }
     if (acorn.x + acorn.radius < left || acorn.x - acorn.radius > right) {
@@ -6559,6 +6561,11 @@ function drawAcorns(
     }
     // Lying acorns rest at a varied angle, derived from position so it stays stable.
     const lean = (((acorn.x * 0.137) % 1) + 1) % 1
+    const angle = (lean < 0.5 ? 1 : -1) * (0.9 + lean * 0.6)
+    if (acorn.state === 'sinking') {
+      drawSinkingAcorn(ctx, acorn, angle, waterY)
+      continue
+    }
     // Resting acorns settle slightly into the ground with a soft contact shadow; falling ones do not.
     const resting = acorn.vy === 0
     if (resting) {
@@ -6567,7 +6574,33 @@ function drawAcorns(
       ctx.ellipse(acorn.x, acorn.y + acorn.radius * 0.8, acorn.radius * 1.05, acorn.radius * 0.3, 0, 0, Math.PI * 2)
       ctx.fill()
     }
-    drawAcornShape(ctx, acorn.x, acorn.y + (resting ? acorn.radius * 0.2 : 0), acorn.radius, (lean < 0.5 ? 1 : -1) * (0.9 + lean * 0.6))
+    drawAcornShape(ctx, acorn.x, acorn.y + (resting ? acorn.radius * 0.2 : 0), acorn.radius, angle)
+  }
+}
+
+/**
+ * Draws an acorn going down in the creek: normally above the water's surface and faded below it (like a floating
+ * bird, see `drawBirdOnWater`), fading away altogether as it goes deeper.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param acorn - The sinking acorn.
+ * @param angle - How it is turned.
+ * @param waterY - The water's surface.
+ */
+function drawSinkingAcorn(ctx: CanvasRenderingContext2D, acorn: Acorn, angle: number, waterY: number): void {
+  const sunk = (acorn.y + acorn.radius - waterY) / (ACORN_SINK_DEPTH_IN_RADII * acorn.radius)
+  const reach = acorn.radius * 3
+  for (const below of [false, true]) {
+    ctx.save()
+    ctx.beginPath()
+    // (Each part's box takes in the whole acorn wherever it is on its way down, so only the surface cuts it.)
+    ctx.rect(acorn.x - reach, below ? waterY : waterY - reach, reach * 2, below ? (ACORN_SINK_DEPTH_IN_RADII + 3) * acorn.radius : reach)
+    ctx.clip()
+    if (below) {
+      ctx.globalAlpha *= 0.45 * Math.max(0, Math.min(1, 1 - sunk))
+    }
+    drawAcornShape(ctx, acorn.x, acorn.y, acorn.radius, angle)
+    ctx.restore()
   }
 }
 

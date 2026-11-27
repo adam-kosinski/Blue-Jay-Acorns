@@ -1,6 +1,8 @@
 import {
   ACORN_DROP_CHANCE_PER_SECOND,
   ACORN_GRAVITY_IN_SIZES,
+  ACORN_SINK_DEPTH_IN_RADII,
+  ACORN_SINK_SPEED_IN_RADII,
   ACORN_GROUP_MEAN,
   ACORN_GROUP_SPREAD,
   ACORN_SPREAD_FACTOR,
@@ -283,14 +285,15 @@ export function updateAction(player: Player, world: World, dt: number): void {
 /**
  * Applies S (pick up), Q (drop) and left Shift (bury / dig up) presses for this frame.
  *
- * Both only act on a fresh press while standing and not already busy. Pick-up, bury and dig-up play an animation first.
+ * All only act on a fresh press while not already busy. Dropping works anywhere (standing, flying or floating); the
+ * rest only while standing on land. Pick-up, bury and dig-up play an animation first.
  *
  * @param player - Mutable player (holds at most one acorn).
  * @param edges - Fresh key presses since the last frame.
  * @param world - Acorn container and terrain.
  */
 export function handleAcornActions(player: Player, edges: KeyEdges, world: World): void {
-  if (player.state !== 'standing' || player.floating || player.eatTimer > 0 || player.action) {
+  if (player.eatTimer > 0 || player.action) {
     return
   }
 
@@ -300,6 +303,10 @@ export function handleAcornActions(player: Player, edges: KeyEdges, world: World
     player.held.x = player.x + player.size / 2 + player.facing * player.size * 0.55
     player.held.y = player.y + player.size * 0.4
     player.held = null
+  }
+
+  if (player.state !== 'standing' || player.floating) {
+    return
   }
 
   if (edges.pickup && !player.held) {
@@ -503,7 +510,7 @@ function kickLeaf(world: World, bird: Player, restX: number, lift: number, snow:
 }
 
 /**
- * Makes dropped acorns fall to the ground.
+ * Makes dropped acorns fall to the ground. One that falls into the creek sinks into it and is gone.
  *
  * @param world - Acorn container and terrain.
  * @param playerSize - Current player size (scales gravity).
@@ -552,11 +559,29 @@ export function updateAcorns(world: World, playerSize: number, dt: number): void
   if (faded) {
     world.kickedLeaves = world.kickedLeaves.filter((leaf) => leaf.fade < 1)
   }
+  const { waterY } = world.terrain.creek
+  let gone = false
   for (const acorn of world.acorns) {
+    if (acorn.state === 'sinking') {
+      // The water takes hold as the acorn goes under: gravity gives way to a drag toward the sinking speed, in
+      // step with how much of it is in the water, so its speed changes smoothly from its fall's. The drag is the
+      // stronger the faster it goes, so that one from high up is also seen to sink.
+      const speed = ACORN_SINK_SPEED_IN_RADII * acorn.radius
+      const under = Math.max(0, Math.min(1, (acorn.y + acorn.radius - waterY) / (2 * acorn.radius)))
+      const drag = under * (8 + Math.max(0, acorn.vy - speed) / (3 * acorn.radius))
+      const gravity = (1 - under) * ACORN_GRAVITY_IN_SIZES * playerSize
+      // (Solved for the speed at the end of the step: stable however strong the drag.)
+      acorn.vy = (acorn.vy + (gravity + drag * speed) * dt) / (1 + drag * dt)
+      acorn.y += acorn.vy * dt
+      gone = gone || acorn.y + acorn.radius >= waterY + ACORN_SINK_DEPTH_IN_RADII * acorn.radius
+      continue
+    }
     if (acorn.state !== 'ground') {
       continue
     }
-    const restY = groundYAt(world.terrain, acorn.x) - acorn.radius
+    // (Over the creek nothing stops it: it never comes to rest on the bed, however shallow the water is there.)
+    const over = inWater(world.terrain, acorn.x)
+    const restY = over ? Infinity : groundYAt(world.terrain, acorn.x) - acorn.radius
     if (acorn.y < restY) {
       acorn.vy += ACORN_GRAVITY_IN_SIZES * playerSize * dt
       acorn.y = Math.min(restY, acorn.y + acorn.vy * dt)
@@ -564,5 +589,14 @@ export function updateAcorns(world: World, playerSize: number, dt: number): void
       acorn.y = restY
       acorn.vy = 0
     }
+    // From the moment it touches the water it is sinking.
+    if (over && acorn.y + acorn.radius >= waterY) {
+      acorn.state = 'sinking'
+    }
+  }
+  if (gone) {
+    world.acorns = world.acorns.filter(
+      (acorn) => acorn.state !== 'sinking' || acorn.y + acorn.radius < waterY + ACORN_SINK_DEPTH_IN_RADII * acorn.radius,
+    )
   }
 }

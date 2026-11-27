@@ -114,8 +114,11 @@ export type Camera = {
   y: number
 }
 
-/** Where an acorn is: on the ground, in the beak, or underground. */
-export type AcornState = 'ground' | 'held' | 'buried'
+/**
+ * Where an acorn is: on the ground (or falling to it), in the beak, underground, or going down in the creek (out of
+ * every animal's reach, until it is gone).
+ */
+export type AcornState = 'ground' | 'held' | 'buried' | 'sinking'
 
 /** Acorn in the world; a filled circle. */
 export type Acorn = {

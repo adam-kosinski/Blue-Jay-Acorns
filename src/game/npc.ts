@@ -320,7 +320,8 @@ function updatePerception(npc: Npc, world: World): void {
   // A remembered acorn stays remembered while its spot is out of view. Once the spot is back in
   // view without the acorn being seen there, it is cleared immediately.
   for (const [acorn, spot] of npc.noticed) {
-    if (!current.has(acorn) && inView(npc.bird, spot)) {
+    // (One lost in the creek is forgotten at once, wherever the bird is.)
+    if (acorn.state === 'sinking' || (!current.has(acorn) && inView(npc.bird, spot))) {
       npc.noticed.delete(acorn)
     }
   }

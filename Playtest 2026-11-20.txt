@@ -14,7 +14,8 @@ Need to tell the player that you can hop to disguise your acorns
 Would be fun to steal acorns from other birds
 Allow NPCs to die (makes the player feel like they are special), but make them better
 Double tap buries immediately?
-Make death more spectacular
+Make player's death more spectacular
+- animation of the bird collapsing, and the world going dark around them, and then a restart button appears?
 Digging up was more precise than expected
 The squirrel sniffing mechanic was intuitive to Ricky
 Hiding acorns in the trees

@@ -137,6 +137,13 @@ export const NPC_DIG_RANGE_FACTOR = 2
 /** How close (in player sizes) an acorn must be to be picked up or dug up. */
 export const REACH_IN_SIZES = 0.9
 
+/**
+ * An acorn in the creek sinks at this many of its radii per second (the water soon slows it to that), and is gone,
+ * faded from sight, once this many radii down.
+ */
+export const ACORN_SINK_SPEED_IN_RADII = 4
+export const ACORN_SINK_DEPTH_IN_RADII = 12
+
 /** Fall acceleration of a dropped acorn, in player sizes per second squared. */
 export const ACORN_GRAVITY_IN_SIZES = 12
 
