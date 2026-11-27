@@ -620,7 +620,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - `layerOak` (world.ts): about half the far layers' trees are as before; the rest get a trunk 0.5-1 times and a height 2/3-1 times the average (`typicalOakSize`), chosen independently; branches follow the trunk, and the twigs' least width thins with it.
 
 ## Sky and treeline (`src/game/sky.ts`)
-- Over the backdrop gradient (now read as the far trees) a blue sky is drawn down to a Perlin-noise treeline (three swells plus a 2D fringe, blurred), painted once per world at quarter resolution and stretched. Its middle sits at 0.19 of the view height with the camera at the bottom; parallax 0.06 sideways, 0.12 vertically. Same light blue in all seasons.
+- Over the backdrop gradient (now read as the far trees) a blue sky is drawn down to a Perlin-noise treeline (three swells plus a 2D fringe, blurred), painted once per world at quarter resolution and stretched. Its middle sits at 0.025 of the view height with the camera at the bottom; parallax 0.06 sideways, 0.12 vertically. Same light blue in all seasons.
 - Later changes: sunken fronds rest between 0.42 rad above and 0.24 below level, each its own (press now 0.2, rooted ferns raised a bit more). Flower patches are about twice as wide with the same plants, and their starts are spread evenly from 0.05 to 0.57 of spring (golden-ratio turns). The sky is light blue, paler toward the treeline.
 - Ferns only go 50-75% of the way to brown by the end of spring (`fernBrownLimit`, each its own); fiddleheads still follow spring's progress.
 - While it snows the sky is gone (the backdrop's own color only), cross-faded with the snowfall's 4 s ramps (`1 - snowfallAt`).

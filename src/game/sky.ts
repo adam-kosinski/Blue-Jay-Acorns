@@ -10,7 +10,7 @@ const SKY_HIGH = [158, 207, 247] as const
 const SKY_LOW = [206, 233, 252] as const
 
 /** Where the treeline's middle is on screen (share of the view's height) with the view at the bottom of the world. */
-const LINE_HEIGHT = 0.19
+const LINE_HEIGHT = 0.025
 
 /** How much the treeline moves with the camera, sideways and up and down (it is very far away). */
 const PARALLAX_X = 0.06
