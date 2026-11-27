@@ -1944,23 +1944,33 @@ function drawVegetation(
     if (!any) {
       continue
     }
-    const y = base - strip.originY + any.rowTop
+    const x = chunk * VEG_CHUNK - x0
+    const fading = first !== undefined && second !== undefined && t > 0 && t < 1
+    // (Out of a fade, the one image that shows, placed at its own height too.)
+    const shown = second && (t >= 1 || !first) ? second : (first ?? any)
+    // During a fade the two images are added up onto a canvas covering both (the two moments' images can start at
+    // different heights: each goes in at its own, or the new one's rows did not line up and the bottom of the
+    // old one showed alone, half transparent, as a see-through box).
+    const top = fading ? Math.min(first.rowTop, second.rowTop) : shown.rowTop
+    const height = fading
+      ? Math.max(Math.round((first.rowTop - top) * res) + first.canvas.height, Math.round((second.rowTop - top) * res) + second.canvas.height)
+      : shown.canvas.height
+    const y = base - strip.originY + top
     // Only the rows on the screen and above the cull line are drawn.
     const firstRow = Math.max(0, Math.floor(-y * res))
-    const rows = Math.max(0, Math.min(any.canvas.height, Math.ceil((limit - y) * res)) - firstRow)
+    const rows = Math.max(0, Math.min(height, Math.ceil((limit - y) * res)) - firstRow)
     if (rows <= 0) {
       continue
     }
-    const x = chunk * VEG_CHUNK - x0
-    let source = any.canvas
+    let source = shown.canvas
     let cropX = 0
     let cropWidth = 0
-    if (first && second && t > 0 && t < 1) {
-      // During the short fade the two images are added up every frame, each at its own share (the
-      // leaves of one fade out as the other's fade in), onto a canvas kept for the chunk. Only the part
-      // that shows is added up (two columns more each side, so smoothing at the screen's edges is unchanged).
+    if (fading) {
+      // Only the part that shows is added up (two columns more each side, so smoothing at the screen's edges is
+      // unchanged).
+      const width = Math.max(first.canvas.width, second.canvas.width)
       cropX = Math.max(0, Math.floor(-x * res) - 2)
-      cropWidth = Math.min(first.canvas.width, Math.ceil((viewWidth - x) * res) + 2) - cropX
+      cropWidth = Math.min(width, Math.ceil((viewWidth - x) * res) + 2) - cropX
       if (cropWidth <= 0) {
         continue
       }
@@ -1970,27 +1980,32 @@ function drawVegetation(
         fade = { k, q: 0, canvas: document.createElement('canvas') }
         pieces.set(key, fade)
       }
-      if (fade.canvas.width !== first.canvas.width || fade.canvas.height !== first.canvas.height) {
-        fade.canvas.width = first.canvas.width
-        fade.canvas.height = first.canvas.height
+      if (fade.canvas.width !== width || fade.canvas.height !== height) {
+        fade.canvas.width = width
+        fade.canvas.height = height
       }
       const pctx = fade.canvas.getContext('2d')
       if (pctx) {
         pctx.globalCompositeOperation = 'source-over'
         pctx.clearRect(cropX, firstRow, cropWidth, rows)
-        pctx.globalAlpha = 1 - t
-        pctx.drawImage(first.canvas, cropX, firstRow, cropWidth, rows, cropX, firstRow, cropWidth, rows)
+        // Each image's rows that fall in the drawn band, at its own height in the canvas.
+        const add = (image: VegImage, alpha: number): void => {
+          const offset = Math.round((image.rowTop - top) * res)
+          const from = Math.max(firstRow, offset)
+          const to = Math.min(firstRow + rows, offset + image.canvas.height)
+          const columns = Math.min(cropWidth, image.canvas.width - cropX)
+          if (to > from && columns > 0) {
+            pctx.globalAlpha = alpha
+            pctx.drawImage(image.canvas, cropX, from - offset, columns, to - from, cropX, from, columns, to - from)
+          }
+        }
+        add(first, 1 - t)
         pctx.globalCompositeOperation = 'lighter'
-        pctx.globalAlpha = t
-        pctx.drawImage(second.canvas, cropX, firstRow, cropWidth, rows, cropX, firstRow, cropWidth, rows)
+        add(second, t)
         pctx.globalAlpha = 1
         pctx.globalCompositeOperation = 'source-over'
       }
       source = fade.canvas
-    } else if (second && (t >= 1 || !first)) {
-      source = second.canvas
-    } else if (first) {
-      source = first.canvas
     }
     const columns = cropWidth > 0 ? cropWidth : source.width
     ctx.drawImage(source, cropX, firstRow, columns, rows, x + cropX / res, y + firstRow / res, columns / res, rows / res)
