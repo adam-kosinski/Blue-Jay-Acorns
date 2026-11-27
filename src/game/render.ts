@@ -185,6 +185,35 @@ function backdropColors(time: number): [string, string] {
  * @param player - Current player pose.
  * @param outcome - 'lost' or 'won' to cover the scene with the game-over or the victory screen.
  */
+/** Frame profiling (dev only): set `window.__prof = { acc: {}, frames: 0, sync: false }` to collect ms per section of `renderScene`; `sync` reads a pixel back after each section so the graphics card's work is counted too. */
+let profLast = 0
+let profFrame: Record<string, number> = {}
+function prof(ctx: CanvasRenderingContext2D, name: string): void {
+  const p = (globalThis as { __prof?: { acc: Record<string, number>; frames: number; sync: boolean; worst?: Record<string, number>; worstMs?: number } }).__prof
+  if (!p) {
+    return
+  }
+  if (p.sync) {
+    ctx.getImageData(0, 0, 1, 1)
+  }
+  const now = performance.now()
+  if (name) {
+    p.acc[name] = (p.acc[name] ?? 0) + now - profLast
+    profFrame[name] = (profFrame[name] ?? 0) + now - profLast
+  } else {
+    p.frames += 1
+  }
+  if (name === 'controls') {
+    const total = Object.values(profFrame).reduce((x, y) => x + y, 0)
+    if (total > (p.worstMs ?? 0)) {
+      p.worstMs = total
+      p.worst = profFrame
+    }
+    profFrame = {}
+  }
+  profLast = now
+}
+
 export function renderScene(
   ctx: CanvasRenderingContext2D,
   viewWidth: number,
@@ -199,12 +228,15 @@ export function renderScene(
   // The next seasons' images are prepared a little each frame while the game is played.
   // (More when the frame is cheap, less when it is not.)
   seasonNow = world.season.time
+  prof(ctx, '')
   runWork(lastSceneMs < 6 ? 4 : 1.5)
+  prof(ctx, 'work')
   const sceneStart = performance.now()
   settleArrivals(3)
   settleOakArrivals(3)
   settleProps(2)
   planVegetation(world, camera.x, viewWidth)
+  prof(ctx, 'settle+plan')
   const haze = ctx.createLinearGradient(0, 0, 0, viewHeight)
   const [backdropTop, backdropBottom] = backdropColors(world.season.time)
   haze.addColorStop(0, backdropTop)
@@ -217,34 +249,45 @@ export function renderScene(
     ctx.globalAlpha = sky
     drawSky(ctx, world, camera.x, camera.y, viewWidth, viewHeight)
     ctx.globalAlpha = 1
+  prof(ctx, 'sky')
   }
 
   drawForest(ctx, world.forest, world, camera, viewWidth, viewHeight)
+  prof(ctx, 'forest')
 
   ctx.save()
   ctx.translate(-camera.x, -camera.y)
 
   // Trees, logs and rocks first, so the ground and leaf litter cover their bases.
   drawTrees(ctx, world.trees, world.terrain, camera.x, viewWidth, world.season.time)
+  prof(ctx, 'trees')
   drawBuriedProps(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'buried')
   drawGround(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'ground')
   // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
+  prof(ctx, 'litter')
   drawSnow(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'snow')
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
   drawCreek(ctx, world, camera, viewWidth, viewHeight)
+  prof(ctx, 'creek')
   // The leaves lying on the surface go under the flowers; flowers stay under the mounds (and the leaves on
   // them), the birds and the acorns.
   const onMound = mountedLeaf(world)
   drawKickedLeaves(ctx, world, camera.x, viewWidth, (leaf) => !onMound(leaf))
   drawGroundFlowers(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'kicked+flowers')
   drawMounds(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'mounds')
   drawKickedLeaves(ctx, world, camera.x, viewWidth, onMound)
   beginNpcLabels()
   updateLeafFall(world, camera.x, camera.y, viewWidth)
   drawLeafFall(ctx, world, 'resting', camera.x, viewWidth)
+  prof(ctx, 'leaffall-rest')
   for (const npc of world.npcs) {
     const bx = npc.bird.x + npc.bird.size / 2
     if (bx > camera.x - npc.bird.size * 2 && bx < camera.x + viewWidth + npc.bird.size * 2) {
@@ -269,29 +312,37 @@ export function renderScene(
     }
   }
   endNpcLabels()
+  prof(ctx, 'animals')
   drawBirdOnWater(ctx, player, world)
+  prof(ctx, 'player')
   // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
   // never look like they sit on a bush.
   drawAcorns(ctx, world.acorns, camera.x, viewWidth)
   drawFrontProps(ctx, world, camera.x, viewWidth)
+  prof(ctx, 'acorns+frontprops')
   drawNoticeLines(ctx, world, player)
+  prof(ctx, 'notice')
   if (showMinimap) {
     drawFollowArrows(ctx, world)
   }
   drawLeafFall(ctx, world, 'air', camera.x, viewWidth)
+  prof(ctx, 'leaffall-air')
 
   ctx.restore()
 
   // Falling snow, in front of the scene (screen space; the background layers have none).
   drawSnowfall(ctx, world.season.time, camera.x, camera.y, viewWidth, viewHeight)
+  prof(ctx, 'snowfall')
 
   if (showMinimap) {
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
   }
   drawHungerBar(ctx, viewWidth, viewHeight, player)
+  prof(ctx, 'minimap+hunger')
 
   drawControlsOverlay(ctx, viewHeight)
   lastSceneMs = performance.now() - sceneStart
+  prof(ctx, 'controls')
 
   if (outcome !== 'playing') {
     if (gameOverSince === 0) {

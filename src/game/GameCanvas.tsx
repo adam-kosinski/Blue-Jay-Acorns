@@ -124,6 +124,7 @@ export function GameCanvas() {
     const logicalWidth = (): number => window.innerWidth / scale
     let world: World = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
     worldRef.current = world
+    ;(window as unknown as { __world?: unknown }).__world = world
     let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
     let gameOver = false
@@ -143,6 +144,7 @@ export function GameCanvas() {
      */
     function regenerate(): void {
       world = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+      ;(window as unknown as { __world?: unknown }).__world = world
       worldRef.current = world
       player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
       warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)

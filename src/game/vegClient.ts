@@ -108,6 +108,7 @@ function pump(): void {
     nextReq += 1
     inFlight.set(req, request)
     worker.postMessage({ ...request.payload, req } as ToWorker)
+    ;(globalThis as { __vegBusy?: number }).__vegBusy = inFlight.size
   }
 }
 
@@ -125,6 +126,7 @@ function ensureWorker(): Worker | null {
         const message = event.data
         const request = inFlight.get(message.req)
         inFlight.delete(message.req)
+        ;(globalThis as { __vegBusy?: number }).__vegBusy = inFlight.size
         if (request) {
           keys.delete(request.key)
           if (message.type === 'done') {
@@ -226,5 +228,6 @@ export function requestImage(request: VegRequest): void {
  * How many requests are waiting or being made.
  */
 export function pendingRequests(): number {
+  ;(globalThis as { __vegBusy?: number }).__vegBusy = inFlight.size
   return waiting.length + inFlight.size
 }
