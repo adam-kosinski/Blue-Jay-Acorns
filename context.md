@@ -655,3 +655,6 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Ferns follow the land; creek banding
 - Each frond starts on the ground at its own root and is sheared along the slope on its side (`toFrondRoot`, `Lie`): foreground ferns use the terrain (`terrainLie`, water surface over the creek), far ones the heights recorded in their veg plan entry (`ground`, `lieFrom`). Fiddleheads stand on the same line. Ferns behind the land are raised less as they sink, and their below-level fronds are turned back up.
 - Creek banding while snowing came from `layHaze` between layers: each water ribbon took one layer's haze throughout, stepping at every waterline. Its near-end color is now pre-compensated (`beforeHaze`).
+
+## Fewer spring leaves
+- Spring ends with half the small leaves again (the user found all of them too many): the first quarter at full size, the second at half size. When they come (`SPRING` in `seasons.ts`) is unchanged; this supersedes the earlier "all leaves, last half small".
