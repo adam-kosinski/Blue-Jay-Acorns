@@ -80,6 +80,7 @@ export function GameCanvas() {
   // A loading screen covers the game until the forest is made (at the start and after Restart).
   const [loading, setLoading] = useState<boolean>(true)
   const invisibleRef = useRef<boolean>(false)
+  const debugOpenRef = useRef<boolean>(debugOpen)
 
   useEffect(() => {
     rateOverrideRef.current = ACORN_DROP_MODES[dropMode]
@@ -95,6 +96,7 @@ export function GameCanvas() {
 
   useEffect(() => {
     setShowMinimap(debugOpen)
+    debugOpenRef.current = debugOpen
   }, [debugOpen])
 
   useEffect(() => {
@@ -214,8 +216,8 @@ export function GameCanvas() {
         updateAcorns(world, player.size, dt)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
-        // Surviving to the end of spring wins the game.
-        won = reachedEnd && !gameOver
+        // Surviving to the end of spring wins the game (with the debug tools open it just goes on).
+        won = reachedEnd && !gameOver && !debugOpenRef.current
         // How many of the player's buried acorns are still buried (shown in the debug panel).
         const buried = world.acorns.reduce(
           (count, acorn) => (acorn.state === 'buried' && acorn.owner === player ? count + 1 : count),

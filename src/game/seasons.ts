@@ -176,6 +176,9 @@ export function sampleTime(index: number): number {
 /** How long, in seconds, a change from one look of the leaves to the next takes: they stay as they are, then fade over this. */
 export const FADE_SECONDS = 3
 
+/** The same for the new leaves of spring: short, because a growing leaf shows a see-through rim while two sizes are mixed. */
+const SPRING_FADE_SECONDS = 0.75
+
 /**
  * Smoothstep.
  *
@@ -227,7 +230,9 @@ export function sampleAt(time: number): { k: number; t: number } {
   const k = Math.floor(x)
   // The seconds the interval lasts (the one into spring runs from `SPRING_APPROACH`).
   const seconds = k === FALL_SAMPLES - 1 ? sampleTime(k + 1) - SPRING_APPROACH * SEGMENT_SECONDS : sampleTime(k + 1) - sampleTime(k)
-  const half = FADE_SECONDS / seconds / 2
+  // (From the first moment with new leaves in it on, the fades are spring's short ones.)
+  const fadeSeconds = sampleTime(k) >= SPRING.from * SEGMENT_SECONDS ? SPRING_FADE_SECONDS : FADE_SECONDS
+  const half = fadeSeconds / seconds / 2
   return { k, t: smooth((x - k - (0.5 - half)) / (2 * half)) }
 }
 
@@ -299,7 +304,7 @@ export function leafStageMixAt(start: number, time: number): StageMix {
   }
   // (The next look is wanted about 8 seconds ahead.)
   const seconds = SPRING.length * SEGMENT_SECONDS
-  return mixAlong(springProgress(start, time), SPRING.boundaries, BARE_STAGE, FADE_SECONDS / seconds, 8 / seconds)
+  return mixAlong(springProgress(start, time), SPRING.boundaries, BARE_STAGE, SPRING_FADE_SECONDS / seconds, 8 / seconds)
 }
 
 /**

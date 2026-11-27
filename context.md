@@ -596,3 +596,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 
 ## Spring leaves grow, up to half of them
 - Spring has five looks after bare (`STAGE_LOOKS` 9-13): a quarter of the small leaves at 0.25 and 0.45 of their size, then half of them (the newer quarter coming in at 0.25) at sizes 0.65/0.25, 0.82/0.6 and full; never all the leaves. `LeafAmounts.sizes` is [first quarter, the rest]. Each plant starts between 7.5 and 7.58 segments, changes at 0.04, 0.27, 0.5, 0.73, 0.95 of 0.4 segments; the sizes step through the cross-fades (no per-frame animation). Far layers sample spring at 7.25, 7.5, then every 0.1 to 8.
+- Spring cross-fades last 0.75 s (`SPRING_FADE_SECONDS`; fall's stay 3 s), near plants and far layers alike, because two leaf sizes mixed show a see-through rim.
+- With the debug tools open, reaching the end of spring shows no win screen: the game goes on with the clock resting at the end (closing the tools afterwards does not bring the screen up).
