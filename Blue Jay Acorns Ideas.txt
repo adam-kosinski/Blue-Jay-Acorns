@@ -2,6 +2,9 @@ TODO
 - Fix performance
 - Tutorial tip about hopping to hide burial, on first bury
 - Animation of forgotten acorns sprouting after the player has won
+  - hunger bar translates out of screen, bird does a dance, then flies to the nearest buried acorn,
+    which grows a sapling (part of acorn visible so user can tell)
+  - not sure how to do this if there are no buried acorns left, maybe just do the dance and that's it
 - Make oak tree radius smaller, to increase good-quality burial area
   - for squirrels and burial quality that is
   - maybe or maybe not for acorn spawns?
@@ -17,6 +20,7 @@ TODO
 Visual TODO
 - Fix squirrel animations and appearance
 - I think leaf size is incorrect relative to blue jay size
+- Consider treating the ground like the river, and morphing leaf litter and snow patches somehow, or doing infinite-layer parallax with leaf litter?
 - Sunlight?
 
 Playtest impressions

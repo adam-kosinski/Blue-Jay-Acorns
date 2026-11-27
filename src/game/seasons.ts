@@ -63,8 +63,8 @@ export type LeafAmounts = {
  * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
  * three steps while all the small leaves stay (ending with the small leaves alone); then half of the small leaves
  * are left, then a quarter, then none (bare). In spring new small leaves come (no large shapes): a quarter of them,
- * later as many again (half in all, the most there are), each coming in at a quarter of its size and growing; by
- * the end of spring the first quarter are full size and the second half size.
+ * later as many again, and late in spring the other half in two more quarters, each coming in at a quarter of its
+ * full size; by the end of spring the first quarter have grown to half size, and the rest are still a quarter.
  */
 export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1, leaves: 1, fall: 0 },
@@ -77,11 +77,11 @@ export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 0, leaves: 0.25, fall: 1 },
   { shapes: 0, leaves: 0, fall: 1 },
   { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.25, 0.25] },
-  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.45, 0.25] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.65, 0.25] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.82, 0.32] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.93, 0.41] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [1, 0.5] },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.32, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.38, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.44, 0.25] },
+  { shapes: 0, leaves: 0.75, fall: 0, spring: true, sizes: [0.48, 0.25] },
+  { shapes: 0, leaves: 1, fall: 0, spring: true, sizes: [0.5, 0.25] },
 ]
 
 /** The index of the bare look in `STAGE_LOOKS` (the looks before it are fall's, those after it spring's). */
