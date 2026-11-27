@@ -503,7 +503,6 @@ function drawForest(
   const snowedIn = snowThickness(world.season.time) >= 0.999 && snowCover(world.season.time) >= 0.999
   let stripsMade = 0
   tintBuildsLeft = 2
-  fuzzyBuildsLeft = FUZZY_BUILDS_PER_FRAME
 
   const baseOf = (l: ForestLayer): number =>
     world.groundY - maxCamY * (1 - l.parallax) - camera.y * l.parallax - l.lift * viewHeight
@@ -881,16 +880,54 @@ function drawForest(
   ctx.imageSmoothingQuality = 'low'
 }
 
-/** A far rock painted at its resolution, kept until what shows of it changes (see `drawFuzzyRock`). */
-type FuzzyRock = { canvas: HTMLCanvasElement; key: string; halfWidth: number; above: number; width: number; height: number; res: number }
+/** A far rock painted at its resolution, kept until what shows of it changes (see `drawFuzzyRock`): a slot of the shared rock atlas. */
+type FuzzyRock = { sx: number; sy: number; key: string; halfWidth: number; above: number; width: number; height: number; res: number }
 
-const fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
+let fuzzyRocks = new WeakMap<Rock, FuzzyRock>()
 
-/** How many more fuzzy rock images may be remade for a snow step in the current frame. */
-let fuzzyBuildsLeft = 0
+/**
+ * All far rocks are painted into one shared bitmap (each in a slot of its own), not each into a small bitmap of
+ * its own: when the snow on them steps, they are all repainted in the same frame, and painting into a hundred
+ * separate bitmaps at once stalled the graphics card while one bitmap is cheap.
+ */
+const ROCK_ATLAS_SIZE = 2048
+/** Empty pixels around each slot, so smoothing never picks up a neighbour. */
+const ROCK_ATLAS_GAP = 2
+let rockAtlas: HTMLCanvasElement | null = null
+let rockAtlasCtx: CanvasRenderingContext2D | null = null
+/** Where the next slot goes: rows of slots, left to right, top to bottom. */
+let atlasX = 0
+let atlasY = 0
+let atlasRowHeight = 0
 
-/** How many fuzzy rock images may be remade for a snow step each frame. */
-const FUZZY_BUILDS_PER_FRAME = 4
+/**
+ * Finds room in the rock atlas for a slot (starting the atlas over, and so every rock's slot, when it is full).
+ *
+ * @param width - Slot width in pixels.
+ * @param height - Slot height in pixels.
+ * @returns The slot's corner, or null if it can never fit.
+ */
+function atlasSlot(width: number, height: number): { sx: number; sy: number } | null {
+  if (width + ROCK_ATLAS_GAP > ROCK_ATLAS_SIZE || height + ROCK_ATLAS_GAP > ROCK_ATLAS_SIZE) {
+    return null
+  }
+  if (atlasX + width + ROCK_ATLAS_GAP > ROCK_ATLAS_SIZE) {
+    atlasX = 0
+    atlasY += atlasRowHeight
+    atlasRowHeight = 0
+  }
+  if (atlasY + height + ROCK_ATLAS_GAP > ROCK_ATLAS_SIZE) {
+    atlasX = 0
+    atlasY = 0
+    atlasRowHeight = 0
+    fuzzyRocks = new WeakMap()
+    rockAtlasCtx?.clearRect(0, 0, ROCK_ATLAS_SIZE, ROCK_ATLAS_SIZE)
+  }
+  const slot = { sx: atlasX, sy: atlasY }
+  atlasX += width + ROCK_ATLAS_GAP
+  atlasRowHeight = Math.max(atlasRowHeight, height + ROCK_ATLAS_GAP)
+  return slot
+}
 
 /**
  * Draws a far rock at a resolution: painted at that many bitmap pixels per world pixel into a small bitmap of its own
@@ -915,13 +952,13 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
   }
   const baseY = groundY + rock.ry * 0.4
   const layers = snowCapLayers(seasonNow)
-  const step = (value: number): number => Math.round(value * 24)
+  // Each rock steps at its own offset within a step (all of them stepping in the same frame, a hundred repaints at
+  // once, stalled the graphics card): the repaints spread evenly over time, and no rock is ever more than a step out.
+  const phase = (rock.jitter.reduce((a, b) => a + b, 0) * 7919) % 1
+  const step = (value: number): number => Math.round(value * 24 + phase)
   const key = `${res.toFixed(3)}|${rock.rx.toFixed(1)}|${step(rockSnowSize(rock, seasonNow))}|${step(layers.thin)}|${step(layers.full)}`
   let sprite = fuzzyRocks.get(rock)
-  // A rock whose snow has moved on by a step waits its turn (a few are remade a frame): all of them stepping in the
-  // same frame stalled the graphics card while the snow came in. A step is too small to see the wait.
-  if (!sprite || (sprite.key !== key && (fuzzyBuildsLeft > 0 || sprite.res !== res))) {
-    fuzzyBuildsLeft -= 1
+  if (!sprite || sprite.key !== key) {
     ;(globalThis as { __rockBuilds?: number }).__rockBuilds = ((globalThis as { __rockBuilds?: number }).__rockBuilds ?? 0) + 1
     const pad = 3
     const halfWidth = rock.rx * 1.4 + pad
@@ -929,23 +966,35 @@ function drawFuzzyRock(ctx: CanvasRenderingContext2D, rock: Rock, groundY: numbe
     const below = rock.ry * 0.6 + pad
     const width = Math.max(1, Math.ceil(halfWidth * 2 * res))
     const height = Math.max(1, Math.ceil((above + below) * res))
-    const canvas = sprite?.canvas ?? document.createElement('canvas')
-    if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width
-      canvas.height = height
+    if (!rockAtlas) {
+      rockAtlas = document.createElement('canvas')
+      rockAtlas.width = ROCK_ATLAS_SIZE
+      rockAtlas.height = ROCK_ATLAS_SIZE
+      rockAtlasCtx = rockAtlas.getContext('2d')
     }
-    const sctx = canvas.getContext('2d')
-    if (!sctx) {
+    const actx = rockAtlasCtx
+    // The same slot while the rock's size stays the same, a new one if it changes.
+    const slot = sprite && sprite.width === width && sprite.height === height ? sprite : atlasSlot(width, height)
+    if (!actx || !slot) {
+      drawRockSimple(ctx, rock, groundY)
       return
     }
-    sctx.setTransform(1, 0, 0, 1, 0, 0)
-    sctx.clearRect(0, 0, width, height)
-    sctx.setTransform(res, 0, 0, res, (halfWidth - rock.x) * res, (above - baseY) * res)
-    drawRockSimple(sctx, rock, groundY)
-    sprite = { canvas, key, halfWidth, above, width, height, res }
+    actx.save()
+    actx.setTransform(1, 0, 0, 1, 0, 0)
+    actx.clearRect(slot.sx, slot.sy, width, height)
+    actx.beginPath()
+    actx.rect(slot.sx, slot.sy, width, height)
+    actx.clip()
+    actx.setTransform(res, 0, 0, res, slot.sx + (halfWidth - rock.x) * res, slot.sy + (above - baseY) * res)
+    drawRockSimple(actx, rock, groundY)
+    actx.restore()
+    sprite = { sx: slot.sx, sy: slot.sy, key, halfWidth, above, width, height, res }
     fuzzyRocks.set(rock, sprite)
   }
-  ctx.drawImage(sprite.canvas, 0, 0, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
+  if (!rockAtlas) {
+    return
+  }
+  ctx.drawImage(rockAtlas, sprite.sx, sprite.sy, sprite.width, sprite.height, rock.x - sprite.halfWidth, baseY - sprite.above, sprite.width / sprite.res, sprite.height / sprite.res)
 }
 
 /**
