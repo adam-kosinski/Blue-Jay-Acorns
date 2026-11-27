@@ -1,4 +1,6 @@
 TODO
+- Fix performance
+- Tutorial tip about hopping to hide burial, on first bury
 - Animation of forgotten acorns sprouting after the player has won
 - Make oak tree radius smaller, to increase good-quality burial area
   - for squirrels and burial quality that is
@@ -13,10 +15,8 @@ TODO
 - Consider visiting NPCs that come when acorn abundance is high, or when the player is doing a bit too well (auto difficulty scaling?)
 
 Visual TODO
-- Blue jays can still kick up snow in non-snow spots mid snow melt
-- Have blue jays bob subtly when floating
 - Fix squirrel animations and appearance
-- Jay bobbing up and down in midflight should correspond with wing beats
+- I think leaf size is incorrect relative to blue jay size
 - Sunlight?
 
 Playtest impressions
@@ -24,6 +24,7 @@ Playtest impressions
 - Winter can be a bit boring, feels like just a test of how well you did in the fall
   - lots of sitting around with an acorn in your beak, waiting to eat it
   - only thing to do really is random guessing where acorns might be
+  - I wonder if the player can have a secondary objective?
 - It works a bit too well to cache a bunch of acorns in just one spot, slightly scattered
 - Furthermore often there is only just one good spot because near the oak trees is bad due to squirrels
 
@@ -77,3 +78,6 @@ Done
 - Winter haze is incorrect I think?
   + Make it look less foggy? (though extra fogginess is good when it is snowing)
 - Go through the end of spring (adjust acorn peak), indication at end of spring that you won
+- Blue jays can still kick up snow in non-snow spots mid snow melt
+- Have blue jays bob subtly when floating
+- Jay bobbing up and down in midflight should correspond with wing beats

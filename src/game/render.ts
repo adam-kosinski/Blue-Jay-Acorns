@@ -3993,9 +3993,12 @@ const FERN_TONES = ['#2f7a3a', '#3a8c40', '#27693a']
 const FERN_BROWNS = ['#8c6234', '#9a7038', '#7c562c']
 const FERN_BROWN_STEM = '#5c4022'
 
-/** How far above and below level (radians) a frond may come to rest at its lowest. */
-const FERN_REST_ABOVE = 0.42
-const FERN_REST_BELOW = 0.24
+/**
+ * How far above level (radians) a frond comes to rest at its lowest, on average, and how far to either side of
+ * that each may be. (Pressing the fern down lowers this a little: about 20 degrees on average as seen.)
+ */
+const FERN_REST_ANGLE = 0.45
+const FERN_REST_SPREAD = 0.33
 
 /** How much a fern's height is also pressed down at its lowest. */
 const FERN_PRESS = 0.2
@@ -4238,11 +4241,12 @@ function fernLayout(fern: Fern): FernLayout {
     const pad = curve.length * 0.27 + fern.size * 0.03 + 2
     const left = Math.min(...xs) - pad
     const top = Math.min(...ys) - pad
-    // Where this frond comes to rest when it has sunk: some a little above level, some a little below.
+    // Where this frond comes to rest when it has sunk: still pointing up, some more than others.
     const hash = Math.sin(frond.angle * 917.3 + frond.base * 313.7 + fern.size * 1.7) * 43758.5453
-    const sag = -FERN_REST_ABOVE + (hash - Math.floor(hash)) * (FERN_REST_ABOVE + FERN_REST_BELOW)
+    const above = FERN_REST_ANGLE + (2 * (hash - Math.floor(hash)) - 1) * FERN_REST_SPREAD
     const side = frond.angle >= 0 ? 1 : -1
-    const rest = side * (Math.PI / 2 + sag)
+    // (One that already leans lower than that stays as it is, rather than rising.)
+    const rest = side * Math.max(Math.PI / 2 - above, Math.abs(tilt))
     const cell: FrondCell = {
       curve,
       rootX: frond.base * fern.size,
