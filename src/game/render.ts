@@ -930,14 +930,15 @@ function atlasSlot(width: number, height: number): { sx: number; sy: number } | 
 }
 
 /**
- * How many steps a background layer's rocks take their snow in: the nearest two layers in fine steps, the ones
+ * How many steps a background layer's rocks take their snow in: the nearest three layers (the ones seen most
+ * clearly) in fine steps, the ones
  * farther back (smaller, hazier, where a step shows less) in coarser ones, so fewer rocks are repainted (rocks are
  * a small detail: their repaints cost more than finer steps were worth).
  *
  * @param back - How many layers this one is behind the nearest background layer (0 for the nearest).
  */
 function rockSnowSteps(back: number): number {
-  return back <= 1 ? 12 : Math.max(3, Math.round(12 / back))
+  return back <= 2 ? 12 : Math.max(3, Math.round(12 / (back - 1)))
 }
 
 /**
