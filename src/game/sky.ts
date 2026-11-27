@@ -6,8 +6,8 @@
 import type { World } from './types'
 
 /** The sky's color high up and down by the treeline. */
-const SKY_HIGH = [108, 178, 240] as const
-const SKY_LOW = [168, 213, 248] as const
+const SKY_HIGH = [158, 207, 247] as const
+const SKY_LOW = [206, 233, 252] as const
 
 /** Where the treeline's middle is on screen (share of the view's height) with the view at the bottom of the world. */
 const LINE_HEIGHT = 0.19
