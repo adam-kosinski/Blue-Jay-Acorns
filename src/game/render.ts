@@ -227,8 +227,8 @@ export function renderScene(
   // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   drawSnow(ctx, world, camera.x, viewWidth)
-  // Flowers by the surface are behind the birds, acorns and mounds, so they never hide them.
-  drawNearFlowers(ctx, world, camera.x, viewWidth)
+  // Flowers are behind the water, birds, acorns and mounds, so they never lie over them.
+  drawGroundFlowers(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
@@ -644,6 +644,10 @@ function drawForest(
     if (!evenTint && !hidden) {
       dropTintedStrip(strip)
     }
+    // Flowers lie on the ground just drawn, and under the water drawn next, so none can ever lie over it.
+    if (!hidden) {
+      drawLayerFlowers(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
+    }
     // The creek flows on toward the viewer: a ribbon from this layer's waterline that widens into
     // the next nearer layer's creek (or the foreground creek), so the water stays continuous.
     const next = layers[index + 1]
@@ -762,7 +766,6 @@ function drawForest(
         drawFuzzyRock(ctx, rock, groundY, vegRes(layer))
         ctx.restore()
       }
-      drawLayerFlowers(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
       drawLayerFerns(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
     }
@@ -1917,7 +1920,8 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
     }
     veg.props.sort((p, q) => p.y - q.y)
     // Patches of spring flowers on the ground, smaller the farther the layer (drawn on their own, see
-    // `drawLayerFlowers`).
+    // `drawLayerFlowers`). None grow on the creek's banks (wider on the side the water sweeps across as it
+    // comes forward).
     const bloom = seededRandom(Math.floor(layer.parallax * 77777) + 5)
     const size = Math.max(0.24, layer.scale)
     const room = Math.max(0.5, size)
@@ -1937,7 +1941,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
         size,
         18 + Math.floor(bloom() * 26),
         turn,
-        (px) => Math.abs(px - creek.x) > creek.halfWidth + 24 * size,
+        (px) => Math.abs(px - creek.x) > (Math.sign(px - creek.x) === comesFrom ? 4 : 2.8) * creek.halfWidth + 34 * size,
       )
       if (patch) {
         flowers.push(patch)
@@ -2625,6 +2629,9 @@ function drawShoreRocks(ctx: CanvasRenderingContext2D, world: World, camera: Cam
   ctx.restore()
 }
 
+/** The widest view the flowers are kept clear of the near water for. */
+const WIDEST_VIEW = 1800
+
 /** The foreground's patches of spring flowers: by the surface line, and farther down in front of it. */
 const flowersOf = new WeakMap<World, { near: FlowerPatch[]; front: FlowerPatch[] }>()
 
@@ -2641,7 +2648,18 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
   const random = seededRandom(Math.floor(Math.random() * 1e9))
   const { terrain } = world
   const { creek } = terrain
-  const clear = (x: number): boolean => Math.abs(x - creek.x) > creek.halfWidth + creek.bank * 0.4 + 30
+  // None grow on the creek's banks.
+  const clear = (x: number): boolean => Math.abs(x - creek.x) > creek.halfWidth + creek.bank + 40
+  // Lower down the creek also widens toward the viewer, to a middle that moves with the camera: no flowers where
+  // that water can come with the spot in view.
+  const refWidth = world.viewHeight * TYPICAL_ASPECT_RATIO
+  const frontAt = (cameraX: number): number =>
+    cameraX + refWidth / 2 + creek.frontOffset + CREEK_FRONT_PARALLAX * (creek.x - refWidth / 2 - cameraX)
+  const clearOfFront = (x: number): boolean => {
+    const ends = [frontAt(x - WIDEST_VIEW), frontAt(x)]
+    const nearest = Math.max(Math.min(...ends), Math.min(Math.max(...ends), x))
+    return clear(x) && Math.abs(x - nearest) > creek.frontHalfWidth + 40
+  }
   // The patches' starts are spread evenly over their turns, neighbours well apart.
   let turn = random()
   const next = (): number => {
@@ -2687,7 +2705,7 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
         1.15 + 0.35 * share,
         14 + Math.floor(random() * 18),
         next(),
-        clear,
+        clearOfFront,
         thaw,
       )
       if (patch) {
@@ -2712,21 +2730,24 @@ function drawGroundPatch(ctx: CanvasRenderingContext2D, patch: FlowerPatch, spri
 }
 
 /**
- * Draws the flower patches by the foreground's surface line.
+ * Draws the foreground's flower patches in view, the farther ones first.
  *
  * @param ctx - 2D canvas context in world space.
  * @param world - Play space.
  * @param cameraX - View left edge.
  * @param viewWidth - Viewport width.
  */
-function drawNearFlowers(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
+function drawGroundFlowers(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
   const spring = springShareAt(world.season.time)
   if (spring <= 0) {
     return
   }
-  for (const patch of worldFlowers(world).near) {
-    if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
-      drawGroundPatch(ctx, patch, spring)
+  const { near, front } = worldFlowers(world)
+  for (const patches of [near, front]) {
+    for (const patch of patches) {
+      if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
+        drawGroundPatch(ctx, patch, spring)
+      }
     }
   }
 }
@@ -2796,14 +2817,6 @@ function drawFrontProps(
   const right = cameraX + viewWidth + 300
   // Back to front: the lower a prop stands, the nearer it is.
   const items: { y: number; draw: () => void }[] = []
-  const spring = springShareAt(world.season.time)
-  if (spring > 0) {
-    for (const patch of worldFlowers(world).front) {
-      if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
-        items.push({ y: patch.bottom, draw: () => drawGroundPatch(ctx, patch, spring) })
-      }
-    }
-  }
   for (const front of world.frontRocks) {
     if (front.rock.x + front.rock.rx * 1.5 > left && front.rock.x - front.rock.rx * 1.5 < right) {
       items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y, mossFadeAt(front.rock.fadeStart, world.season.time)) })

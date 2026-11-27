@@ -96,7 +96,7 @@ export const BARE_STAGE = 8
  * from one look to the next at `boundaries` along it (bare, then the spring looks of `STAGE_LOOKS`); the last of
  * them is reached just before the year ends. Images of the new looks start to be wanted from `prepare` on.
  */
-const SPRING = { prepare: 7.3, from: 7.45, spread: 0.2, length: 0.34, boundaries: [0.04, 0.23, 0.42, 0.6, 0.77, 0.95] }
+const SPRING = { prepare: 7.3, from: 7.63, spread: 0.15, length: 0.22, boundaries: [0.04, 0.31, 0.53, 0.7, 0.84, 0.95] }
 
 /**
  * How far along its spring change an object is (below 0 before it starts, above 1 after it ends).
@@ -192,7 +192,7 @@ const FALL_SAMPLES = 19
 export const FERNS_APART_MOMENT = FALL_SAMPLES - 1
 
 /** The spring's sample moments, in segments along the timeline. */
-const SPRING_SAMPLES = [7.25, 7.45, 7.55, 7.65, 7.75, 7.86, 8]
+const SPRING_SAMPLES = [7.25, 7.45, 7.63, 7.76, 7.85, 7.92, 8]
 
 /** The start of spring (in segments): from here the images pass from the last of fall's moments on to spring's. */
 const SPRING_APPROACH = 7
