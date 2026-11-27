@@ -598,3 +598,20 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - Spring has five looks after bare (`STAGE_LOOKS` 9-13): a quarter of the small leaves at 0.25 and 0.45 of their size, then half of them (the newer quarter coming in at 0.25) at sizes 0.65/0.25, 0.82/0.6 and full; never all the leaves. `LeafAmounts.sizes` is [first quarter, the rest]. Each plant starts between 7.5 and 7.58 segments, changes at 0.04, 0.27, 0.5, 0.73, 0.95 of 0.4 segments; the sizes step through the cross-fades (no per-frame animation). Far layers sample spring at 7.25, 7.5, then every 0.1 to 8.
 - Spring cross-fades last 0.75 s (`SPRING_FADE_SECONDS`; fall's stay 3 s), near plants and far layers alike, because two leaf sizes mixed show a see-through rim.
 - With the debug tools open, reaching the end of spring shows no win screen: the game goes on with the clock resting at the end (closing the tools afterwards does not bring the screen up).
+
+## Ferns sink in winter, brown in spring
+- `fernDroopAt` goes 0 to 1 from the start of early winter to the start of spring; `fernBrownAt` over spring. All ferns share the timing.
+- A fern's bitmap now holds its fronds side by side, upright (`fernLayout`); `drawFronds` places each, turning it toward 1.45 rad (80% of the way at full droop) and pressing the height by half. No cross-fade between poses. Ferns whose base the ground hides are raised as they sink.
+- Foreground looks: summer, winter, brown (brown requested from droop 0.8). The far layers' images leave ferns out from sample moment 18 (start of winter) on; `drawLayerFerns` draws them each frame after the layer's front images (so in winter and spring they are in front of that layer's bushes).
+- Spring fiddleheads (`fiddleheadsOf`, 3-5 per fern, seeded) come up from the fern's center: nearly upright, curling mostly outward, scaled from 7% to full (the tallest = two thirds of the grown fronds' height, `FIDDLEHEAD_REACH`) over spring, some starting up to a quarter later. Three painted shapes (`fiddleheadSprite`), scaled per frame (no cross-fades), foreground and far layers.
+
+## Snow on fallen logs
+- `logSnowShapes` / `paintLogSnow`: like a boulder's snow (dusting, then a cap over about the upper 40% with a heap above the edge, melting in patches at the log's own moment), built from the log's silhouette (moss included). Foreground logs after `drawLog`; far layers' logs per frame after their back images (`drawLayerLogSnow`, a bitmap at layer resolution).
+- Later change: all the spring leaves now arrive. Six spring looks (`STAGE_LOOKS` 9-14), `sizes` = [first quarter, second quarter, last half]; the last half comes in at the fifth look (0.25) and ends at 0.45 of full size while the others end full. Boundaries 0.04, 0.23, 0.42, 0.6, 0.77, 0.95.
+
+## Spring ephemeral flowers (`src/game/flowers.ts`)
+- Patches of one kind (trout lily, trillium, bluebell, anemone); each plant fades in over 0.22 of spring, earliest in the middle of the patch, all full by the year's end. A patch is one bitmap, repainted at 48 steps over spring (staggered).
+- Foreground (`worldFlowers`): patches by the surface line (drawn before mounds, birds and acorns) and farther down (sorted with the front props, at least 100 px below the surface); snow hides plants under it; none on the creek.
+- Far layers: patches made with each strip (`strip.flowers`), smaller by layer, hazed, drawn after the layer's rocks and before its bushes (`drawLayerFlowers`).
+- Spring leaves are staggered more: each plant starts between 7.45 and 7.65 segments (length 0.34), far sample moments 7.25, 7.45, 7.55, 7.65, 7.75, 7.86, 8, and in spring each chunk of each far layer fades at its own point of the interval (`sampleAt(time, turn)`, `SPRING_TURNS`).
+- Opening the debug tools while the win screen is up removes it and the game goes on.

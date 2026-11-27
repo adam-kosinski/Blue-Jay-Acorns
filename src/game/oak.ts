@@ -422,20 +422,20 @@ function insideBlob(x: number, y: number, blob: { cx: number; cy: number; pts: [
  * @param ctx - 2D canvas context.
  * @param layer - The leaves.
  * @param share - The share of them still there, 0-1.
- * @param sizes - How big, as a share of their full size, the first quarter of the leaves to come and the rest are
- *   (the new leaves of spring grow).
+ * @param sizes - How big, as a share of their full size, the first quarter of the leaves to come, the second
+ *   quarter and the last half are (the new leaves of spring grow).
  */
 export function* drawLeafLayer(
   ctx: CanvasRenderingContext2D,
   layer: LeafLayer,
   share: number,
-  sizes: [number, number] = [1, 1],
+  sizes: [number, number, number] = [1, 1, 1],
 ): Generator<void> {
   for (const [index, leaf] of layer.entries()) {
     // Each leaf of every four has its own rank: it is there while the share left is above it.
     const rank = [0.625, 0.125, 0.875, 0.375][index % 4] ?? 0
     if (rank < share) {
-      drawLeaf(ctx, leaf.x, leaf.y, leaf.length * sizes[rank < 0.25 ? 0 : 1], leaf.angle, leaf.color, leaf.midrib)
+      drawLeaf(ctx, leaf.x, leaf.y, leaf.length * sizes[rank < 0.25 ? 0 : rank < 0.5 ? 1 : 2], leaf.angle, leaf.color, leaf.midrib)
     }
     if (index % 250 === 249) {
       yield

@@ -55,15 +55,19 @@ export type LeafAmounts = {
   leaves: number
   fall: number
   spring?: boolean
-  /** In spring, how big (as a share of full size) the first quarter of the leaves and the ones after it are. */
-  sizes?: [number, number]
+  /**
+   * In spring, how big (as a share of full size) the leaves are: the first quarter of them to come, the second
+   * quarter, and the last half.
+   */
+  sizes?: [number, number, number]
 }
 
 /**
  * The looks the leaves pass through, in order: green, half colorful, fully colorful; then the large shapes go in
  * three steps while all the small leaves stay (ending with the small leaves alone); then half of the small leaves
  * are left, then a quarter, then none (bare). In spring new small leaves come (no large shapes): a quarter of them,
- * later as many again (half in all), each coming in at a quarter of its size and growing to full size.
+ * later as many again, last the other half, each coming in at a quarter of its size and growing; by the end of
+ * spring the first half are full size and the last half still small.
  */
 export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 1, leaves: 1, fall: 0 },
@@ -75,11 +79,12 @@ export const STAGE_LOOKS: LeafAmounts[] = [
   { shapes: 0, leaves: 0.5, fall: 1 },
   { shapes: 0, leaves: 0.25, fall: 1 },
   { shapes: 0, leaves: 0, fall: 1 },
-  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.25, 0.25] },
-  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.45, 0.25] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.65, 0.25] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.82, 0.6] },
-  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [1, 1] },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.25, 0.25, 0.25] },
+  { shapes: 0, leaves: 0.25, fall: 0, spring: true, sizes: [0.45, 0.25, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.65, 0.25, 0.25] },
+  { shapes: 0, leaves: 0.5, fall: 0, spring: true, sizes: [0.82, 0.55, 0.25] },
+  { shapes: 0, leaves: 1, fall: 0, spring: true, sizes: [0.93, 0.8, 0.25] },
+  { shapes: 0, leaves: 1, fall: 0, spring: true, sizes: [1, 1, 0.45] },
 ]
 
 /** The index of the bare look in `STAGE_LOOKS` (the looks before it are fall's, those after it spring's). */
@@ -91,7 +96,7 @@ export const BARE_STAGE = 8
  * from one look to the next at `boundaries` along it (bare, then the spring looks of `STAGE_LOOKS`); the last of
  * them is reached just before the year ends. Images of the new looks start to be wanted from `prepare` on.
  */
-const SPRING = { prepare: 7.3, from: 7.5, spread: 0.08, length: 0.4, boundaries: [0.04, 0.27, 0.5, 0.73, 0.95] }
+const SPRING = { prepare: 7.3, from: 7.45, spread: 0.2, length: 0.34, boundaries: [0.04, 0.23, 0.42, 0.6, 0.77, 0.95] }
 
 /**
  * How far along its spring change an object is (below 0 before it starts, above 1 after it ends).
@@ -147,14 +152,47 @@ export function mossFadeAt(start: number, time: number): number {
   return transitionProgress(start, time) * (1 - spring)
 }
 
+/** When the ferns' fronds start to sink (the start of early winter) and when they are lowest (of spring), in segments. */
+const FERN_DROOP = { from: 4, to: 7 }
+
+/**
+ * How far the ferns' fronds have sunk toward the ground, 0 (as in summer) to 1: they go down all winter.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function fernDroopAt(time: number): number {
+  return Math.max(0, Math.min(1, (time / SEGMENT_SECONDS - FERN_DROOP.from) / (FERN_DROOP.to - FERN_DROOP.from)))
+}
+
+/**
+ * How far the ferns have turned brown, 0-1: over the whole of spring.
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function fernBrownAt(time: number): number {
+  return springShareAt(time)
+}
+
+/**
+ * How far through spring it is, 0 (not yet spring) to 1 (its end).
+ *
+ * @param time - Seconds along the timeline.
+ */
+export function springShareAt(time: number): number {
+  return Math.max(0, Math.min(1, time / SEGMENT_SECONDS - 7))
+}
+
 /** Segments between two sample moments (a sixth). */
 const SAMPLE_STEP = 1 / 6
 
 /** The fall's sample moments: one every sixth of a segment from the start of early fall to the start of winter. */
 const FALL_SAMPLES = 19
 
+/** The first of the far layers' moments whose images leave the ferns out: from there on they are drawn on their own. */
+export const FERNS_APART_MOMENT = FALL_SAMPLES - 1
+
 /** The spring's sample moments, in segments along the timeline. */
-const SPRING_SAMPLES = [7.25, 7.5, 7.6, 7.7, 7.8, 7.9, 8]
+const SPRING_SAMPLES = [7.25, 7.45, 7.55, 7.65, 7.75, 7.86, 8]
 
 /** The start of spring (in segments): from here the images pass from the last of fall's moments on to spring's. */
 const SPRING_APPROACH = 7
@@ -178,6 +216,9 @@ export const FADE_SECONDS = 3
 
 /** The same for the new leaves of spring: short, because a growing leaf shows a see-through rim while two sizes are mixed. */
 const SPRING_FADE_SECONDS = 0.75
+
+/** The share of the time between two of spring's moments that the pieces' fades are spread over. */
+const SPRING_TURNS = 0.75
 
 /**
  * Smoothstep.
@@ -217,9 +258,13 @@ export function sampleIndexAt(time: number): number {
  * come: 0 for most of the interval, then a short fade (`FADE_SECONDS`) in the middle of it, then 1. So an
  * image is shown as it is, and two images are only blended during the short fade between them.
  *
+ * In spring each piece of the far layers may take its fade at its own point of the interval (`turn`), so that
+ * the new leaves do not all arrive at once.
+ *
  * @param time - Seconds along the timeline.
+ * @param turn - A piece's own number, 0-1 (0.5, the middle, if all fade together).
  */
-export function sampleAt(time: number): { k: number; t: number } {
+export function sampleAt(time: number, turn = 0.5): { k: number; t: number } {
   const x = sampleIndexAt(time)
   if (x <= 0) {
     return { k: 0, t: 0 }
@@ -231,9 +276,10 @@ export function sampleAt(time: number): { k: number; t: number } {
   // The seconds the interval lasts (the one into spring runs from `SPRING_APPROACH`).
   const seconds = k === FALL_SAMPLES - 1 ? sampleTime(k + 1) - SPRING_APPROACH * SEGMENT_SECONDS : sampleTime(k + 1) - sampleTime(k)
   // (From the first moment with new leaves in it on, the fades are spring's short ones.)
-  const fadeSeconds = sampleTime(k) >= SPRING.from * SEGMENT_SECONDS ? SPRING_FADE_SECONDS : FADE_SECONDS
-  const half = fadeSeconds / seconds / 2
-  return { k, t: smooth((x - k - (0.5 - half)) / (2 * half)) }
+  const spring = sampleTime(k) >= SPRING.from * SEGMENT_SECONDS
+  const half = (spring ? SPRING_FADE_SECONDS : FADE_SECONDS) / seconds / 2
+  const middle = spring ? 0.5 + (turn - 0.5) * SPRING_TURNS : 0.5
+  return { k, t: smooth((x - k - (middle - half)) / (2 * half)) }
 }
 
 /** Seconds between two sample moments. */

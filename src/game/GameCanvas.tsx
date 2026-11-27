@@ -196,6 +196,10 @@ export function GameCanvas() {
         animationId = window.requestAnimationFrame(frame)
         return
       }
+      // Opening the debug tools takes the victory screen away, and the game goes on.
+      if (debugOpenRef.current) {
+        won = false
+      }
       if (!gameOver && !won) {
         player.invisible = invisibleRef.current
         updatePlayer(player, keys, dt, world)

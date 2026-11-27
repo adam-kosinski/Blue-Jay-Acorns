@@ -17,12 +17,17 @@ import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWor
 import { burialQuality } from './burial'
 import { drawLeafFall, updateLeafFall } from './leaffall'
 import { drawSnowfall } from './snowfall'
+import { drawFlowerPatch, FLOWER_KINDS, makeFlowerPatch, PLAIN_TINT, type FlowerPatch, type FlowerTint } from './flowers'
 import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
   BUILD_HOLD_END,
   SAMPLE_COUNT,
   SEGMENT_SECONDS,
   buildHoldAt,
+  fernBrownAt,
+  fernDroopAt,
+  springShareAt,
+  FERNS_APART_MOMENT,
   leafStageMixAt,
   mossFadeAt,
   BARE_STAGE,
@@ -233,6 +238,8 @@ export function renderScene(
   // (The litter is not drawn at all once the snow has faded it away: see `drawLeafLitter`.)
   drawLeafLitter(ctx, world, camera, viewWidth, viewHeight)
   drawSnow(ctx, world, camera.x, viewWidth)
+  // Flowers by the surface are behind the birds, acorns and mounds, so they never hide them.
+  drawNearFlowers(ctx, world, camera.x, viewWidth)
   if (showBurialHeatmap) {
     drawBurialHeatmap(ctx, world, player, camera.x, viewWidth)
   }
@@ -527,6 +534,7 @@ function drawForest(
     // ever covers the ground and what lies behind it, never a bush or rock standing in front.
     if (!hidden) {
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'back')
+      drawLayerLogSnow(ctx, layer, strip, base, camera.x, viewWidth, limit)
     }
     // Once the snow is complete (and the haze, and nothing is melting) the ground is one flat color: its shape in
     // that color is drawn alone.
@@ -759,7 +767,9 @@ function drawForest(
         drawFuzzyRock(ctx, rock, groundY, vegRes(layer), layer, winter)
         ctx.restore()
       }
+      drawLayerFlowers(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
       drawVegetation(ctx, layer, strip, world, base, camera.x, viewWidth, limit, 'front')
+      drawLayerFerns(ctx, layer, strip, world.season.time, base, camera.x, viewWidth, limit)
     }
   }
   ctx.imageSmoothingQuality = 'low'
@@ -888,6 +898,8 @@ type ForestStrip = {
   veg: VegPlan
   /** How far the layer's ground rises above its base line at the highest (the melting snow's patches reach that high). */
   rise: number
+  /** The patches of spring flowers on the layer's ground (in the bitmap's coordinates). */
+  flowers: FlowerPatch[]
   /** The ground's shape in its final color once the snow is complete (drawn alone then, instead of the bitmap and two masks). */
   frozenCanvas?: HTMLCanvasElement
   /** That color. */
@@ -1181,7 +1193,8 @@ function* buildVegImage(
         // the rocks next to them, and the images stop at the start of winter, before the snow. They are drawn
         // every frame, see `drawForest`.)
       } else if (prop.kind === 'fern') {
-        const fern = layer.ferns[prop.index]
+        // (From winter on the ferns are not in the images, see `drawLayerFerns`.)
+        const fern = k < FERNS_APART_MOMENT ? layer.ferns[prop.index] : undefined
         if (fern && near(fern.x, fern.size * 1.4)) {
           const fade = transitionProgress(fern.fadeStart, time)
           const summerLeaf = layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor
@@ -1644,7 +1657,7 @@ function drawVegetation(
   limit: number,
   part: 'back' | 'front',
 ): void {
-  const { k, t } = sampleAt(world.season.time)
+  const { k } = sampleAt(world.season.time)
   const map = vegMap(layer)
   const res = vegRes(layer)
   const x0 = cameraX * layer.parallax
@@ -1655,17 +1668,28 @@ function drawVegetation(
     pieces = new Map()
     fadePieces.set(layer, pieces)
   }
-  if (!(t > 0 && t < 1) && pieces.size > 0) {
-    // No fade going on: the working canvases are let go (they hold a lot of memory).
-    for (const piece of pieces.values()) {
+  // Working canvases of chunks that have gone out of view are let go.
+  for (const [key, piece] of pieces) {
+    const chunk = Number(key.split('|')[1])
+    if (chunk < firstChunk || chunk > lastChunk) {
       piece.canvas.width = 0
       piece.canvas.height = 0
+      pieces.delete(key)
     }
-    pieces.clear()
   }
   for (let chunk = firstChunk; chunk <= lastChunk; chunk += 1) {
     if (!chunkHasContent(layer, strip.veg, part, chunk)) {
       continue
+    }
+    // (In spring each chunk of each layer fades at its own moment.)
+    const own = Math.abs(Math.sin(chunk * 91.7 + layer.parallax * 437.3 + (part === 'back' ? 0 : 1.9)) * 43758.5453) % 1
+    const { t } = sampleAt(world.season.time, own)
+    const idle = !(t > 0 && t < 1) ? pieces.get(`${part}|${chunk}`) : undefined
+    if (idle) {
+      // No fade going on: the working canvas is let go (it holds a lot of memory).
+      idle.canvas.width = 0
+      idle.canvas.height = 0
+      pieces.delete(`${part}|${chunk}`)
     }
     const first = map.get(vegKey(k, part, chunk))
     const second = map.get(vegKey(k + 1, part, chunk))
@@ -1808,6 +1832,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   const bottomPad = 6 + Math.ceil(bedBottom) + litterDepth
   canvas.height = Math.ceil((originY + bottomPad) * resolution)
   const ctx = canvas.getContext('2d')
+  const flowers: FlowerPatch[] = []
   if (ctx) {
     ctx.scale(resolution, resolution)
     // Trees, logs, rocks, ferns and bushes are not painted here: where each stands is recorded, and they are
@@ -1926,6 +1951,30 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
       veg.props.push({ kind: 'bush', index, y: originY + offset(bush.x) + dropOf(bush.x + 2) * 0.6 })
     }
     veg.props.sort((p, q) => p.y - q.y)
+    // Patches of spring flowers on the ground, smaller the farther the layer (drawn on their own, see
+    // `drawLayerFlowers`).
+    const bloom = seededRandom(Math.floor(layer.parallax * 77777) + 5)
+    const size = Math.max(0.24, layer.scale)
+    const room = Math.max(0.5, size)
+    for (let x = bloom() * 200; x < layer.span; x += (150 + bloom() * 300) * room) {
+      const width = (150 + bloom() * 260) * room
+      if (Math.abs(x - creek.x) < creek.halfWidth + width / 2) {
+        continue
+      }
+      const depth = bloom() * litterDepth * 0.45
+      flowers.push(
+        makeFlowerPatch(
+          bloom,
+          Math.floor(bloom() * FLOWER_KINDS),
+          x,
+          (px) => originY + offset(px) + Math.max(14 * size, Math.min(depth, depthAt(px))) + 2,
+          width,
+          14 * size,
+          size,
+          18 + Math.floor(bloom() * 26),
+        ),
+      )
+    }
   }
   if (layer.localRadius !== null) {
     // Fade the layer out into the haze away from the creek.
@@ -1971,7 +2020,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   }
   veg.frontTop = Math.max(0, Math.floor(highest))
   veg.frontBottom = originY + bottomPad
-  const strip = { canvas, resolution, originY, waterLine, columnGround, veg, rise: Math.max(0, -highestGround) + 20 }
+  const strip = { canvas, resolution, originY, waterLine, columnGround, veg, rise: Math.max(0, -highestGround) + 20, flowers }
   forestStrips.set(layer, strip)
   if (workerUsable()) {
     const id = registerLayer(layer, veg)
@@ -2451,7 +2500,7 @@ function drawBuriedProps(
   // bases, so a bird on the surface never looks like it is standing on top of a bush.
   for (const fern of world.ferns) {
     if (fern.x > left && fern.x < right && !fernOverhangsWater(world, fern)) {
-      drawFern(ctx, fern, groundYAt(world.terrain, fern.x) + 6, fadeOf(fern.fadeStart, world))
+      drawFern(ctx, fern, groundYAt(world.terrain, fern.x) + 6, fadeOf(fern.fadeStart, world), world.season.time, true)
     }
   }
   for (const bush of world.bushes) {
@@ -2608,6 +2657,140 @@ function drawShoreRocks(ctx: CanvasRenderingContext2D, world: World, camera: Cam
   ctx.restore()
 }
 
+/** The foreground's patches of spring flowers: by the surface line, and farther down in front of it. */
+const flowersOf = new WeakMap<World, { near: FlowerPatch[]; front: FlowerPatch[] }>()
+
+/**
+ * A world's foreground flower patches (made when first wanted), clear of the creek.
+ *
+ * @param world - Play space.
+ */
+function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[] } {
+  let made = flowersOf.get(world)
+  if (made) {
+    return made
+  }
+  const random = seededRandom(Math.floor(Math.random() * 1e9))
+  const { terrain } = world
+  const { creek } = terrain
+  const clear = (x: number, width: number): boolean => Math.abs(x - creek.x) > creek.halfWidth + creek.bank * 0.4 + width / 2
+  const near: FlowerPatch[] = []
+  for (let x = random() * 200; x < world.width; x += 250 + random() * 300) {
+    const width = 140 + random() * 220
+    if (clear(x, width)) {
+      const depth = 6 + random() * 22
+      const kind = Math.floor(random() * FLOWER_KINDS)
+      near.push(makeFlowerPatch(random, kind, x, (px) => groundYAt(terrain, px) + depth + 6, width, 10, 1, 12 + Math.floor(random() * 16)))
+    }
+  }
+  const front: FlowerPatch[] = []
+  for (let x = random() * 300; x < world.width; x += 300 + random() * 360) {
+    const width = 180 + random() * 260
+    // (Far enough down that the plants stay below the surface line, where the birds are.)
+    const room = world.height - groundYAt(terrain, x) - 100
+    if (clear(x, width) && room > 10) {
+      const share = random()
+      const depth = 100 + share * room
+      const kind = Math.floor(random() * FLOWER_KINDS)
+      front.push(
+        makeFlowerPatch(
+          random,
+          kind,
+          x,
+          (px) => Math.min(world.height - 4, groundYAt(terrain, px) + depth),
+          width,
+          24,
+          1.15 + 0.35 * share,
+          14 + Math.floor(random() * 18),
+        ),
+      )
+    }
+  }
+  made = { near, front }
+  flowersOf.set(world, made)
+  return made
+}
+
+/**
+ * Draws one of the foreground's flower patches (snow still lying hides its plants).
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param patch - The patch.
+ * @param spring - How far through spring it is, 0-1.
+ */
+function drawGroundPatch(ctx: CanvasRenderingContext2D, world: World, patch: FlowerPatch, spring: number): void {
+  drawFlowerPatch(ctx, patch, spring, ctx.getTransform().a, PLAIN_TINT, 0, 0, (x, y) =>
+    snowAt(x, y - groundYAt(world.terrain, x), world.season.time),
+  )
+}
+
+/**
+ * Draws the flower patches by the foreground's surface line.
+ *
+ * @param ctx - 2D canvas context in world space.
+ * @param world - Play space.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ */
+function drawNearFlowers(ctx: CanvasRenderingContext2D, world: World, cameraX: number, viewWidth: number): void {
+  const spring = springShareAt(world.season.time)
+  if (spring <= 0) {
+    return
+  }
+  for (const patch of worldFlowers(world).near) {
+    if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
+      drawGroundPatch(ctx, world, patch, spring)
+    }
+  }
+}
+
+/**
+ * Draws a layer's flower patches, in its haze and at its resolution.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param layer - Forest layer.
+ * @param strip - Its strip.
+ * @param time - Seconds along the timeline.
+ * @param base - Screen y of the layer's base line.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ * @param limit - Screen y below which nothing of this layer can show.
+ */
+function drawLayerFlowers(
+  ctx: CanvasRenderingContext2D,
+  layer: ForestLayer,
+  strip: ForestStrip,
+  time: number,
+  base: number,
+  cameraX: number,
+  viewWidth: number,
+  limit: number,
+): void {
+  const spring = springShareAt(time)
+  if (spring <= 0) {
+    return
+  }
+  const shift = cameraX * layer.parallax
+  const top = base - strip.originY
+  const tint: FlowerTint = {
+    key: `layer${layer.fog}`,
+    // (A little less haze than the rest of the layer, so the flowers still tell.)
+    color: (hex) => winterHazed(mixHex(hex, FOREST_HAZE_COLOR, layer.fog * 0.8), layer, 0.8),
+  }
+  for (const patch of strip.flowers) {
+    if (patch.right - shift < 0 || patch.left - shift > viewWidth || patch.top + top > limit) {
+      continue
+    }
+    const alpha = windowFade(layer, patch.x)
+    if (alpha > 0) {
+      ctx.globalAlpha = alpha
+      drawFlowerPatch(ctx, patch, spring, vegRes(layer), tint, -shift, top)
+      ctx.globalAlpha = 1
+    }
+  }
+}
+
 /**
  * Draws the rocks and bushes standing in front of the foreground's surface line, on top of the
  * foreground layer (and its birds), like the rocks that sit between the background layers.
@@ -2627,6 +2810,14 @@ function drawFrontProps(
   const right = cameraX + viewWidth + 300
   // Back to front: the lower a prop stands, the nearer it is.
   const items: { y: number; draw: () => void }[] = []
+  const spring = springShareAt(world.season.time)
+  if (spring > 0) {
+    for (const patch of worldFlowers(world).front) {
+      if (patch.right > cameraX && patch.left < cameraX + viewWidth) {
+        items.push({ y: patch.bottom, draw: () => drawGroundPatch(ctx, world, patch, spring) })
+      }
+    }
+  }
   for (const front of world.frontRocks) {
     if (front.rock.x + front.rock.rx * 1.5 > left && front.rock.x - front.rock.rx * 1.5 < right) {
       items.push({ y: front.y, draw: () => drawRock(ctx, front.rock, front.y, mossFadeAt(front.rock.fadeStart, world.season.time)) })
@@ -2639,7 +2830,7 @@ function drawFrontProps(
   }
   for (const front of world.frontFerns) {
     if (front.fern.x > left && front.fern.x < right) {
-      items.push({ y: front.y, draw: () => drawFern(ctx, front.fern, front.y, fadeOf(front.fern.fadeStart, world)) })
+      items.push({ y: front.y, draw: () => drawFern(ctx, front.fern, front.y, fadeOf(front.fern.fadeStart, world), world.season.time) })
     }
   }
   // Bushes and ferns reaching over the creek are drawn in front of the water (not cut off by it) but
@@ -2654,7 +2845,7 @@ function drawFrontProps(
   for (const fern of world.ferns) {
     if (fernOverhangsWater(world, fern) && fern.x > left && fern.x < right) {
       const y = groundYAt(world.terrain, fern.x) + fern.size * 1.05 + 6
-      items.push({ y, draw: () => drawFern(ctx, fern, y, fadeOf(fern.fadeStart, world)) })
+      items.push({ y, draw: () => drawFern(ctx, fern, y, fadeOf(fern.fadeStart, world), world.season.time) })
     }
   }
   items.sort((p, q) => p.y - q.y)
@@ -3431,11 +3622,113 @@ function drawBush(ctx: CanvasRenderingContext2D, bush: Bush, groundY: number, mi
 /** Leaf colors for the foreground ferns: dark glossy greens. */
 const FERN_TONES = ['#2f7a3a', '#3a8c40', '#27693a']
 
+/** The browns of dead fronds in spring (by the fern's tone), and of their stalks. */
+const FERN_BROWNS = ['#8c6234', '#9a7038', '#7c562c']
+const FERN_BROWN_STEM = '#5c4022'
+
+/** The lean (radians from upright) a sinking frond tends to, and how much of the way there it goes at its lowest. */
+const FERN_FLAT_ANGLE = 1.45
+const FERN_TURN = 0.8
+
+/** How much a fern's height is also pressed down at its lowest. */
+const FERN_PRESS = 0.5
+
+/** The shape of a frond from its root: its length, the control point of its midrib and the midrib's end. */
+type FrondCurve = { length: number; cx: number; cy: number; ex: number; ey: number }
+
+/**
+ * A frond's shape.
+ *
+ * @param fern - The fern.
+ * @param frond - One of its fronds.
+ */
+function frondCurve(fern: Fern, frond: Fern['fronds'][number]): FrondCurve {
+  const length = fern.size * frond.length
+  const dirX = Math.sin(frond.angle)
+  const dirY = -Math.cos(frond.angle)
+  const side = frond.angle >= 0 ? 1 : -1
+  const droop = length * 0.17 * frond.bend
+  return {
+    length,
+    cx: dirX * length * 0.55,
+    cy: dirY * length * 0.55,
+    ex: dirX * length + side * droop * 0.5,
+    ey: dirY * length * 0.92 + droop * 0.45,
+  }
+}
+
+/**
+ * A fern's fronds in the order they are painted: the outer (lower, leaning) ones first so the central ones
+ * overlap them.
+ *
+ * @param fern - The fern.
+ */
+function frondsInOrder(fern: Fern): Fern['fronds'] {
+  return [...fern.fronds].sort((p, q) => Math.abs(q.angle) - Math.abs(p.angle))
+}
+
+/**
+ * Paints one frond with its root at the origin: a short bare stalk, then a lance-shaped blade made of many
+ * short pointed leaflets (pinnae) in alternating pairs angled toward the tip, longest near the lower third
+ * and shrinking to the tip, along a darker midrib.
+ *
+ * @param ctx - 2D canvas context.
+ * @param fern - The fern.
+ * @param curve - The frond's shape.
+ * @param leaf - Leaflet color.
+ * @param stem - Stalk and midrib color.
+ */
+function paintFrond(ctx: CanvasRenderingContext2D, fern: Fern, curve: FrondCurve, leaf: string, stem: string): void {
+  const { length, cx, cy, ex, ey } = curve
+  ctx.lineCap = 'round'
+  const at = (t: number): [number, number] => {
+    const u = 1 - t
+    return [2 * u * t * cx + t * t * ex, 2 * u * t * cy + t * t * ey]
+  }
+  const direction = (t: number): number => {
+    const u = 1 - t
+    return Math.atan2(2 * u * cy + 2 * t * (ey - cy), 2 * u * cx + 2 * t * (ex - cx))
+  }
+  // Stalk, then the midrib of the blade.
+  ctx.strokeStyle = stem
+  ctx.lineWidth = Math.max(1, fern.size * 0.028)
+  ctx.beginPath()
+  ctx.moveTo(0, 0)
+  ctx.quadraticCurveTo(cx, cy, ex, ey)
+  ctx.stroke()
+  // Leaflets: pointed, narrow, angled about 60 degrees toward the tip, alternating sides.
+  const pairs = 15
+  ctx.fillStyle = leaf
+  ctx.beginPath()
+  for (let i = 0; i < pairs; i += 1) {
+    const t = 0.16 + (0.82 * i) / (pairs - 1)
+    const along = (t - 0.16) / 0.82
+    // Longest near the lower third, tapering to a short tip.
+    const profile = along < 0.25 ? 0.65 + 1.4 * along : 1 - 0.78 * ((along - 0.25) / 0.75) ** 1.1
+    const leaflet = length * 0.25 * profile
+    const heading = direction(t)
+    for (const sgn of [-1, 1]) {
+      // Alternate: the two sides sit at slightly different spots along the midrib.
+      const [qx, qy] = at(Math.min(0.99, t + (sgn > 0 ? 0.012 : 0)))
+      const angle = heading + sgn * 1.0
+      const mx = qx + Math.cos(angle) * leaflet * 0.5
+      const my = qy + Math.sin(angle) * leaflet * 0.5
+      ctx.moveTo(mx + Math.cos(angle) * leaflet * 0.5, my + Math.sin(angle) * leaflet * 0.5)
+      ctx.ellipse(mx, my, leaflet * 0.5, leaflet * 0.13, angle, 0, Math.PI * 2)
+    }
+  }
+  ctx.fill()
+  // Pointed tip of the blade.
+  const [tx, ty] = at(1)
+  const tip = direction(1)
+  ctx.beginPath()
+  ctx.ellipse(tx - Math.cos(tip) * length * 0.04, ty - Math.sin(tip) * length * 0.04, length * 0.06, length * 0.025, tip, 0, Math.PI * 2)
+  ctx.fill()
+}
+
 /**
  * Paints a fern with its base at the origin, after the Christmas fern: a crown of long, narrow
- * fronds that arch outward, each a short bare stalk, then a lance-shaped blade made of many short
- * pointed leaflets (pinnae) in alternating pairs angled toward the tip, longest near the lower
- * third and shrinking to the tip, along a darker midrib.
+ * fronds that arch outward (see `paintFrond`).
  *
  * @param ctx - 2D canvas context.
  * @param fern - Fern to paint.
@@ -3443,149 +3736,602 @@ const FERN_TONES = ['#2f7a3a', '#3a8c40', '#27693a']
  * @param stem - Stalk and midrib color.
  */
 function paintFern(ctx: CanvasRenderingContext2D, fern: Fern, leaf: string, stem: string): void {
-  ctx.lineCap = 'round'
-  // Draw the outer (lower, leaning) fronds first so the central ones overlap them.
-  const fronds = [...fern.fronds].sort((p, q) => Math.abs(q.angle) - Math.abs(p.angle))
-  for (const frond of fronds) {
+  for (const frond of frondsInOrder(fern)) {
     // Every frond is painted from its own point on the ground (the crown is hidden below it).
     ctx.save()
     ctx.translate(frond.base * fern.size, fern.size * 0.1)
-    const length = fern.size * frond.length
-    const dirX = Math.sin(frond.angle)
-    const dirY = -Math.cos(frond.angle)
-    const side = frond.angle >= 0 ? 1 : -1
-    const cx = dirX * length * 0.55
-    const cy = dirY * length * 0.55
-    const droop = length * 0.17 * frond.bend
-    const ex = dirX * length + side * droop * 0.5
-    const ey = dirY * length * 0.92 + droop * 0.45
-    const at = (t: number): [number, number] => {
-      const u = 1 - t
-      return [2 * u * t * cx + t * t * ex, 2 * u * t * cy + t * t * ey]
-    }
-    const direction = (t: number): number => {
-      const u = 1 - t
-      return Math.atan2(2 * u * cy + 2 * t * (ey - cy), 2 * u * cx + 2 * t * (ex - cx))
-    }
-    // Stalk, then the midrib of the blade.
-    ctx.strokeStyle = stem
-    ctx.lineWidth = Math.max(1, fern.size * 0.028)
-    ctx.beginPath()
-    ctx.moveTo(0, 0)
-    ctx.quadraticCurveTo(cx, cy, ex, ey)
-    ctx.stroke()
-    // Leaflets: pointed, narrow, angled about 60 degrees toward the tip, alternating sides.
-    const pairs = 15
-    ctx.fillStyle = leaf
-    ctx.beginPath()
-    for (let i = 0; i < pairs; i += 1) {
-      const t = 0.16 + (0.82 * i) / (pairs - 1)
-      const along = (t - 0.16) / 0.82
-      // Longest near the lower third, tapering to a short tip.
-      const profile = along < 0.25 ? 0.65 + 1.4 * along : 1 - 0.78 * ((along - 0.25) / 0.75) ** 1.1
-      const leaflet = length * 0.25 * profile
-      const [px, py] = at(t)
-      const heading = direction(t)
-      for (const sgn of [-1, 1]) {
-        // Alternate: the two sides sit at slightly different spots along the midrib.
-        const [qx, qy] = at(Math.min(0.99, t + (sgn > 0 ? 0.012 : 0)))
-        const angle = heading + sgn * 1.0
-        const mx = qx + Math.cos(angle) * leaflet * 0.5
-        const my = qy + Math.sin(angle) * leaflet * 0.5
-        ctx.moveTo(mx + Math.cos(angle) * leaflet * 0.5, my + Math.sin(angle) * leaflet * 0.5)
-        ctx.ellipse(mx, my, leaflet * 0.5, leaflet * 0.13, angle, 0, Math.PI * 2)
-      }
-      void px
-      void py
-    }
-    ctx.fill()
-    // Pointed tip of the blade.
-    const [tx, ty] = at(1)
-    const tip = direction(1)
-    ctx.beginPath()
-    ctx.ellipse(tx - Math.cos(tip) * length * 0.04, ty - Math.sin(tip) * length * 0.04, length * 0.06, length * 0.025, tip, 0, Math.PI * 2)
-    ctx.fill()
+    paintFrond(ctx, fern, frondCurve(fern, frond), leaf, stem)
     ctx.restore()
   }
 }
 
-/** A foreground fern drawn once into a bitmap. */
+/**
+ * Where one frond is, on a fern's bitmap and on the fern. On the bitmap it stands upright (so it takes
+ * little room): `left`, `top`, `width` and `height` are the box around it as it stands, measured from its
+ * root, and `x` is where that box begins on the bitmap. On the fern its root is at `rootX`, `rootY` from the
+ * base, it leans by `tilt`, and sinking turns it by up to `turn` more.
+ */
+type FrondCell = {
+  curve: FrondCurve
+  rootX: number
+  rootY: number
+  tilt: number
+  turn: number
+  x: number
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/** A fern's fronds in painting order, and the size (in world pixels) of the bitmap holding them side by side. */
+type FernLayout = { cells: FrondCell[]; width: number; height: number }
+
+const fernLayouts = new WeakMap<Fern, FernLayout>()
+
+/**
+ * A fern's layout (see `FrondCell`).
+ *
+ * @param fern - The fern.
+ */
+function fernLayout(fern: Fern): FernLayout {
+  let layout = fernLayouts.get(fern)
+  if (layout) {
+    return layout
+  }
+  let x = 0
+  let height = 1
+  const cells = frondsInOrder(fern).map((frond): FrondCell => {
+    const curve = frondCurve(fern, frond)
+    // The lean of the line from the root to the tip.
+    const tilt = Math.atan2(curve.ex, -curve.ey)
+    const cos = Math.cos(tilt)
+    const sin = Math.sin(tilt)
+    const points = [[0, 0], [curve.cx, curve.cy], [curve.ex, curve.ey]] as const
+    const xs = points.map(([px, py]) => px * cos + py * sin)
+    const ys = points.map(([px, py]) => py * cos - px * sin)
+    // Room for the leaflets and the stalk's width.
+    const pad = curve.length * 0.27 + fern.size * 0.03 + 2
+    const left = Math.min(...xs) - pad
+    const top = Math.min(...ys) - pad
+    const cell: FrondCell = {
+      curve,
+      rootX: frond.base * fern.size,
+      rootY: fern.size * 0.1,
+      tilt,
+      turn: ((frond.angle >= 0 ? FERN_FLAT_ANGLE : -FERN_FLAT_ANGLE) - frond.angle) * FERN_TURN,
+      x,
+      left,
+      top,
+      width: Math.max(...xs) + pad - left,
+      height: Math.max(...ys) + pad - top,
+    }
+    // (A little space between the boxes, so that none picks up its neighbour's edge.)
+    x += cell.width + 3
+    height = Math.max(height, cell.height)
+    return cell
+  })
+  layout = { cells, width: Math.max(1, x), height }
+  fernLayouts.set(fern, layout)
+  return layout
+}
+
+/**
+ * Bitmap pixels per world pixel of a fern's bitmap (less than asked for if it would get too big).
+ *
+ * @param layout - The fern's layout.
+ * @param res - The resolution asked for.
+ */
+function fernScale(layout: FernLayout, res: number): number {
+  return Math.min(res, Math.sqrt(2_000_000 / (layout.width * layout.height)), 4096 / layout.width)
+}
+
+/** A fern's fronds drawn once, side by side, into a bitmap. */
 type FernSprite = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; res: number; offsetX: number; offsetY: number; width: number; height: number }
 
 const fernSprites = new WeakMap<Fern, Map<string, FernSprite>>()
 
+/** The colors a foreground fern's bitmap can be in. */
+type FernLook = 'summer' | 'winter' | 'brown'
+
 /**
- * Renders a foreground fern in its summer or winter colors into a bitmap.
+ * Renders a fern's fronds in some colors into a bitmap (see `fernLayout`).
  *
  * @param fern - Fern to render.
  * @param res - Bitmap pixels per world pixel.
- * @param winter - Winter colors instead of summer ones.
+ * @param leaf - Leaflet color.
+ * @param stem - Stalk and midrib color.
  */
-function buildFernSprite(fern: Fern, res: number, winter: boolean): FernSprite {
-  const reachX = fern.size * 1.25
-  const width = reachX * 2 + 8
-  const below = fern.size * 0.55
-  const height = fern.size * 1.2 + below + 10
-  const scale = Math.min(res, Math.sqrt(2_000_000 / (width * height)))
+function paintFernSprite(fern: Fern, res: number, leaf: string, stem: string): FernSprite {
+  const layout = fernLayout(fern)
+  const scale = fernScale(layout, res)
   const canvas = newCanvas()
-  canvas.width = Math.max(1, Math.ceil(width * scale))
-  canvas.height = Math.max(1, Math.ceil(height * scale))
+  canvas.width = Math.max(1, Math.ceil(layout.width * scale))
+  canvas.height = Math.max(1, Math.ceil(layout.height * scale))
   const sctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (sctx) {
     sctx.scale(scale, scale)
-    sctx.translate(width / 2, height - below - 4)
-    const amount = winter ? 1 : 0
-    paintFern(sctx, fern, winterGreen(FERN_TONES[fern.tone] ?? '#3f8f3b', amount), winterGreen('#2a5a2a', amount))
+    for (const cell of layout.cells) {
+      sctx.save()
+      sctx.translate(cell.x - cell.left, -cell.top)
+      sctx.rotate(-cell.tilt)
+      paintFrond(sctx, fern, cell.curve, leaf, stem)
+      sctx.restore()
+    }
   }
-  return { canvas, res, offsetX: -width / 2, offsetY: -(height - below - 4), width, height }
+  return { canvas, res, offsetX: 0, offsetY: 0, width: layout.width, height: layout.height }
 }
 
 /**
- * Builds a fern's winter bitmap (queued work) and stores it.
+ * Renders a foreground fern in its summer, winter or dead brown colors into a bitmap.
+ *
+ * @param fern - Fern to render.
+ * @param res - Bitmap pixels per world pixel.
+ * @param look - Which colors.
+ */
+function buildFernSprite(fern: Fern, res: number, look: FernLook): FernSprite {
+  if (look === 'brown') {
+    return paintFernSprite(fern, res, FERN_BROWNS[fern.tone] ?? '#8c6234', FERN_BROWN_STEM)
+  }
+  const amount = look === 'winter' ? 1 : 0
+  return paintFernSprite(fern, res, winterGreen(FERN_TONES[fern.tone] ?? '#3f8f3b', amount), winterGreen('#2a5a2a', amount))
+}
+
+/**
+ * Builds one of a fern's later bitmaps (queued work) and stores it.
  *
  * @param fern - Fern.
  * @param res - Bitmap pixels per world pixel.
+ * @param look - Which colors.
  */
-function* fernWinterJob(fern: Fern, res: number): Generator<void> {
+function* fernLookJob(fern: Fern, res: number, look: FernLook): Generator<void> {
   yield
   let map = fernSprites.get(fern)
   if (!map) {
     map = new Map()
     fernSprites.set(fern, map)
   }
-  map.set(`1|${res.toFixed(2)}`, buildFernSprite(fern, res, true))
+  map.set(`${look}|${res.toFixed(2)}`, buildFernSprite(fern, res, look))
 }
 
 /**
- * Draws a foreground fern from its summer bitmap, with its winter one fading in over it as its change goes on.
+ * Draws a fern's fronds from its bitmaps, each turned and pressed down as far as the fern has sunk.
+ *
+ * @param ctx - 2D canvas context.
+ * @param fern - Fern to draw.
+ * @param x - X of its base.
+ * @param y - Y of its base.
+ * @param droop - How far its fronds have sunk, 0-1.
+ * @param looks - The bitmaps to draw each frond from, one over the other, and how opaque each is.
+ */
+function drawFronds(
+  ctx: CanvasRenderingContext2D,
+  fern: Fern,
+  x: number,
+  y: number,
+  droop: number,
+  looks: { sprite: FernSprite; alpha: number }[],
+): void {
+  const layout = fernLayout(fern)
+  const before = ctx.globalAlpha
+  for (const cell of layout.cells) {
+    ctx.save()
+    ctx.translate(x + cell.rootX, y + cell.rootY)
+    if (droop > 0) {
+      ctx.scale(1, 1 - FERN_PRESS * droop)
+    }
+    ctx.rotate(cell.tilt + cell.turn * droop)
+    for (const { sprite, alpha } of looks) {
+      const scale = fernScale(layout, sprite.res)
+      ctx.globalAlpha = before * alpha
+      ctx.drawImage(sprite.canvas, cell.x * scale, 0, cell.width * scale, cell.height * scale, cell.left, cell.top, cell.width, cell.height)
+    }
+    ctx.restore()
+  }
+  ctx.globalAlpha = before
+}
+
+/** The colors of the spring fiddleheads: pale hairy young green. */
+const FIDDLEHEAD_COLORS = {
+  stalk: '#86a843',
+  coil: '#9cc254',
+  shade: '#58772a',
+  hair: '#e6e8d2',
+  scale: '#b48c56',
+}
+
+type FiddleheadColors = typeof FIDDLEHEAD_COLORS
+
+/** The height (world pixels) fiddleheads are painted at; each is drawn scaled from that. */
+const FIDDLEHEAD_HEIGHT = 130
+
+/** How tall the tallest full-grown fiddlehead of a fern is, as a share of the height the grown fronds reach. */
+const FIDDLEHEAD_REACH = 2 / 3
+
+/** How many differently shaped fiddleheads are painted. */
+const FIDDLEHEAD_SHAPES = 3
+
+/**
+ * One fiddlehead of a fern: where it comes up (px beside the base), its lean from upright, which way its head
+ * curls, its full height, how far into spring it comes up (0-1) and which shape it has.
+ */
+type Fiddlehead = { dx: number; lean: number; curl: 1 | -1; height: number; delay: number; shape: number }
+
+const fernFiddleheads = new WeakMap<Fern, Fiddlehead[]>()
+
+/**
+ * A fern's fiddleheads (the same every time): a few of them around its center, nearly upright, the tallest
+ * `FIDDLEHEAD_REACH` as tall as the grown fern stands.
+ *
+ * @param fern - The fern.
+ */
+function fiddleheadsOf(fern: Fern): Fiddlehead[] {
+  let heads = fernFiddleheads.get(fern)
+  if (heads) {
+    return heads
+  }
+  const random = seededRandom(Math.round(fern.x * 97 + fern.size * 13))
+  // How high the grown fronds reach above their roots.
+  const grown = Math.max(...fern.fronds.map((frond) => -frondCurve(fern, frond).ey)) * FIDDLEHEAD_REACH
+  const count = 3 + Math.floor(random() * 3)
+  const tallest = Math.floor(random() * count)
+  heads = Array.from({ length: count }, (_, i): Fiddlehead => {
+    const across = i / (count - 1) - 0.5
+    const lean = across * 0.5 + (random() - 0.5) * 0.14
+    return {
+      dx: (across * 0.22 + (random() - 0.5) * 0.06) * fern.size,
+      lean,
+      // The heads mostly curl outward.
+      curl: (lean >= 0) === random() < 0.8 ? 1 : -1,
+      height: grown * (i === tallest ? 1 : 0.76 + random() * 0.22),
+      delay: i === tallest ? 0 : random() * 0.25,
+      shape: Math.floor(random() * FIDDLEHEAD_SHAPES),
+    }
+  })
+  fernFiddleheads.set(fern, heads)
+  return heads
+}
+
+/** A painted fiddlehead: the bitmap and the box (world px at `FIDDLEHEAD_HEIGHT`, from the foot) it fills. */
+type FiddleheadSprite = { canvas: HTMLCanvasElement | OffscreenCanvas; left: number; top: number; width: number; height: number }
+
+const fiddleheadSprites = new Map<string, FiddleheadSprite>()
+
+/**
+ * A fiddlehead's bitmap: a hairy stalk rising to a tightly coiled head that curls to the right, after the
+ * Christmas fern's.
+ *
+ * @param shape - Which shape.
+ * @param res - Bitmap pixels per world pixel.
+ * @param colors - Its colors.
+ */
+function fiddleheadSprite(shape: number, res: number, colors: FiddleheadColors): FiddleheadSprite {
+  const key = `${shape}|${res.toFixed(2)}|${colors.coil}`
+  const made = fiddleheadSprites.get(key)
+  if (made) {
+    return made
+  }
+  const tall = FIDDLEHEAD_HEIGHT
+  const random = seededRandom(41 + shape * 17)
+  // The coil's outer radius, how many times it winds, and how far the stalk bows.
+  const radius = tall * (0.15 + shape * 0.012)
+  const turns = 1.75 + shape * 0.15
+  const bow = tall * (0.04 + random() * 0.07)
+  const centerX = radius * 0.8
+  const centerY = -tall + radius * 1.3
+  const left = -tall * 0.2
+  const top = -tall * 1.08
+  const width = centerX + radius * 1.5 - left
+  const height = -top + tall * 0.05
+  const canvas = newCanvas()
+  canvas.width = Math.max(1, Math.ceil(width * res))
+  canvas.height = Math.max(1, Math.ceil(height * res))
+  const sprite: FiddleheadSprite = { canvas, left, top, width, height }
+  fiddleheadSprites.set(key, sprite)
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  if (!ctx) {
+    return sprite
+  }
+  ctx.scale(res, res)
+  ctx.translate(-left, -top)
+  ctx.lineCap = 'round'
+  // Points along the whole midline: the stalk, then the coil, with the width there.
+  const line: { x: number; y: number; w: number }[] = []
+  const endX = centerX - radius
+  const stalkSteps = 24
+  for (let i = 0; i <= stalkSteps; i += 1) {
+    const t = i / stalkSteps
+    const u = 1 - t
+    line.push({
+      x: 3 * u * u * t * -bow + 3 * u * t * t * (endX - bow * 0.2) + t * t * t * endX,
+      y: 3 * u * u * t * -tall * 0.34 + 3 * u * t * t * (centerY + tall * 0.22) + t * t * t * centerY,
+      w: tall * (0.07 - 0.012 * t),
+    })
+  }
+  const coilStart = line.length - 1
+  const coilSteps = 46
+  for (let i = 1; i <= coilSteps; i += 1) {
+    const t = i / coilSteps
+    // From the left of the circle, over the top, winding inward.
+    const angle = Math.PI + t * turns * Math.PI * 2
+    const r = radius * (1 - 0.84 * t)
+    line.push({
+      x: centerX + Math.cos(angle) * r,
+      y: centerY + Math.sin(angle) * r,
+      w: tall * (0.075 - 0.045 * t),
+    })
+  }
+  /** A fine stroke from a point, at an angle. */
+  const bristle = (x: number, y: number, angle: number, length: number, color: string, thickness: number): void => {
+    ctx.strokeStyle = color
+    ctx.lineWidth = thickness
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(x + Math.cos(angle) * length, y + Math.sin(angle) * length)
+    ctx.stroke()
+  }
+  /** Hairs and a few brown scales sticking out from a stretch of the midline. */
+  const fuzz = (from: number, to: number, outerOnly: boolean): void => {
+    for (let i = from; i < to; i += 1) {
+      const p = line[i]
+      const q = line[i + 1]
+      if (!p || !q) {
+        continue
+      }
+      const heading = Math.atan2(q.y - p.y, q.x - p.x)
+      for (let n = 0; n < 4; n += 1) {
+        const side = outerOnly || random() < 0.5 ? -1 : 1
+        const angle = heading + side * (0.9 + random() * 0.9)
+        const x = p.x + (q.x - p.x) * random() + Math.cos(angle) * p.w * 0.4
+        const y = p.y + (q.y - p.y) * random() + Math.sin(angle) * p.w * 0.4
+        const brown = !outerOnly && n === 0 && random() < 0.5
+        bristle(x, y, angle, tall * (0.018 + random() * 0.028), brown ? colors.scale : colors.hair, brown ? 1.8 : 0.9)
+      }
+    }
+  }
+  fuzz(0, coilStart, false)
+  /** The midline from one point to another, each piece with its own width. */
+  const band = (from: number, to: number, color: string, extra: number, share: number): void => {
+    ctx.strokeStyle = color
+    for (let i = from; i < to; i += 1) {
+      const p = line[i]
+      const q = line[i + 1]
+      if (p && q) {
+        ctx.lineWidth = p.w * share + extra
+        ctx.beginPath()
+        ctx.moveTo(p.x, p.y)
+        ctx.lineTo(q.x, q.y)
+        ctx.stroke()
+      }
+    }
+  }
+  band(0, coilStart, colors.shade, 1.6, 1)
+  band(0, coilStart, colors.stalk, 0, 1)
+  // The head: filled in behind, then wound from the outside in, each stretch edged so the turns show.
+  ctx.fillStyle = colors.shade
+  ctx.beginPath()
+  ctx.arc(centerX, centerY, radius * 0.9, 0, Math.PI * 2)
+  ctx.fill()
+  fuzz(coilStart, coilStart + 28, true)
+  for (let i = coilStart; i < line.length - 1; i += 2) {
+    const end = Math.min(line.length - 1, i + 2)
+    band(i, end, colors.shade, 2.4, 1.15)
+    band(i, end, colors.coil, 0, 1.15)
+    // The rolled-up leaflets: small knobs along the outer side.
+    const p = line[i + 1]
+    if (p && i % 4 === coilStart % 4) {
+      const out = Math.atan2(p.y - centerY, p.x - centerX)
+      ctx.fillStyle = colors.stalk
+      ctx.beginPath()
+      ctx.ellipse(p.x + Math.cos(out) * p.w * 0.2, p.y + Math.sin(out) * p.w * 0.2, p.w * 0.34, p.w * 0.2, out, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+  // Some hair lies over the stalk and the head.
+  for (let i = 2; i < coilStart + 24; i += 2) {
+    const p = line[i]
+    if (p) {
+      bristle(p.x + (random() - 0.5) * p.w, p.y + (random() - 0.5) * p.w, random() * Math.PI * 2, tall * 0.02, colors.hair, 0.8)
+    }
+  }
+  return sprite
+}
+
+/**
+ * Draws a fern's fiddleheads as far as they have grown.
+ *
+ * @param ctx - 2D canvas context.
+ * @param fern - The fern.
+ * @param x - X of the fern's base.
+ * @param y - Y their feet are at.
+ * @param spring - How far into spring it is, 0-1.
+ * @param res - Bitmap pixels per world pixel for their bitmaps.
+ * @param colors - Their colors.
+ */
+function drawFiddleheads(
+  ctx: CanvasRenderingContext2D,
+  fern: Fern,
+  x: number,
+  y: number,
+  spring: number,
+  res: number,
+  colors: FiddleheadColors,
+): void {
+  for (const head of fiddleheadsOf(fern)) {
+    const grown = (spring - head.delay) / (1 - head.delay)
+    if (grown <= 0) {
+      continue
+    }
+    const size = 0.07 + 0.93 * Math.min(1, grown)
+    const sprite = fiddleheadSprite(head.shape, res, colors)
+    const scale = head.height / FIDDLEHEAD_HEIGHT
+    ctx.save()
+    ctx.translate(x + head.dx, y)
+    ctx.rotate(head.lean)
+    // (A young one is stouter for its height.)
+    ctx.scale(head.curl * scale * size ** 0.7, scale * size)
+    ctx.drawImage(sprite.canvas, sprite.left, sprite.top, sprite.width, sprite.height)
+    ctx.restore()
+  }
+}
+
+/**
+ * Draws a foreground fern from its summer bitmap, with its winter one fading in over it as its change goes
+ * on; through winter its fronds sink, and in spring its dead brown bitmap fades in while fiddleheads come up
+ * from its center.
  *
  * @param ctx - 2D canvas context in world space.
  * @param fern - Fern to draw.
  * @param groundY - Ground Y at the fern.
  * @param fade - How far into its winter color it is, 0-1.
+ * @param time - Seconds along the timeline.
+ * @param rooted - The ground in front hides its base (it is then raised as it sinks, so as not to go under).
  */
-function drawFern(ctx: CanvasRenderingContext2D, fern: Fern, groundY: number, fade: number): void {
+function drawFern(
+  ctx: CanvasRenderingContext2D,
+  fern: Fern,
+  groundY: number,
+  fade: number,
+  time: number,
+  rooted = false,
+): void {
   const res = ctx.getTransform().a
   let map = fernSprites.get(fern)
   if (!map) {
     map = new Map()
     fernSprites.set(fern, map)
   }
-  let summer = map.get(`0|${res.toFixed(2)}`)
-  if (!summer) {
-    summer = buildFernSprite(fern, res, false)
-    map.set(`0|${res.toFixed(2)}`, summer)
-  }
-  ctx.drawImage(summer.canvas, fern.x + summer.offsetX, groundY + summer.offsetY, summer.width, summer.height)
-  if (fade > 0) {
-    const winter = map.get(`1|${res.toFixed(2)}`)
-    if (winter) {
-      ctx.globalAlpha = fade
-      ctx.drawImage(winter.canvas, fern.x + winter.offsetX, groundY + winter.offsetY, winter.width, winter.height)
-      ctx.globalAlpha = 1
-    } else {
-      queueFernWinter(fern, res)
+  const droop = fernDroopAt(time)
+  const brown = fernBrownAt(time)
+  /** A later bitmap if it is made; if not, it is asked for. */
+  const later = (look: FernLook): FernSprite | undefined => {
+    const sprite = map.get(`${look}|${res.toFixed(2)}`)
+    if (!sprite) {
+      queueFernLook(fern, res, look)
     }
+    return sprite
+  }
+  const winter = fade > 0 && brown < 1 ? later('winter') : undefined
+  // (The brown bitmap is made toward the end of winter, ready for spring.)
+  const dead = droop > 0.8 ? later('brown') : undefined
+  const looks: { sprite: FernSprite; alpha: number }[] = []
+  if (!(dead && brown >= 1)) {
+    if (!(winter && fade >= 1)) {
+      let summer = map.get(`summer|${res.toFixed(2)}`)
+      if (!summer) {
+        summer = buildFernSprite(fern, res, 'summer')
+        map.set(`summer|${res.toFixed(2)}`, summer)
+      }
+      looks.push({ sprite: summer, alpha: 1 })
+    }
+    if (winter) {
+      looks.push({ sprite: winter, alpha: fade })
+    }
+  }
+  if (dead && brown > 0) {
+    looks.push({ sprite: dead, alpha: brown })
+  }
+  const lift = rooted ? droop * (fern.size * 0.17 + 6) : 0
+  drawFronds(ctx, fern, fern.x, groundY - lift, droop, looks)
+  if (brown > 0) {
+    drawFiddleheads(ctx, fern, fern.x, groundY - lift + fern.size * 0.1, brown, res, FIDDLEHEAD_COLORS)
+  }
+}
+
+/**
+ * Draws a layer's ferns on their own, once its images leave them out (see `FERNS_APART_MOMENT`): their
+ * fronds sink through winter and turn brown in spring, which the images could not show.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param layer - Forest layer.
+ * @param strip - Its strip (where things stand).
+ * @param time - Seconds along the timeline.
+ * @param base - Screen y of the layer's base line.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ * @param limit - Screen y below which nothing of this layer can show.
+ */
+function drawLayerFerns(
+  ctx: CanvasRenderingContext2D,
+  layer: ForestLayer,
+  strip: ForestStrip,
+  time: number,
+  base: number,
+  cameraX: number,
+  viewWidth: number,
+  limit: number,
+): void {
+  const { k, t } = sampleAt(time)
+  // (From the start of the fade to the first image without them.)
+  if (k < FERNS_APART_MOMENT - 1 || (k === FERNS_APART_MOMENT - 1 && t <= 0)) {
+    return
+  }
+  const res = vegRes(layer)
+  const shift = cameraX * layer.parallax
+  const droop = fernDroopAt(time)
+  const brown = fernBrownAt(time)
+  for (const prop of strip.veg.props) {
+    const fern = prop.kind === 'fern' ? layer.ferns[prop.index] : undefined
+    if (!fern) {
+      continue
+    }
+    const x = fern.x - shift
+    const y = base - strip.originY + prop.y + 2
+    const reach = fern.size * 1.3
+    if (x < -reach || x > viewWidth + reach || y - fern.size * 1.2 > limit) {
+      continue
+    }
+    const alpha = windowFade(layer, fern.x)
+    if (alpha <= 0) {
+      continue
+    }
+    let map = fernSprites.get(fern)
+    if (!map) {
+      map = new Map()
+      fernSprites.set(fern, map)
+    }
+    const sprites = map
+    /** The fern's bitmap in the layer's winter or brown colors (small, so made when first needed). */
+    const of = (look: 'winter' | 'brown'): FernSprite => {
+      let sprite = sprites.get(`far-${look}`)
+      if (!sprite) {
+        const leafTone = layer.tones[1 + (fern.tone % 2)] ?? layer.groundColor
+        const stemTone = layer.tones[0] ?? layer.trunkColor
+        const color = (green: string, dead: string): string =>
+          look === 'winter'
+            ? winterGreen(winterHazed(green, layer, 1), 1)
+            : winterHazed(mixHex(dead, FOREST_HAZE_COLOR, layer.fog), layer, 1)
+        sprite = paintFernSprite(
+          fern,
+          res,
+          color(leafTone, FERN_BROWNS[fern.tone] ?? '#8c6234'),
+          color(stemTone, FERN_BROWN_STEM),
+        )
+        sprites.set(`far-${look}`, sprite)
+      }
+      return sprite
+    }
+    const looks: { sprite: FernSprite; alpha: number }[] = []
+    if (brown < 1) {
+      looks.push({ sprite: of('winter'), alpha: 1 })
+    }
+    if (brown > 0) {
+      looks.push({ sprite: of('brown'), alpha: brown })
+    }
+    ctx.globalAlpha = alpha
+    drawFronds(ctx, fern, x, y, droop, looks)
+    if (brown > 0) {
+      // In the layer's haze, like the rest of it.
+      const hazed = (color: string): string => winterHazed(mixHex(color, FOREST_HAZE_COLOR, layer.fog), layer, 1)
+      drawFiddleheads(ctx, fern, x, y + fern.size * 0.1, brown, res, {
+        stalk: hazed(FIDDLEHEAD_COLORS.stalk),
+        coil: hazed(FIDDLEHEAD_COLORS.coil),
+        shade: hazed(FIDDLEHEAD_COLORS.shade),
+        hair: hazed(FIDDLEHEAD_COLORS.hair),
+        scale: hazed(FIDDLEHEAD_COLORS.scale),
+      })
+    }
+    ctx.globalAlpha = 1
   }
 }
 
@@ -3600,7 +4346,7 @@ function newCanvas(): HTMLCanvasElement | OffscreenCanvas {
 }
 
 /**
- * For the background worker: builds a foreground bush part, or a fern's or rock's winter bitmap, in one go
+ * For the background worker: builds a foreground bush part, or a fern's or rock's later bitmap, in one go
  * and hands it over as a bitmap.
  *
  * @param kind - What to build.
@@ -3623,7 +4369,7 @@ export function buildPropSync(
     }
     sprite = step.value
   } else if (kind === 'fern') {
-    sprite = buildFernSprite(item as Fern, res, true)
+    sprite = buildFernSprite(item as Fern, res, part === 'brown' ? 'brown' : 'winter')
   } else {
     sprite = buildRockSprite(item as Rock, res, true)
   }
@@ -3696,21 +4442,23 @@ function queueBushPart(bush: Bush, res: number, part: BushPart, priority: number
 }
 
 /**
- * Has a fern's winter bitmap built in the background (in the worker if there is one).
+ * Has one of a fern's later bitmaps built in the background (in the worker if there is one).
  *
  * @param fern - Fern.
  * @param res - Bitmap pixels per world pixel.
+ * @param look - Which colors.
  */
-function queueFernWinter(fern: Fern, res: number): void {
+function queueFernLook(fern: Fern, res: number, look: FernLook): void {
+  const key = `${look}|${res.toFixed(2)}`
   if (!workerUsable()) {
-    enqueueJob(`fern|${fern.x}|${res.toFixed(2)}`, 3, fernWinterJob(fern, res))
+    enqueueJob(`fern|${fern.x}|${key}`, 3, fernLookJob(fern, res, look))
     return
   }
   requestWork({
-    key: `fern|${fern.x}|${res.toFixed(2)}`,
+    key: `fern|${fern.x}|${key}`,
     priority: 3,
-    payload: { type: 'prop', kind: 'fern', item: fern, res, part: 'winter' },
-    wanted: () => !fernSprites.get(fern)?.has(`1|${res.toFixed(2)}`),
+    payload: { type: 'prop', kind: 'fern', item: fern, res, part: look },
+    wanted: () => !fernSprites.get(fern)?.has(key),
     onDone: (bitmap, meta) => {
       propArrivals.push({
         bitmap,
@@ -3720,7 +4468,7 @@ function queueFernWinter(fern: Fern, res: number): void {
             map = new Map()
             fernSprites.set(fern, map)
           }
-          map.set(`1|${res.toFixed(2)}`, { canvas: ready, res, offsetX: meta['offsetX'] ?? 0, offsetY: meta['offsetY'] ?? 0, width: meta['width'] ?? 0, height: meta['height'] ?? 0 })
+          map.set(key, { canvas: ready, res, offsetX: meta['offsetX'] ?? 0, offsetY: meta['offsetY'] ?? 0, width: meta['width'] ?? 0, height: meta['height'] ?? 0 })
         },
       })
     },
@@ -3789,10 +4537,10 @@ function warmFernSprite(fern: Fern, res: number): void {
     map = new Map()
     fernSprites.set(fern, map)
   }
-  const key = `0|${res.toFixed(2)}`
+  const key = `summer|${res.toFixed(2)}`
   let sprite = map.get(key)
   if (!sprite) {
-    sprite = buildFernSprite(fern, res, false)
+    sprite = buildFernSprite(fern, res, 'summer')
     map.set(key, sprite)
   }
   touchBitmap(sprite.canvas)
@@ -3846,6 +4594,291 @@ function drawLog(ctx: CanvasRenderingContext2D, log: Log, groundY: number, fade:
   ctx.rotate(log.tilt)
   drawFallenLog(ctx, log, TRUNK_COLOR, 0, fade)
   ctx.restore()
+  const shapes = logSnowShapes(log, log.tilt)
+  if (shapes) {
+    ctx.save()
+    ctx.translate(log.x, groundY - log.radius * 0.8)
+    paintLogSnow(ctx, shapes, 0)
+    ctx.restore()
+  }
+}
+
+/**
+ * The silhouette (moss included) of each fallen log as it lies, relative to its center, found once.
+ */
+const logSilhouettes = new WeakMap<Log, Silhouette>()
+
+/**
+ * A log's silhouette as it lies.
+ *
+ * @param log - The log.
+ * @param angle - Its slant as drawn (radians).
+ */
+function logSilhouette(log: Log, angle: number): Silhouette {
+  let sil = logSilhouettes.get(log)
+  if (sil) {
+    return sil
+  }
+  const halfWidth = log.length / 2 + log.radius
+  const halfHeight = log.radius * 2.6 + Math.abs(Math.sin(angle)) * halfWidth
+  const probe = newCanvas()
+  probe.width = Math.max(1, Math.ceil(halfWidth))
+  probe.height = Math.max(1, Math.ceil(halfHeight))
+  const pctx = probe.getContext('2d', { willReadFrequently: true }) as CanvasRenderingContext2D | null
+  if (pctx) {
+    // (At half size: enough for a smooth edge.)
+    pctx.scale(0.5, 0.5)
+    pctx.translate(halfWidth, halfHeight)
+    pctx.rotate(angle)
+    drawFallenLog(pctx, log, TRUNK_COLOR)
+  }
+  sil = silhouetteColumns(probe, -halfWidth, -halfHeight, halfWidth * 2, halfHeight * 2)
+  logSilhouettes.set(log, sil)
+  return sil
+}
+
+/**
+ * The shapes of the snow on a fallen log as it is now, and how strongly they show.
+ */
+type LogSnow = {
+  amount: number
+  thin: number
+  full: number
+  /** The dusting: a faint band reaching farther down, and a denser one along the top. */
+  dust: Path2D
+  dense: Path2D
+  /** The cap: its shaded underside and the white over it, and the snow heaped above the log's top edge. */
+  under: Path2D
+  cap: Path2D
+  heap: Path2D
+  /** The box around all of them, relative to the log's center. */
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+const logSnows = new WeakMap<Log, LogSnow>()
+
+/**
+ * The snow on a log now (like a boulder's: a dusting first, then a cap along its upper side, which thins away
+ * in patches at the log's own moment of the melt), or null with none. Relative to the log's center.
+ *
+ * @param log - The log.
+ * @param angle - Its slant as drawn (radians).
+ */
+function logSnowShapes(log: Log, angle: number): LogSnow | null {
+  const key = (log.length * 13.71 + log.radius * 7.37) % 1
+  const amount = snowCapSize(seasonNow, key)
+  const layers = snowCapLayers(seasonNow)
+  if (amount < 0.003 || layers.thin < 0.02) {
+    return null
+  }
+  const made = logSnows.get(log)
+  if (made && made.amount === amount && made.thin === layers.thin && made.full === layers.full) {
+    return made
+  }
+  const sil = logSilhouette(log, angle)
+  const n = sil.x.length
+  if (n < 2) {
+    return null
+  }
+  const r = log.radius
+  const phase = key * 6.28
+  const first = sil.x[0] ?? 0
+  const last = sil.x[n - 1] ?? 0
+  // The top edge, smoothed further (snow evens out the moss's tips).
+  const tops = sil.top.map((_, i) => {
+    let sum = 0
+    let count = 0
+    for (let d = -4; d <= 4; d += 1) {
+      const other = sil.top[i + d]
+      if (other !== undefined) {
+        sum += other
+        count += 1
+      }
+    }
+    return sum / Math.max(1, count)
+  })
+  const ramp = (value: number, from: number, to: number): number => {
+    const t = Math.max(0, Math.min(1, (value - from) / (to - from)))
+    return t * t * (3 - 2 * t)
+  }
+  /** How much of the snow is left at a place (see `snowGeometry`). */
+  const thick = (x: number): number => {
+    const u = x / (log.length / 2)
+    const pattern = Math.max(0, Math.min(1, 0.5 + 0.22 * Math.sin(u * 3.4 + phase) + 0.095 * Math.sin(u * 8 + phase * 2.1)))
+    return ramp((amount - 0.42 * pattern) / 0.58, 0, 1)
+  }
+  /** 0 at the log's ends, 1 away from them. */
+  const inward = (x: number): number => Math.sqrt(Math.max(0, Math.min(1, Math.min(x - first, last - x) / (r * 0.9))))
+  /** How deep the full cap reaches below the top edge: a share of the log's thickness there, with lumps. */
+  const reach = (i: number): number => {
+    const x = sil.x[i] ?? 0
+    const girth = Math.min((sil.bottom[i] ?? 0) - (sil.top[i] ?? 0), r * 2.4)
+    const lumps = r * (0.13 * Math.sin((x / r) * 2.1 + phase) + 0.07 * Math.sin((x / r) * 4.7 + phase * 2))
+    return Math.max(0, girth * 0.42 + lumps) * inward(x)
+  }
+  /** The shape between the top edge (a little above it, to cover it) and a depth below it. */
+  const band = (depth: (i: number) => number): Path2D => {
+    const path = new Path2D()
+    for (let i = 0; i < n; i += 1) {
+      const y = (tops[i] ?? 0) - 1.5
+      if (i === 0) {
+        path.moveTo(sil.x[i] ?? 0, y)
+      } else {
+        path.lineTo(sil.x[i] ?? 0, y)
+      }
+    }
+    for (let i = n - 1; i >= 0; i -= 1) {
+      const upper = (tops[i] ?? 0) - 1.5
+      path.lineTo(sil.x[i] ?? 0, Math.max(upper, Math.min(upper + depth(i), sil.bottom[i] ?? 0)))
+    }
+    path.closePath()
+    return path
+  }
+  const capDepth = (i: number): number => reach(i) * ramp(thick(sil.x[i] ?? 0), 0.02, 1)
+  const dusting = (i: number): number => reach(i) * ramp(thick(sil.x[i] ?? 0), 0.3, 0.7)
+  // The heap: a ribbon along the top edge, rising above it.
+  const heap = new Path2D()
+  const half = (i: number): number => {
+    const x = sil.x[i] ?? 0
+    return r * 0.11 * layers.full * ramp(thick(x), 0.4, 0.8) * inward(x)
+  }
+  for (let i = 0; i < n; i += 1) {
+    const y = (tops[i] ?? 0) - half(i) * 1.5
+    if (i === 0) {
+      heap.moveTo(sil.x[i] ?? 0, y)
+    } else {
+      heap.lineTo(sil.x[i] ?? 0, y)
+    }
+  }
+  for (let i = n - 1; i >= 0; i -= 1) {
+    heap.lineTo(sil.x[i] ?? 0, (tops[i] ?? 0) + half(i) * 0.5)
+  }
+  heap.closePath()
+  const shapes: LogSnow = {
+    amount,
+    thin: layers.thin,
+    full: layers.full,
+    dust: band((i) => dusting(i) * 1.45),
+    dense: band((i) => dusting(i) * 0.7),
+    under: band(capDepth),
+    cap: band((i) => Math.max(0, capDepth(i) - r * 0.16)),
+    heap,
+    left: first - 2,
+    top: Math.min(...tops) - r * 0.25 - 2,
+    right: last + 2,
+    bottom: Math.max(...sil.bottom) + 2,
+  }
+  logSnows.set(log, shapes)
+  return shapes
+}
+
+/**
+ * Paints a log's snow, with the log's center at the origin.
+ *
+ * @param ctx - 2D canvas context.
+ * @param snow - The shapes.
+ * @param fog - The log's distance haze.
+ */
+function paintLogSnow(ctx: CanvasRenderingContext2D, snow: LogSnow, fog: number): void {
+  const colors = snowColors(fog)
+  const before = ctx.globalAlpha
+  ctx.fillStyle = colors.top
+  ctx.globalAlpha = before * snow.thin * 0.4
+  ctx.fill(snow.dust)
+  ctx.globalAlpha = before * snow.thin * 0.75
+  ctx.fill(snow.dense)
+  if (snow.full > 0.02) {
+    ctx.globalAlpha = before * snow.full
+    ctx.fillStyle = colors.bottom
+    ctx.fill(snow.under)
+    ctx.fillStyle = colors.top
+    ctx.fill(snow.cap)
+    ctx.fill(snow.heap)
+  }
+  ctx.globalAlpha = before
+}
+
+/** A far log's snow painted at its layer's resolution, kept until what shows of it changes. */
+const farLogSnows = new WeakMap<Log, { canvas: HTMLCanvasElement; key: string }>()
+
+/**
+ * Draws the snow on a layer's logs (they are in the layer's images, which stop before the snow), at the
+ * layer's resolution like the images.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param layer - Forest layer.
+ * @param strip - Its strip (where things lie).
+ * @param base - Screen y of the layer's base line.
+ * @param cameraX - View left edge.
+ * @param viewWidth - Viewport width.
+ * @param limit - Screen y below which nothing of this layer can show.
+ */
+function drawLayerLogSnow(
+  ctx: CanvasRenderingContext2D,
+  layer: ForestLayer,
+  strip: ForestStrip,
+  base: number,
+  cameraX: number,
+  viewWidth: number,
+  limit: number,
+): void {
+  const res = vegRes(layer)
+  const shift = cameraX * layer.parallax
+  layer.logs.forEach((log, index) => {
+    const at = strip.veg.logs[index]
+    if (!at) {
+      return
+    }
+    const x = at.x - shift
+    const y = base - strip.originY + at.y
+    if (x < -log.length || x > viewWidth + log.length || y - log.radius * 3 > limit) {
+      return
+    }
+    const snow = logSnowShapes(log, at.angle)
+    if (!snow) {
+      return
+    }
+    const width = snow.right - snow.left
+    const height = snow.bottom - snow.top
+    const step = (value: number): number => Math.round(value * 24)
+    const key = `${res}|${step(snow.amount)}|${step(snow.thin)}|${step(snow.full)}`
+    let sprite = farLogSnows.get(log)
+    if (!sprite || sprite.key !== key) {
+      const canvas = sprite?.canvas ?? document.createElement('canvas')
+      canvas.width = Math.max(1, Math.ceil(width * res))
+      canvas.height = Math.max(1, Math.ceil(height * res))
+      const sctx = canvas.getContext('2d')
+      if (sctx) {
+        sctx.scale(res, res)
+        sctx.translate(-snow.left, -snow.top)
+        paintLogSnow(sctx, snow, layer.fog)
+      }
+      sprite = { canvas, key }
+      farLogSnows.set(log, sprite)
+    }
+    // A layer that only exists around the creek fades out away from it (as its images do).
+    ctx.globalAlpha = windowFade(layer, at.x)
+    ctx.drawImage(sprite.canvas, x + snow.left, y + snow.top, sprite.canvas.width / res, sprite.canvas.height / res)
+    ctx.globalAlpha = 1
+  })
+}
+
+/**
+ * How opaque something of a layer is at a point: a layer that only exists around the creek fades out away from
+ * it.
+ *
+ * @param layer - Forest layer.
+ * @param x - Along the layer.
+ */
+function windowFade(layer: ForestLayer, x: number): number {
+  if (layer.localRadius === null) {
+    return 1
+  }
+  const across = (x - layer.creek.x + layer.localRadius) / (2 * layer.localRadius)
+  return Math.max(0, Math.min(1, Math.min(across, 1 - across) / 0.3))
 }
 
 /**
