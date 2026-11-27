@@ -9,6 +9,7 @@ import {
   type AcornDropMode,
   PLAYER_HUNGER_THRESHOLD,
 } from './constants'
+import { ControlsBox } from './ControlsBox'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
@@ -109,7 +110,26 @@ export function GameCanvas() {
   useEffect(() => {
     setShowMinimap(debugOpen)
     debugOpenRef.current = debugOpen
+    try {
+      window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(debugOpen))
+    } catch {
+      // Not being able to save is fine; the choice still applies for this session.
+    }
   }, [debugOpen])
+
+  // The "/" key opens and closes the debug tools.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== '/' || event.repeat || event.ctrlKey || event.metaKey || event.altKey) {
+        return
+      }
+      // (Some browsers would open their quick search.)
+      event.preventDefault()
+      setDebugOpen((open) => !open)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   useEffect(() => {
     invisibleRef.current = invisible
@@ -302,6 +322,7 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
+      <ControlsBox />
       {loading && (
         <div className="loading-screen" role="status">
           <div className="loading-spinner" />
@@ -310,23 +331,6 @@ export function GameCanvas() {
       )}
       <div className="hud-left">
         <div className="debug-column">
-          <button
-            type="button"
-            className="debug-button"
-            aria-pressed={debugOpen}
-            onClick={(event) => {
-              const next = !debugOpen
-              setDebugOpen(next)
-              try {
-                window.localStorage.setItem(DEBUG_OPEN_STORAGE_KEY, String(next))
-              } catch {
-                // Not being able to save is fine; the choice still applies for this session.
-              }
-              event.currentTarget.blur()
-            }}
-          >
-            Debug {debugOpen ? 'on' : 'off'}
-          </button>
           {debugOpen && (
             <fieldset className="debug-panel">
               <legend>Debug</legend>
@@ -390,11 +394,13 @@ export function GameCanvas() {
         </div>
         {debugOpen && <Timeline worldRef={worldRef} overrideRef={rateOverrideRef} pausedRef={timePausedRef} />}
       </div>
-      <div className="hud-right">
-        <button type="button" className="restart-button" onClick={onRestart}>
-          Restart
-        </button>
-      </div>
+      {debugOpen && (
+        <div className="hud-right">
+          <button type="button" className="restart-button" onClick={onRestart}>
+            Restart
+          </button>
+        </div>
+      )}
     </div>
   )
 }

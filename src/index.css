@@ -34,7 +34,7 @@ body,
   height: 100%;
 }
 
-/* Debug controls and the timeline sit side by side in the top left; Restart is top right. */
+/* Debug controls and the timeline sit side by side in the top left; Restart (with the debug tools open) is top right. */
 .hud-left {
   position: absolute;
   top: 12px;
@@ -284,6 +284,69 @@ body,
   width: 0;
   border-left: 1px solid rgba(27, 40, 56, 0.7);
   pointer-events: none;
+}
+
+/* The controls cheat sheet, bottom left (`--px` is one pixel of the game's logical view). */
+.controls-box {
+  position: absolute;
+  left: calc(16 * var(--px));
+  bottom: calc(16 * var(--px));
+  z-index: 2;
+  display: block;
+  padding: calc(10 * var(--px)) calc(14 * var(--px));
+  border: 0;
+  border-radius: calc(10 * var(--px));
+  background: rgba(27, 40, 56, 0.72);
+  color: #f4efe4;
+  font: calc(15 * var(--px)) Georgia, serif;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.controls-box:hover {
+  background: rgba(27, 40, 56, 0.84);
+}
+
+.controls-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(12 * var(--px));
+  font-size: calc(17 * var(--px));
+  font-weight: bold;
+}
+
+/* Points down while the box is collapsed, up while it is open. */
+.controls-arrow {
+  width: calc(12 * var(--px));
+  height: calc(8 * var(--px));
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.controls-box[aria-expanded='true'] .controls-arrow {
+  transform: rotate(180deg);
+}
+
+.controls-list {
+  display: block;
+  width: calc(302 * var(--px));
+  padding-top: calc(4 * var(--px));
+}
+
+.controls-row {
+  display: grid;
+  grid-template-columns: calc(136 * var(--px)) auto;
+  line-height: calc(28 * var(--px));
+}
+
+.controls-key {
+  color: #f2c230;
 }
 
 /* Covers the game while the forest is being made. */

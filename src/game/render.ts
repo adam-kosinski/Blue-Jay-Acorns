@@ -225,7 +225,7 @@ function prof(ctx: CanvasRenderingContext2D, name: string): void {
   } else {
     p.frames += 1
   }
-  if (name === 'controls') {
+  if (name === 'end') {
     const total = Object.values(profFrame).reduce((x, y) => x + y, 0)
     if (total > (p.worstMs ?? 0)) {
       p.worstMs = total
@@ -365,9 +365,8 @@ export function renderScene(
   drawHungerBar(ctx, viewWidth, viewHeight, player)
   prof(ctx, 'minimap+hunger')
 
-  if (!profSkip('controls')) drawControlsOverlay(ctx, viewHeight)
   lastSceneMs = performance.now() - sceneStart
-  prof(ctx, 'controls')
+  prof(ctx, 'end')
 
   if (outcome !== 'playing') {
     if (gameOverSince === 0) {
@@ -470,7 +469,7 @@ function drawGameOver(
 
   ctx.fillStyle = '#6b4a2b'
   ctx.font = 'italic 24px Georgia, serif'
-  ctx.fillText(won ? '"Yay!" says your blue jay' : 'The jay went hungry. Click Restart to try again.', 0, cardH * 0.26)
+  ctx.fillText(won ? '"Yay!" says your blue jay' : 'The jay went hungry. Reload the page to try again.', 0, cardH * 0.26)
   ctx.restore()
 }
 
@@ -7966,41 +7965,6 @@ function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
 
 /** Hunger level at or below which the bar flashes red. */
 const STARVING_LEVEL = 0.2
-
-/**
- * Draws the controls cheat sheet as an overlay in the bottom left corner.
- *
- * @param ctx - 2D canvas context in screen space.
- * @param viewHeight - Viewport height.
- */
-function drawControlsOverlay(ctx: CanvasRenderingContext2D, viewHeight: number): void {
-  const width = 330
-  const height = 150
-  const x = 16
-  const y = viewHeight - height - 16
-  ctx.fillStyle = 'rgba(27, 40, 56, 0.72)'
-  ctx.beginPath()
-  ctx.roundRect(x, y, width, height, 10)
-  ctx.fill()
-  ctx.textAlign = 'left'
-  ctx.fillStyle = '#f4efe4'
-  ctx.font = 'bold 17px Georgia, serif'
-  ctx.fillText('Controls', x + 14, y + 28)
-  const rows: [string, string][] = [
-    ['WASD', 'move'],
-    ['Q', 'drop'],
-    ['Shift / Left click', 'pick up, bury, dig up'],
-    ['E / Right click', 'eat when hungry'],
-  ]
-  ctx.font = '15px Georgia, serif'
-  rows.forEach(([key, action], index) => {
-    const rowY = y + 58 + index * 28
-    ctx.fillStyle = '#f2c230'
-    ctx.fillText(key, x + 14, rowY)
-    ctx.fillStyle = '#f4efe4'
-    ctx.fillText(action, x + 150, rowY)
-  })
-}
 
 /**
  * Draws the hunger bar large at the bottom center: green when fed, yellow below the threshold
