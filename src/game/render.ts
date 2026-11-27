@@ -513,11 +513,27 @@ function drawForest(
       dst: CanvasRenderingContext2D = ctx,
     ): void => {
       dst.globalAlpha = alpha
-      for (let s = 0; s < slabs; s += 1) {
-        const slabLimit = layerLimits[s] ?? viewHeight
-        const bottomRow = Math.min(stripHeight, slabLimit - base + strip.originY)
+      // Neighbouring slabs whose cull lines are close are drawn as one (cut at the lowest of them): the few
+      // extra rows are hidden by the nearer layers drawn later, and it is far fewer draws.
+      let s = 0
+      while (s < slabs) {
+        const first = layerLimits[s] ?? viewHeight
+        let lo = first
+        let hi = first
+        let e = s + 1
+        while (e < slabs) {
+          const v = layerLimits[e] ?? viewHeight
+          if (Math.max(hi, v) - Math.min(lo, v) > SLAB_MERGE_PX) {
+            break
+          }
+          lo = Math.min(lo, v)
+          hi = Math.max(hi, v)
+          e += 1
+        }
+        const runWidth = (e - s) * FOREST_SLAB
+        const bottomRow = Math.min(stripHeight, hi - base + strip.originY)
         const srcX = Math.max(0, (camera.x * p + s * FOREST_SLAB) * strip.resolution)
-        const srcW = Math.min((FOREST_SLAB + 1) * strip.resolution, source.width - srcX)
+        const srcW = Math.min((runWidth + 1) * strip.resolution, source.width - srcX)
         if (image && bottomRow > topRow && !hidden && srcW > 0) {
           dst.drawImage(
             source,
@@ -531,10 +547,11 @@ function drawForest(
             bottomRow - topRow,
           )
         }
-        if (fillBelow && below < slabLimit && layer.localRadius === null) {
+        if (fillBelow && below < hi && layer.localRadius === null) {
           dst.fillStyle = groundColor
-          dst.fillRect(s * FOREST_SLAB, below - 1, FOREST_SLAB + 1, slabLimit - below + 1)
+          dst.fillRect(s * FOREST_SLAB, below - 1, runWidth + 1, hi - below + 1)
         }
+        s = e
       }
       dst.globalAlpha = 1
     }
@@ -1046,6 +1063,9 @@ const GROUND_COLUMN = 64
 
 /** Width of the screen slabs the forest layers are blitted in, each with its own cull line. */
 const FOREST_SLAB = 64
+
+/** Neighbouring slabs whose cull lines differ by at most this many pixels are drawn in one go. */
+const SLAB_MERGE_PX = 24
 
 const forestStrips = new WeakMap<ForestLayer, ForestStrip>()
 
