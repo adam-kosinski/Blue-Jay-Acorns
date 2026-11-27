@@ -20,7 +20,7 @@ import { drawLeafFall, updateLeafFall } from './leaffall'
 import { drawSky } from './sky'
 import { drawSnowfall, snowfallAt } from './snowfall'
 import { drawFlowerPatch, FLOWER_KINDS, makeFlowerPatch, PLAIN_TINT, type FlowerPatch, type FlowerTint } from './flowers'
-import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_TOP, blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
+import { SNOW_BOTTOM, SNOW_CELL_DEPTH, SNOW_CELL_X, SNOW_GONE, SNOW_MELT_FROM, SNOW_TOP,blobStretch, snowAt, snowBlob, snowCapLayers, snowCapSize, snowCover, snowThickness } from './snow'
 import {
   BUILD_HOLD_END,
   SAMPLE_COUNT,
@@ -2334,7 +2334,7 @@ function drawGround(
   ctx.moveTo(startX, bottom)
   // The snow patches that take over at the start of the melt stand 3 px above the surface: the snow-colored
   // ground rises that much over the 30 s before, slowly, so that nothing seems to move when the patches start.
-  const meltIn = (world.season.time / SEGMENT_SECONDS - (6 - 30 / SEGMENT_SECONDS)) / (30 / SEGMENT_SECONDS)
+  const meltIn = (world.season.time / SEGMENT_SECONDS - (SNOW_MELT_FROM - 30 / SEGMENT_SECONDS)) / (30 / SEGMENT_SECONDS)
   const raise = whiteness >= 0.999 ? 3 * Math.max(0, Math.min(1, meltIn)) * Math.max(0, Math.min(1, meltIn)) * (3 - 2 * Math.max(0, Math.min(1, meltIn))) : 0
   for (let x = startX; x <= endX; x += terrain.step) {
     ctx.lineTo(x, groundYAt(terrain, x) - raise)
@@ -3042,7 +3042,7 @@ function worldFlowers(world: World): { near: FlowerPatch[]; front: FlowerPatch[]
   const thaw = (x: number, y: number): number => {
     const depth = y - groundYAt(terrain, x)
     let share = 0
-    while (share < 0.45 && snowAt(x, depth, (7 + share) * SEGMENT_SECONDS) > 0.5) {
+    while (share < SNOW_GONE - 7 && snowAt(x, depth, (7 + share) * SEGMENT_SECONDS) > 0.5) {
       share += 0.02
     }
     return share

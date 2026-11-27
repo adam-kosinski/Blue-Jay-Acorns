@@ -15,6 +15,12 @@ export const SNOW_PARTICLE_TONES = ['#ffffff', '#eef6ff', '#dcebfa']
 /** Length of the snow's coming in, in segments: the 30 seconds before mid winter starts (while it snows). */
 const SNOW_IN = 30 / SEGMENT_SECONDS
 
+/** When the snow starts to melt, in segments: a third of the way into late winter. */
+export const SNOW_MELT_FROM = 6 + 1 / 3
+
+/** When the last of the snow has melted, in segments: the middle of spring. */
+export const SNOW_GONE = 7.5
+
 /**
  * Smoothstep.
  *
@@ -72,29 +78,29 @@ export function snowCapLayers(time: number): { thin: number; full: number } {
  * @param key - A number 0-1 of its own (its moment of the melt).
  */
 export function snowCapSize(time: number, key: number): number {
-  // Each rock's snow melts over about the same time as the ground's patches (6.0 to 7.4), starting a little
-  // before them (5.95 to 6.05) and finishing between 7.2 and 7.4 (the last ones with the last of the ground's patches).
+  // Each rock's snow melts over about the same time as the ground's patches (`SNOW_MELT_FROM` to `SNOW_GONE`), starting a little
+  // before them (up to 0.05 before or after their start) and finishing in the last 0.2 of that (the last ones with the last of the ground's patches).
   const u = time / SEGMENT_SECONDS
-  const start = 5.95 + 0.1 * key
-  const end = 7.2 + 0.2 * key
+  const start = SNOW_MELT_FROM - 0.05 + 0.1 * key
+  const end = SNOW_GONE - 0.2 + 0.2 * key
   return 1 - smooth((u - start) / (end - start))
 }
 
 /**
- * How much of the ground the snow covers, 0-1: all of it through mid winter, then melting away in patches
- * through late winter and spring.
+ * How much of the ground the snow covers, 0-1: all of it until `SNOW_MELT_FROM`, then melting away in patches
+ * through the rest of late winter and the first half of spring.
  *
  * @param time - Seconds along the timeline.
  */
 export function snowCover(time: number): number {
   const u = time / SEGMENT_SECONDS
-  if (u <= 6) {
+  if (u <= SNOW_MELT_FROM) {
     return 1
   }
-  if (u >= 7.4) {
+  if (u >= SNOW_GONE) {
     return 0
   }
-  return 1 - (u - 6) / 1.4
+  return 1 - (u - SNOW_MELT_FROM) / (SNOW_GONE - SNOW_MELT_FROM)
 }
 
 /** Width of a cell of the patch grid, along the ground. */

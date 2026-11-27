@@ -1,8 +1,8 @@
 /**
  * Spring ephemerals: patches of small wildflowers that come up on the forest floor in spring (trout lilies,
  * trilliums, bluebells and anemones). A patch is of one kind; its plants come a few at a time, from the
- * middle outward, each group in one quick fade, so the patch seems to grow; all are there by the end of
- * spring. The plants that have arrived are painted onto a bitmap of the patch's own, repainted only when a
+ * middle outward, each group in one quick fade, so the patch seems to grow (but for a few early ones, which come
+ * singly at the start of spring); all are there by the end of spring. The plants that have arrived are painted onto a bitmap of the patch's own, repainted only when a
  * group has finished arriving.
  */
 import { SEGMENT_SECONDS } from './seasons'
@@ -16,17 +16,24 @@ const VARIANTS = 3
 /** The share of the plants asked for that a patch gets (turns every patch's numbers up or down together). */
 const PLENTY = 0.75
 
-/** The earliest share of spring a plant comes. */
-const FIRST_START = 0.05
+/**
+ * A few plants anywhere (this share of them, whatever their patch's turn) are early ones, trickling in one by one
+ * between these shares of spring: the first right at its beginning, among the last patches of snow. (Above 1,
+ * `EARLY_BUNCHING` puts more of them toward the start.)
+ */
+const EARLY_SHARE = 0.04
+const EARLY_FROM = 0.005
+const EARLY_UNTIL = 0.5
+const EARLY_BUNCHING = 1.5
 
 /** How much of the run of arrivals a late patch skips: the latest start after this share of it. */
 const LATE_PATCH = 0.4
 
 /**
- * How arrivals bunch toward the end of spring: below 1, few come early and ever more as the end nears (at 0.5
- * the number there grows with the square of the time gone).
+ * How the other arrivals bunch toward the end of spring: below 1, few come early and ever more as the end nears (the
+ * smaller it is the stronger that is, and slower still early on, as late patches wait).
  */
-const QUICKENING = 0.5
+const QUICKENING = 0.55
 
 /** The share of spring (which lasts a segment) a group of plants takes to fade in: three quarters of a second. */
 const FADE_SHARE = 0.75 / SEGMENT_SECONDS
@@ -116,13 +123,21 @@ export function makeFlowerPatch(
     .map((plant, i) => {
       const rank = (i + random()) / plants.length
       const along = turn * LATE_PATCH + rank * (1 - turn * LATE_PATCH)
-      const due = FIRST_START + (1 - FADE_SHARE - FIRST_START) * along ** QUICKENING
-      return { plant, due: Math.max(due, earliest(plant.x, plant.y)) }
+      const early = random() < EARLY_SHARE
+      const due = early
+        ? EARLY_FROM + (EARLY_UNTIL - EARLY_FROM) * random() ** EARLY_BUNCHING
+        : (1 - FADE_SHARE) * along ** QUICKENING
+      return { plant, early, due: Math.max(due, earliest(plant.x, plant.y)) }
     })
-  // The plants come in small groups, in the order of those times: each group when its last one is due.
+  // The plants come in small groups, in the order of those times: each group when its last one is due. (The early
+  // ones each come on their own, or they would wait for later ones.)
   order.sort((p, q) => p.due - q.due)
-  for (let from = 0; from < order.length; from += GROUP) {
-    const group = order.slice(from, from + GROUP)
+  const rest = order.filter((entry) => !entry.early)
+  const groups = order.filter((entry) => entry.early).map((entry) => [entry])
+  for (let from = 0; from < rest.length; from += GROUP) {
+    groups.push(rest.slice(from, from + GROUP))
+  }
+  for (const group of groups) {
     const due = Math.min(1 - FADE_SHARE, group[group.length - 1]?.due ?? 0)
     for (const { plant } of group) {
       plant.appear = due
