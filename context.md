@@ -673,3 +673,5 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Death screen text, Kill button
 - The death message is white text on the dark (no parchment card; the victory screen keeps its card), with "Try again" right under it; `deathMessageLayout` places both. The hunger bar fades out over the first 2 s of the collapse (`hungerBarOf`).
 - The debug panel has a "Kill" button that empties the player's hunger.
+
+- Drifting down is now over twice as fast (at most about 1.8 s), and the slump and eye closing 50% faster, with the dark and message following that much sooner.

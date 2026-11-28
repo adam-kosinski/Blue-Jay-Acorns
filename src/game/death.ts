@@ -9,28 +9,31 @@ import { groundYAt, inWater } from './terrain'
 import type { Death, Player, World } from './types'
 
 /** The slowest a drifting bird sinks, and the longest the way down may take (it sinks faster from high up). */
-const SINK_SPEED_IN_SIZES = 1.1
-const SINK_LONGEST_SECONDS = 3.5
+const SINK_SPEED_IN_SIZES = 2.4
+const SINK_LONGEST_SECONDS = 1.6
+
+/** Seconds it takes to get up to that speed. */
+const SINK_EASE_SECONDS = 0.3
 
 /** How far a drifting bird still carries forward, in sizes per second. */
-const GLIDE_SPEED_IN_SIZES = 0.35
+const GLIDE_SPEED_IN_SIZES = 0.75
 
 /** How fast its wings still beat on the way down, as a share of normal. */
 const WEAK_WINGBEAT = 0.4
 
 /** A bird over (or right beside) the creek makes for the bank, to come down this far from the water. */
 const BANK_CLEARANCE_IN_SIZES = 0.75
-const BANK_SPEED_IN_SIZES = 1.5
-const BANK_LONGEST_SECONDS = 3
+const BANK_SPEED_IN_SIZES = 3.2
+const BANK_LONGEST_SECONDS = 1.4
 
 /** The steepest slope (radians) the slumped bird lies along. */
 const SLOPE_LIMIT = 0.6
 
 /** Seconds after touching down: when the slump runs, the eyes close, the dark comes and the message shows. */
-const SLUMP = { from: 0.25, seconds: 1.5 }
-const EYES = { from: 0.7, seconds: 1.4 }
-const DARK = { from: 2.3, seconds: 1.8 }
-const MESSAGE = { from: 3.8, seconds: 0.6 }
+const SLUMP = { from: 0.17, seconds: 1 }
+const EYES = { from: 0.47, seconds: 0.93 }
+const DARK = { from: 1.55, seconds: 1.8 }
+const MESSAGE = { from: 3.05, seconds: 0.6 }
 
 /** How far closed the eyes already get on the way down. */
 const DROWSY = 0.35
@@ -162,7 +165,7 @@ export function updateDeath(player: Player, world: World, dt: number): void {
   if (player.state === 'flying') {
     // Still over the water, it stays a little above it until it has reached the bank.
     const floor = death.bankX !== null && inWater(world.terrain, center) ? ground - 0.35 * size : ground
-    const lower = player.y + death.sink * Math.min(1, death.time / 0.6) * dt
+    const lower = player.y + death.sink * Math.min(1, death.time / SINK_EASE_SECONDS) * dt
     player.y = Math.min(ground - size, Math.max(player.y, Math.min(floor - size, lower)))
     player.animTime += dt * WEAK_WINGBEAT
     if (player.y + size >= ground - 0.5) {
