@@ -1,16 +1,10 @@
 TODO
 - Fix performance
 - Instructions screen, to the point. Extra instructions can come naturally as the game is played
-- Tutorial tip about hopping to hide burial, on first bury
 - Animation of forgotten acorns sprouting after the player has won
   - hunger bar translates out of screen, bird does a dance, then flies to the nearest buried acorn,
     which grows a sapling (part of acorn visible so user can tell)
   - not sure how to do this if there are no buried acorns left, maybe just do the dance and that's it
-- Make oak tree radius smaller, to increase good-quality burial area
-  - for squirrels and burial quality that is
-  - maybe or maybe not for acorn spawns?
-  - or potentially a slightly wider world would help too?
-    - Consider making birds fly faster, so that they can visit further away ideal burial spots
 - Allow hiding acorns in tree hollows or nooks?
   - a little message pops up if it's a valid hiding spot, then the burying command will work
   - I'm not sure blue jays actually do this though... (other jays do) would want to stay realistic
@@ -89,3 +83,9 @@ Done
 - Blue jays can still kick up snow in non-snow spots mid snow melt
 - Have blue jays bob subtly when floating
 - Jay bobbing up and down in midflight should correspond with wing beats
+- Tutorial tip about hopping to hide burial, on first bury
+- Make oak tree radius smaller, to increase good-quality burial area
+  - for squirrels and burial quality that is
+  - maybe or maybe not for acorn spawns?
+  - or potentially a slightly wider world would help too?
+    - Consider making birds fly faster, so that they can visit further away ideal burial spots

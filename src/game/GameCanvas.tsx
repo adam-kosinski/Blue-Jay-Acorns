@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent } from 'react'
-import { handleAcornActions, updateAcorns, updateAction, updateTreeDrops } from './acorns'
+import { handleAcornActions, updateAcorns, updateAction, updateHopTip, updateTreeDrops } from './acorns'
 import { cameraForPlayer } from './camera'
 import {
   ACORN_DROP_MODES,
@@ -252,6 +252,7 @@ export function GameCanvas() {
           rateOverrideRef.current ?? baseDropRate(world.season, world.season.time),
         )
         updateAcorns(world, player.size, dt)
+        updateHopTip(world, player)
         // Running out of food ends the game.
         gameOver = player.hunger <= 0
         // Surviving to the end of spring wins the game (with the debug tools open it just goes on).

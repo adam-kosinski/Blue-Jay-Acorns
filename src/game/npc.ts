@@ -73,10 +73,10 @@ const FLIGHT_MAX_SLOPE = VERTICAL_SPEED_IN_SIZES / MOVE_SPEED_IN_SIZES
  * How far (player sizes) a flying bird may be off its glide line before it corrects: about a frame of
  * movement, so the keys switch every few frames and the path looks like a smooth line, not a staircase.
  */
-const GLIDE_TOLERANCE = 0.015
+const GLIDE_TOLERANCE = 0.0225
 
 /** How close (player sizes) a flying bird gets to its target before it lands on it. */
-const LAND_IN_SIZES = 0.15
+const LAND_IN_SIZES = 0.225
 
 /** Horizontal gap (player sizes) at which an NPC counts as having reached its target. */
 const ARRIVE_IN_SIZES = 0.5

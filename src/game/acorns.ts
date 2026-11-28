@@ -10,6 +10,9 @@ import {
   NPC_COUNT,
   BURIAL_CONCEAL_CURVE,
   BURIAL_HOP_RANGE_IN_SIZES,
+  HOP_TIP_FADE_SECONDS,
+  HOP_TIP_RANGE_IN_SIZES,
+  HOP_TIP_SECONDS,
   BURIAL_HOPS_TO_HIDE,
   BURY_DURATION,
   KICKED_LEAVES_LIMIT,
@@ -408,6 +411,39 @@ export function forgetBurial(bird: Player, x: number): void {
   const index = bird.burials.findIndex((spot) => Math.abs(spot - x) < 0.5)
   if (index >= 0) {
     bird.burials.splice(index, 1)
+  }
+}
+
+/**
+ * Puts up the tip about hopping at the player's first burial. Once it has been up long enough, the player has moved
+ * well away from the site, or the acorn is no longer buried there, it fades away and is gone for good.
+ *
+ * @param world - Holds the tip; acorns, terrain and the game clock.
+ * @param player - The player's bird.
+ */
+export function updateHopTip(world: World, player: Player): void {
+  if (world.hopTip === 'done') {
+    return
+  }
+  if (!world.hopTip) {
+    const first = world.acorns.find((acorn) => acorn.state === 'buried' && acorn.owner === player)
+    if (!first) {
+      return
+    }
+    world.hopTip = { acorn: first, since: world.time }
+  }
+  const { acorn, since, fadingSince } = world.hopTip
+  if (fadingSince !== undefined) {
+    // (Once begun, the fade runs to its end, even if the bird comes back.)
+    if (world.time - fadingSince >= HOP_TIP_FADE_SECONDS) {
+      world.hopTip = 'done'
+    }
+    return
+  }
+  // From the spot on the ground to the bird's feet, so that flying up and away counts too.
+  const away = Math.hypot(player.x + player.size / 2 - acorn.x, player.y + player.size - groundYAt(world.terrain, acorn.x))
+  if (acorn.state !== 'buried' || world.time - since >= HOP_TIP_SECONDS || away >= HOP_TIP_RANGE_IN_SIZES * player.size) {
+    world.hopTip.fadingSince = world.time
   }
 }
 

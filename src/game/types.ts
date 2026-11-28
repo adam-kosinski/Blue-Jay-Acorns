@@ -561,6 +561,12 @@ export type World = {
   season: SeasonClock
   /** Seconds accumulated toward the next once-per-second acorn-drop roll. */
   acornDropTimer: number
+  /**
+   * The tip about hopping to hide a burial, shown at the player's first one: while it shows, the acorn it is about,
+   * the game time it came up and, once it is fading away, the time that began; 'done' once it has gone, null before
+   * that burial.
+   */
+  hopTip: { acorn: Acorn; since: number; fadingSince?: number } | 'done' | null
   /** Leaves kicked onto burial mounds by hopping birds (oldest are dropped past a limit). */
   kickedLeaves: KickedLeaf[]
   /** Game clock in seconds (drives the fading lines to noticed burial sites). */

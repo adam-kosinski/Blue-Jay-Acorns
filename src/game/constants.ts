@@ -48,7 +48,7 @@ export const OAK_EDGE_REGION_IN_SIZES = 4
 export const ACORN_COUNT = 16
 
 /** Vertical climb/descend speed as a multiple of player size. */
-export const VERTICAL_SPEED_IN_SIZES = 2.7
+export const VERTICAL_SPEED_IN_SIZES = 4.05
 
 /** Horizontal speed is twice the vertical speed. */
 export const MOVE_SPEED_IN_SIZES = VERTICAL_SPEED_IN_SIZES * 2
@@ -109,9 +109,9 @@ export const ACORN_GROUP_SPREAD = 1
 export const ACORN_WORLD_CAP = 160
 
 /** Walking speed as a fraction of flying speed (the average hopping speed). */
-export const WALK_SPEED_FACTOR = 0.5
+export const WALK_SPEED_FACTOR = 1 / 3
 
-/** Hop length on the ground, as a multiple of player size: hopping speed is half the flying speed. */
+/** Hop length on the ground, as a multiple of player size: hopping speed is a third of the flying speed. */
 export const HOP_LENGTH_IN_SIZES = MOVE_SPEED_IN_SIZES * WALK_SPEED_FACTOR * HOP_DURATION
 
 /** Where the beak tip touches the ground in a pecking pose, in sprite units ahead of the bird's center. */
@@ -158,6 +158,16 @@ export const BURIAL_HOPS_TO_HIDE = 10
  * Above 1, so the first hops change the mound little and the last ones the most.
  */
 export const BURIAL_CONCEAL_CURVE = 2.2
+
+/**
+ * The tip shown at the player's first burial goes after this many seconds, or once the player is this far (in player
+ * sizes) from the site.
+ */
+export const HOP_TIP_SECONDS = 10
+
+/** Seconds that tip then takes to fade away. */
+export const HOP_TIP_FADE_SECONDS = 0.6
+export const HOP_TIP_RANGE_IN_SIZES = 4
 
 /** How close (in player sizes) a bird must be when a hop starts to kick leaves over a burial site. */
 export const BURIAL_HOP_RANGE_IN_SIZES = 1.1

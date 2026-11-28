@@ -1,5 +1,6 @@
 import {
   ACORN_SINK_DEPTH_IN_RADII,
+  HOP_TIP_FADE_SECONDS,
   HOP_DURATION,
   CROWN_COLOR,
   EAT_DURATION,
@@ -363,6 +364,9 @@ export function renderScene(
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
   }
   drawHungerBar(ctx, viewWidth, viewHeight, player)
+  if (outcome === 'playing') {
+    drawHopTip(ctx, viewWidth, world, camera, player)
+  }
   prof(ctx, 'minimap+hunger')
 
   lastSceneMs = performance.now() - sceneStart
@@ -7982,6 +7986,42 @@ function drawNpcLabel(ctx: CanvasRenderingContext2D, npc: Npc): void {
 
 /** Hunger level at or below which the bar flashes red. */
 const STARVING_LEVEL = 0.2
+
+/**
+ * Draws the tip about hopping above the burial it is about (see `updateHopTip`), kept within the view's sides: light
+ * text on a see-through dark box, like the controls box.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param viewWidth - Viewport width.
+ * @param world - Play space (holds the tip).
+ * @param camera - View origin.
+ * @param player - The player's bird (its size sets how high the tip stands).
+ */
+function drawHopTip(ctx: CanvasRenderingContext2D, viewWidth: number, world: World, camera: Camera, player: Player): void {
+  if (!world.hopTip || world.hopTip === 'done') {
+    return
+  }
+  const { acorn, fadingSince } = world.hopTip
+  const alpha = fadingSince === undefined ? 1 : 1 - (world.time - fadingSince) / HOP_TIP_FADE_SECONDS
+  const text = 'Hop to hide burial site; more hops hides it more'
+  ctx.save()
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha))
+  ctx.font = '17px Georgia, serif'
+  const width = ctx.measureText(text).width + 28
+  const height = 38
+  const x = Math.max(8, Math.min(viewWidth - width - 8, acorn.x - camera.x - width / 2))
+  // (Clear of the bird, even in mid hop.)
+  const y = Math.max(8, groundYAt(world.terrain, acorn.x) - camera.y - player.size * 2 - height)
+  ctx.fillStyle = 'rgba(27, 40, 56, 0.72)'
+  ctx.beginPath()
+  ctx.roundRect(x, y, width, height, 10)
+  ctx.fill()
+  ctx.fillStyle = '#f4efe4'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, x + width / 2, y + height / 2 + 1)
+  ctx.restore()
+}
 
 /**
  * Draws the hunger bar large at the bottom center: green when fed, yellow below the threshold

@@ -996,6 +996,7 @@ export function createWorld(viewWidth: number, viewHeight: number): World {
     squirrels: [],
     season: createSeasonClock(),
     acornDropTimer: 0,
+    hopTip: null,
     kickedLeaves: spawnKickedLeaves(terrain, width, playerSize),
     time: 0,
   }
