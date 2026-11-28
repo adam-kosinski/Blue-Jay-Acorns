@@ -6850,6 +6850,10 @@ const floatPhases = new WeakMap<Player, number>()
  * @param player - Bird pose.
  */
 function bodyBob(player: Player): number {
+  if (player.death?.fromAir) {
+    // The bobbing of its last wingbeats settles as it slumps.
+    return Math.sin(player.animTime * 16) * FLIGHT_BOB * (1 - slumpOf(player.death))
+  }
   if (player.state === 'flying') {
     return Math.sin(player.animTime * 16) * FLIGHT_BOB
   }
@@ -7016,7 +7020,8 @@ function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
  */
 function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   const u = player.size / 100
-  const flying = player.state === 'flying'
+  // (A bird that starved in the air stays in its flying pose, which the slump then takes over.)
+  const flying = player.state === 'flying' || (player.death?.fromAir ?? false)
   const t = player.animTime
   const eating = player.eatTimer > 0
   const eatProgress = eating ? 1 - player.eatTimer / EAT_DURATION : 0
@@ -7027,6 +7032,8 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   // A starved bird slumps onto its belly (`slump` 0-1) and its eyes close.
   const slump = player.death ? slumpOf(player.death) : 0
   const closed = player.death ? eyesClosedOf(player.death) : 0
+  // How far the slumped bird's wing has fallen open, taking over from the wing it had before.
+  const open = Math.min(1, slump / 0.35)
 
   ctx.save()
   ctx.translate(player.x + player.size / 2, player.y + player.size / 2 + bodyBob(player) * u)
@@ -7045,6 +7052,26 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.lineWidth = 4
   if (player.floating) {
     // Floating on the creek: the legs are under water, out of sight.
+  } else if (flying && slump > 0) {
+    // From tucked back in flight to flat on the ground, stretched out backwards, the toes spreading.
+    for (const [tuckedX, hipX] of [[-6, -6], [4, 6]] as const) {
+      const flatX = hipX - 15
+      const flatY = 24 + (hipX > 0 ? 20 : 24)
+      /** A point of the leg between its place tucked up and its place lying flat. */
+      const between = (fromX: number, fromY: number, toX: number, toY: number): [number, number] => [
+        fromX + (toX - fromX) * slump,
+        fromY + (toY - fromY) * slump,
+      ]
+      const hip = between(tuckedX, 24, flatX, flatY)
+      const foot = between(tuckedX - 8, 34, flatX - 24, flatY)
+      ctx.beginPath()
+      ctx.moveTo(...hip)
+      ctx.lineTo(...foot)
+      ctx.lineTo(...between(tuckedX - 8, 34, flatX - 32, flatY - 4))
+      ctx.moveTo(...foot)
+      ctx.lineTo(...between(tuckedX - 8, 34, flatX - 33, flatY + 3))
+      ctx.stroke()
+    }
   } else if (slump > 0) {
     // The legs give way, ending up flat on the ground, stretched out backwards.
     for (const hipX of [-6, 6]) {
@@ -7090,7 +7117,8 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   // Posture: upright when standing, a slight incline in flight (wings hinge on this axis)
   ctx.save()
   // (Slumping, the whole body comes down until the belly is on the ground, and levels out.)
-  ctx.translate(0, 6 + SLUMP_DROP * slump)
+  // (On the creek it stays as high as it floats: lower, and it would be under the water.)
+  ctx.translate(0, 6 + (player.death?.onWater ? 0 : SLUMP_DROP) * slump)
   const upright = (flying ? -0.04 : -0.3) + dip * 0.6
   const bodyTilt = upright + (0.02 - upright) * slump
   ctx.rotate(bodyTilt)
@@ -7116,9 +7144,12 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
     ctx.restore()
   }
 
-  // Far wing (flight only): behind the body, slightly out of phase and darker
-  if (flying) {
+  // Far wing (flight only): behind the body, slightly out of phase and darker (fading as a slumping bird's gives way)
+  if (flying && open < 1) {
+    const before = ctx.globalAlpha
+    ctx.globalAlpha = before * (1 - open)
     drawFlightWing(ctx, t + 0.04, true)
+    ctx.globalAlpha = before
   }
 
   ctx.save()
@@ -7126,9 +7157,9 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.translate(-24, 4)
   ctx.rotate(-0.2 * slump)
   ctx.translate(24, -4)
-  drawTail(ctx, flying)
+  drawTail(ctx, flying ? 1 - slump : 0)
   ctx.restore()
-  drawBody(ctx, !flying)
+  drawBody(ctx, !flying || open >= 1)
 
   // Head: blue crown over a pale face (clipped to a round head)
   ctx.save()
@@ -7258,18 +7289,21 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
 
   // Near wing: folded along the body on the ground, spread and flapping in the air; a slumping bird's falls
   // open, down to the ground.
-  if (flying) {
-    drawFlightWing(ctx, t, false)
-  } else if (slump > 0) {
-    const open = Math.min(1, slump / 0.35)
+  if (slump > 0) {
     const before = ctx.globalAlpha
     if (open < 1) {
       ctx.globalAlpha = before * (1 - open)
-      drawFoldedWing(ctx)
+      if (flying) {
+        drawFlightWing(ctx, t, false)
+      } else {
+        drawFoldedWing(ctx)
+      }
     }
     ctx.globalAlpha = before * open
     drawFallenWing(ctx, slump)
     ctx.globalAlpha = before
+  } else if (flying) {
+    drawFlightWing(ctx, t, false)
   } else {
     drawFoldedWing(ctx)
   }
@@ -7418,10 +7452,10 @@ function drawBody(ctx: CanvasRenderingContext2D, speckled: boolean): void {
  * Draws the long barred tail with a white tip, fanned slightly in flight.
  *
  * @param ctx - 2D canvas context in sprite space.
- * @param flying - Whether the tail fans out.
+ * @param fanned - How far the tail fans out, 0 (folded) to 1 (in flight).
  */
-function drawTail(ctx: CanvasRenderingContext2D, flying: boolean): void {
-  const spread = flying ? 2.5 : 0
+function drawTail(ctx: CanvasRenderingContext2D, fanned: number): void {
+  const spread = 2.5 * fanned
   const topAt = (x: number): number => -1 + ((-24 - x) / 40) * (-2 - spread)
   const bottomAt = (x: number): number => 9 + ((-24 - x) / 40) * (-1 + spread)
 

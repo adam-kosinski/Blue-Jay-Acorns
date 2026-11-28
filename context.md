@@ -679,3 +679,9 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Next run made ready during the collapse
 - At starving, `prepareNextRun` (`nextRun.ts`) starts `runWorker.ts`, which makes a new world and paints its layer grounds and litter tiles; the page takes them as they come and runs `warmUpScene` in background mode (one step a frame; oaks, bushes and the summer images in the vegetation worker, behind the current game's). Try again takes that run and finishes whatever is left behind the loading screen. Without workers, or if the window's shape changed too much, the run is made as before.
 - The death message block is centered halfway between the top of the screen and the top of the circle of light (`deathMessageLayout`, `LIGHT_OUTER`).
+
+## Collapse on the creek
+- A starved jay no longer makes for the bank: over the creek it comes down on the water and slumps level on the surface, drawn like a floating bird (`Death.onWater`, no body drop). This replaces the earlier bank notes.
+
+## Collapse runs as one motion
+- The jay now sinks at one fixed speed from any height (`SINK_SPEED_IN_SIZES`), so a high fall takes longer (replaces the "at most about 1.8 s" note). The slump starts `SLUMP_LEAD_SECONDS` before touchdown (`Death.slumpAt`; at once if already on the ground), and the eyes, dark and message are timed from it. A bird that starved in the air keeps its flying pose, which blends into the slump (wings fade to the fallen one, legs swing out from tucked, wingbeats die away).

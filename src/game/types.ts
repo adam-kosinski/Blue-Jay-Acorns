@@ -8,11 +8,12 @@ export type Death = {
   time: number
   /** The `time` at which the bird came down on land, or null while it is on its way. */
   landedAt: number | null
-  /** World x of the spot on the creek's bank it is making for, or null once there (or if it need not). */
-  bankX: number | null
-  /** How fast it crosses to the bank, and how fast it sinks (px per second). */
-  across: number
-  sink: number
+  /** The `time` at which it began to slump (a little before landing, from the air), or null before that. */
+  slumpAt: number | null
+  /** Whether it was flying when it starved: it then goes from its flying pose straight into the slump. */
+  fromAir: boolean
+  /** Whether it is coming down on the creek: it then lies level on the surface (set as it begins to slump). */
+  onWater: boolean
   /** The slope of the ground it lies on (radians, clockwise on screen). */
   slope: number
 }

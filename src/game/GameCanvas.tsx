@@ -302,7 +302,7 @@ export function GameCanvas() {
         updateHopTip(world, player)
         // Running out of food ends the game.
         if (player.hunger <= 0) {
-          startDeath(player, world)
+          startDeath(player)
           setStarved(true)
           nextRun?.cancel()
           nextRun = prepareNextRun(logicalWidth(), LOGICAL_VIEW_HEIGHT, (window.devicePixelRatio || 1) * scale)
