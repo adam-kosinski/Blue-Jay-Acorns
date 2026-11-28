@@ -5,15 +5,16 @@ TODO
   - hunger bar translates out of screen, bird does a dance, then flies to the nearest buried acorn,
     which grows a sapling (part of acorn visible so user can tell)
   - not sure how to do this if there are no buried acorns left, maybe just do the dance and that's it
-- Allow hiding acorns in tree hollows or nooks?
-  - a little message pops up if it's a valid hiding spot, then the burying command will work
-  - I'm not sure blue jays actually do this though... (other jays do) would want to stay realistic
+- Allow the bird to carry multiple acorns
+  - It's possible this will be too complicated, and might lead to an acorn drop event getting cleaned out too quickly
+  - Or it might lead to more spread-out caches
+  - Will likely improve caching speed, may need to adjust with how much nutrition acorns provide
 - Read a research paper, learn more about caching sites
 - Maybe have NPCs dig in the vicinity of a observed cache to penalize the player more for their cache getting noticed?
 - Perhaps nosy birds should keep following even when really hungry if the acorn rate is 0 and they've already explored the whole world
   - until they lose patience, that is
-- Assess burial quality algorithm by watching birds bury acorns while invisible
 - Consider visiting NPCs that come when acorn abundance is high, or when the player is doing a bit too well (auto difficulty scaling?)
+- Create scatter-hoarding behavior for NPCS by enhancing burial quality near (but not on top of) pre-existing burials?
 
 Visual TODO
 - Fix squirrel animations and appearance
@@ -42,15 +43,15 @@ Strategies
 
 Realism
 - Hawks hanging out by oak trees?
-- Allow the bird to carry multiple acorns
-  - It's possible this will be too complicated, and might lead to an acorn drop event getting cleaned out too quickly
 
 
 =========================================================================
 
 Not doing
-- Opponent birds can see easily-visible caches and will attempt to dig
-  - it seems that in reality caches are in ideal tree-growing conditions (sunny forest floor), and usually disguised
+- Mechanics for caching behind bushes vs. open. It seems that in reality caches are in ideal tree-growing conditions (sunny forest floor), and usually disguised
+- Doesn't match reality: Allow hiding acorns in tree hollows or nooks?
+  - a little message pops up if it's a valid hiding spot, then the burying command will work
+  - I'm not sure blue jays actually do this though... (other jays do) would want to stay realistic
 
 Done
 - When you dig up an acorn, other birds see it
@@ -89,3 +90,4 @@ Done
   - maybe or maybe not for acorn spawns?
   - or potentially a slightly wider world would help too?
     - Consider making birds fly faster, so that they can visit further away ideal burial spots
+- Assess burial quality algorithm by watching birds bury acorns while invisible

@@ -19,8 +19,8 @@ Allow NPCs to die (makes the player feel like they are special), but make them b
 Digging up was more precise than expected
 The squirrel sniffing mechanic was intuitive to Ricky
 Hiding acorns in the trees
-Make player's death more spectacular
-- animation of the bird collapsing, and the world going dark around them, and then a restart button appears?
 
 DONE
 Need to tell the player that you can hop to disguise your acorns
+Make player's death more spectacular
+- animation of the bird collapsing, and the world going dark around them, and then a restart button appears?
