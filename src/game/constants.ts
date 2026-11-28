@@ -17,7 +17,7 @@ export const TYPICAL_VIEW_WIDTH_IN_SIZES = TYPICAL_ASPECT_RATIO / PLAYER_VIEW_FR
 export const ACORN_PLAYER_FRACTION = 1 / 4
 
 /** World width is this many times the viewport width. */
-export const WORLD_WIDTH_MULTIPLIER = 5
+export const WORLD_WIDTH_MULTIPLIER = 6.25
 
 /**
  * Extra world height above the altitude where the camera no longer
@@ -40,7 +40,7 @@ export const OAK_TREE_COUNT = 4
 
 /**
  * How far (in bird widths) the edge of the region of the oak nearest each edge of the world (the stretch acorns
- * fall on and its squirrel lives on) may be from that edge of the world; closer, or past the edge, is fine too.
+ * fall on) may be from that edge of the world; closer, or past the edge, is fine too.
  */
 export const OAK_EDGE_REGION_IN_SIZES = 4
 
@@ -240,6 +240,9 @@ export const NPC_COUNT = 3
 
 /** Squirrel size relative to the player's bird. */
 export const SQUIRREL_SIZE_FRACTION = 1
+
+/** How wide (in bird widths) the stretch of ground a squirrel lives on is, centered on its oak's trunk. */
+export const SQUIRREL_HOME_WIDTH_IN_SIZES = 6
 
 /** The least secrecy an NPC jay can have (each draws its own between this and 1). */
 export const NPC_MIN_SECRECY = 0.3

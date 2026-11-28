@@ -52,19 +52,19 @@ const ROCK_COLORS: [string, string][] = [
 ]
 
 /** Bushes, logs, boulders and small-rock clusters per run. */
-const BUSH_COUNT = 7
-const LOG_COUNT = 5
-const BOULDER_COUNT = 6
-const ROCK_CLUSTER_COUNT = 11
+const BUSH_COUNT = 9
+const LOG_COUNT = 6
+const BOULDER_COUNT = 8
+const ROCK_CLUSTER_COUNT = 14
 
 
 /** Props in front of the foreground's surface line. */
-const FRONT_ROCK_COUNT = 40
-const FRONT_BUSH_COUNT = 3
-const FRONT_FERN_CLUMPS = 6
+const FRONT_ROCK_COUNT = 50
+const FRONT_BUSH_COUNT = 4
+const FRONT_FERN_CLUMPS = 8
 
 /** Fern clumps in the foreground. */
-const FERN_CLUMPS = 5
+const FERN_CLUMPS = 6
 
 /** Rocks (on average) in each stretch of ground between two background layers. */
 const GAP_ROCK_COUNT = 26
@@ -169,7 +169,7 @@ export function creekEdgeMargin(viewHeight: number): number {
 
 /**
  * Builds oak trees spread across the world, each about one viewport tall. The first and the last stand near the
- * edges of the world: the edge of their region (the stretch acorns fall on and a squirrel lives on, see
+ * edges of the world: the edge of their region (the stretch acorns fall on, see
  * `acornReach`) is at most `OAK_EDGE_REGION_IN_SIZES` bird widths from the world's edge, or past it. The rest are
  * spread between them.
  *

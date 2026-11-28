@@ -22,6 +22,7 @@ import {
   NPC_MIN_SECRECY,
   SQUIRREL_SECRECY,
   SQUIRREL_SIZE_FRACTION,
+  SQUIRREL_HOME_WIDTH_IN_SIZES,
   SQUIRREL_SPEED_SCALE,
   NPC_PERCEIVE_AHEAD_IN_SIZES,
   NPC_PERCEIVE_BEHIND_IN_SIZES,
@@ -32,7 +33,6 @@ import {
   NPC_WAIT_SECONDS,
   WALK_SPEED_FACTOR,
 } from './constants'
-import { acornReach } from './burial'
 import {
   inHome,
   isOutsideHome,
@@ -214,8 +214,8 @@ export function createNpcs(world: World, size: number): Npc[] {
 }
 
 /**
- * Spawns one squirrel per oak: each lives in its tree and stays on the ground within the reach of
- * that oak's crown. About half start resting out of sight in the tree, the others foraging on the ground.
+ * Spawns one squirrel per oak: each lives in its tree and stays on the ground near its trunk (a stretch
+ * `SQUIRREL_HOME_WIDTH_IN_SIZES` wide). About half start resting out of sight in the tree, the others foraging on the ground.
  *
  * @param world - Play space (trees and terrain are used).
  * @param playerSize - Player square size (a squirrel is a little smaller).
@@ -229,7 +229,7 @@ export function createSquirrels(world: World, playerSize: number): Npc[] {
     bird.hungerScale = SQUIRREL_HUNGER_SCALE
     bird.hunger = randRange(0.7, 0.9)
     const trunkX = tree.x + tree.trunkWidth / 2
-    const reach = acornReach(tree)
+    const reach = (SQUIRREL_HOME_WIDTH_IN_SIZES * playerSize) / 2
     const npc = newNpc(bird, SQUIRREL_SECRECY)
     npc.nosiness = null
     npc.state = bird.hunger > SQUIRREL_IDLE_ENTER_HUNGER ? 'idle' : 'explore'
