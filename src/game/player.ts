@@ -48,6 +48,7 @@ export function createPlayer(world: World, size: number): Player {
     climbDir: 0,
     climbSide: 1,
     sniff: -1,
+    death: null,
   }
 }
 

@@ -2,6 +2,21 @@ import type { SeasonClock } from './seasons'
 /** Locomotion states for the player sprite. */
 export type LocomotionState = 'standing' | 'flying'
 
+/** A starved bird's collapse (see death.ts). */
+export type Death = {
+  /** Seconds since it began. */
+  time: number
+  /** The `time` at which the bird came down on land, or null while it is on its way. */
+  landedAt: number | null
+  /** World x of the spot on the creek's bank it is making for, or null once there (or if it need not). */
+  bankX: number | null
+  /** How fast it crosses to the bank, and how fast it sinks (px per second). */
+  across: number
+  sink: number
+  /** The slope of the ground it lies on (radians, clockwise on screen). */
+  slope: number
+}
+
 /** Mutable player pose and state used by the game loop. */
 export type Player = {
   x: number
@@ -56,6 +71,8 @@ export type Player = {
   climbSide: 1 | -1
   /** Squirrels: progress 0-1 of a sniff (nose to the ground), or -1 when not sniffing. */
   sniff: number
+  /** The player's jay once it has starved; null while it lives. */
+  death: Death | null
 }
 
 /** A burial another bird made that an NPC noticed; it is treated like a free acorn to dig for. */

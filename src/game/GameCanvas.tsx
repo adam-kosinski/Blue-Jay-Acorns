@@ -10,6 +10,7 @@ import {
   PLAYER_HUNGER_THRESHOLD,
 } from './constants'
 import { ControlsBox } from './ControlsBox'
+import { messageOf, startDeath, updateDeath } from './death'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
 import { updateNpcs } from './npc'
@@ -88,6 +89,10 @@ export function GameCanvas() {
   const [buriedCount, setBuriedCount] = useState<number>(0)
   // A loading screen covers the game until the forest is made (at the start and after Restart).
   const [loading, setLoading] = useState<boolean>(true)
+  // Once the jay has starved the controls box goes; when its collapse is over a button offers another try.
+  const [starved, setStarved] = useState<boolean>(false)
+  const [offerRetry, setOfferRetry] = useState<boolean>(false)
+  const retryRef = useRef<HTMLButtonElement>(null)
   const invisibleRef = useRef<boolean>(false)
   const debugOpenRef = useRef<boolean>(debugOpen)
 
@@ -159,8 +164,8 @@ export function GameCanvas() {
     ;(window as unknown as { __world?: unknown }).__world = world
     let player: Player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
     let animationId = 0
-    let gameOver = false
     let won = false
+    let retryOffered = false
     let loading = true
     let loadedFrames = 0
     let warmUp: Generator<void> | null = warmUpScene(
@@ -180,11 +185,13 @@ export function GameCanvas() {
       worldRef.current = world
       player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
       warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
-      gameOver = false
       won = false
       loading = true
       loadedFrames = 0
       setLoading(true)
+      retryOffered = false
+      setStarved(false)
+      setOfferRetry(false)
     }
 
     restartRef.current = regenerate
@@ -234,7 +241,13 @@ export function GameCanvas() {
       if (debugOpenRef.current) {
         won = false
       }
-      if (!gameOver && !won) {
+      if (player.death) {
+        // The starved jay takes no controls: it collapses while the forest goes on around it.
+        updateDeath(player, world, dt)
+        world.time += dt
+        updateNpcs(world, dt, player)
+        updateAcorns(world, player.size, dt)
+      } else if (!won) {
         player.invisible = invisibleRef.current
         updatePlayer(player, keys, dt, world)
         updateAction(player, world, dt)
@@ -254,9 +267,12 @@ export function GameCanvas() {
         updateAcorns(world, player.size, dt)
         updateHopTip(world, player)
         // Running out of food ends the game.
-        gameOver = player.hunger <= 0
+        if (player.hunger <= 0) {
+          startDeath(player, world)
+          setStarved(true)
+        }
         // Surviving to the end of spring wins the game (with the debug tools open it just goes on).
-        won = reachedEnd && !gameOver && !debugOpenRef.current
+        won = reachedEnd && !player.death && !debugOpenRef.current
         // How many of the player's buried acorns are still buried (shown in the debug panel).
         const buried = world.acorns.reduce(
           (count, acorn) => (acorn.state === 'buried' && acorn.owner === player ? count + 1 : count),
@@ -269,7 +285,21 @@ export function GameCanvas() {
       }
       clearEdges()
       const camera = cameraForPlayer(player, world, width, height)
-      renderScene(ctx, width, height, world, camera, player, gameOver ? 'lost' : won ? 'won' : 'playing')
+      renderScene(ctx, width, height, world, camera, player, player.death ? 'lost' : won ? 'won' : 'playing')
+      if (player.death && messageOf(player.death) > 0) {
+        if (!retryOffered) {
+          retryOffered = true
+          setOfferRetry(true)
+        }
+        // The button sits below the bird, wherever that is on the screen.
+        const button = retryRef.current
+        if (button) {
+          const x = Math.max(90, Math.min(width - 90, player.x + player.size / 2 - camera.x))
+          const y = Math.min(height - 70, player.y + player.size * 1.75 - camera.y)
+          button.style.left = `${x * scale}px`
+          button.style.top = `${y * scale}px`
+        }
+      }
       animationId = window.requestAnimationFrame(frame)
     }
 
@@ -323,7 +353,12 @@ export function GameCanvas() {
   return (
     <div className="game-root">
       <canvas ref={canvasRef} className="game-canvas" />
-      <ControlsBox />
+      {!starved && <ControlsBox />}
+      {offerRetry && (
+        <button ref={retryRef} type="button" className="retry-button" onClick={onRestart}>
+          Try again
+        </button>
+      )}
       {loading && (
         <div className="loading-screen" role="status">
           <div className="loading-spinner" />

@@ -665,3 +665,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Wider world, fixed squirrel regions
 - `WORLD_WIDTH_MULTIPLIER` 5 -> 6.25. The foreground scenery counts in `world.ts` went up by the same quarter to keep its density (background layers, litter and flowers scale by themselves); oaks, jays and the starting acorns are unchanged.
 - A squirrel's home stretch is `SQUIRREL_HOME_WIDTH_IN_SIZES` wide around its trunk. Acorns still fall over `acornReach`, usually wider than that.
+
+## Starving: collapse and spotlight
+- A starved player gets `Player.death` (`death.ts`): no more controls, a held acorn falls, the jay sinks with weak wingbeats (over or beside the creek it makes for the nearer bank), lands, slumps onto its belly along the slope (legs flat backwards, near wing fallen open, head sagging) and closes its eyes. NPCs and acorns go on; the season clock and acorn drops stop.
+- Then `drawDeathScreen` darkens all but a soft circle round the bird and shows the card above it; a page button "Try again" (`.retry-button`, placed each frame) restarts. The controls box is hidden from the moment of starving. All timings are the constants at the top of `death.ts`.

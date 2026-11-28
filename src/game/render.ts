@@ -13,6 +13,7 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
+import { darknessOf, eyesClosedOf, messageOf, slumpOf } from './death'
 import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type LeafLayer, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
@@ -201,7 +202,8 @@ function backdropColors(time: number): [string, string] {
  * @param world - Generated play space.
  * @param camera - Current view origin in world space.
  * @param player - Current player pose.
- * @param outcome - 'lost' or 'won' to cover the scene with the game-over or the victory screen.
+ * @param outcome - 'lost' once the player has starved (the dark closes in around the collapsing bird, then the
+ *   message comes up), 'won' to cover the scene with the victory screen.
  */
 /** Frame profiling (dev only): set `window.__prof = { acc: {}, frames: 0, sync: false }` to collect ms per section of `renderScene`; `sync` reads a pixel back after each section so the graphics card's work is counted too. */
 let profLast = 0
@@ -336,13 +338,19 @@ export function renderScene(
   }
   endNpcLabels()
   prof(ctx, 'animals')
-  drawBirdOnWater(ctx, player, world)
+  if (!player.death) {
+    drawBirdOnWater(ctx, player, world)
+  }
   prof(ctx, 'player')
   // Ground acorns go just in front of the birds, but behind the props standing in the dirt, so they
   // never look like they sit on a bush.
   drawAcorns(ctx, world.acorns, world.terrain.creek.waterY, camera.x, viewWidth)
   if (!profSkip('frontprops')) drawFrontProps(ctx, world, camera.x, viewWidth)
   prof(ctx, 'acorns+frontprops')
+  // A starved bird lies in front of everything standing around, so that nothing hides its collapse.
+  if (player.death) {
+    drawBirdOnWater(ctx, player, world)
+  }
   if (showMinimap && showSquirrelRegions) {
     drawSquirrelRegions(ctx, world, camera, viewWidth, viewHeight, player.size)
   }
@@ -363,7 +371,10 @@ export function renderScene(
   if (showMinimap) {
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
   }
-  drawHungerBar(ctx, viewWidth, viewHeight, player)
+  // (A starved jay has no use for it, and it would show through the circle of light around the bird.)
+  if (!player.death) {
+    drawHungerBar(ctx, viewWidth, viewHeight, player)
+  }
   if (outcome === 'playing') {
     drawHopTip(ctx, viewWidth, world, camera, player)
   }
@@ -372,36 +383,77 @@ export function renderScene(
   lastSceneMs = performance.now() - sceneStart
   prof(ctx, 'end')
 
-  if (outcome !== 'playing') {
-    if (gameOverSince === 0) {
-      gameOverSince = performance.now()
+  if (outcome === 'lost') {
+    drawDeathScreen(ctx, viewWidth, viewHeight, camera, player)
+  }
+  if (outcome === 'won') {
+    if (wonSince === 0) {
+      wonSince = performance.now()
     }
-    drawGameOver(ctx, viewWidth, viewHeight, performance.now() - gameOverSince, outcome === 'won')
+    drawVictory(ctx, viewWidth, viewHeight, performance.now() - wonSince)
   } else {
-    gameOverSince = 0
+    wonSince = 0
   }
 }
 
-/** When the game-over screen first appeared (ms timestamp), or 0 while the game is running. */
-let gameOverSince = 0
+/**
+ * The screen of a starved jay: everything goes black but a small circle around the bird, which fades into the
+ * dark; then the message comes up above it (the button to try again, below it, is a page element).
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param viewWidth - Viewport width.
+ * @param viewHeight - Viewport height.
+ * @param camera - View origin.
+ * @param player - The collapsing bird.
+ */
+function drawDeathScreen(
+  ctx: CanvasRenderingContext2D,
+  viewWidth: number,
+  viewHeight: number,
+  camera: Camera,
+  player: Player,
+): void {
+  const death = player.death
+  if (!death) {
+    return
+  }
+  const { size } = player
+  const x = player.x + size / 2 - camera.x
+  // (The middle of the bird as it lies.)
+  const y = player.y + size * 0.72 - camera.y
+  const dark = darknessOf(death)
+  if (dark > 0) {
+    const light = ctx.createRadialGradient(x, y, size * 0.7, x, y, size * 1.9)
+    light.addColorStop(0, 'rgba(0, 0, 0, 0)')
+    light.addColorStop(0.5, 'rgba(0, 0, 0, 0.6)')
+    light.addColorStop(1, 'rgba(0, 0, 0, 1)')
+    ctx.globalAlpha = dark
+    ctx.fillStyle = light
+    ctx.fillRect(0, 0, viewWidth, viewHeight)
+    ctx.globalAlpha = 1
+  }
+  const shown = messageOf(death)
+  if (shown > 0) {
+    const cardW = Math.min(660, viewWidth * 0.9)
+    const cardH = 180
+    const cardX = Math.max(cardW / 2 + 12, Math.min(viewWidth - cardW / 2 - 12, x))
+    const cardY = Math.max(cardH / 2 + 12, y - size * 1.5 - cardH / 2)
+    drawMessageCard(ctx, cardX, cardY, cardW, cardH, 'You got a rumbly in your tumbly', 'The jay went hungry.', shown)
+  }
+}
+
+/** When the victory screen first appeared (ms timestamp), or 0 while it is not up. */
+let wonSince = 0
 
 /**
- * Draws the game-over screen (or, when the game was won, the victory screen with the same look): a vignette,
- * a parchment card that eases in with the message and a divider flanked by acorns.
+ * Draws the victory screen: a vignette and a message card that eases in.
  *
  * @param ctx - 2D canvas context in screen space.
  * @param viewWidth - Viewport width.
  * @param viewHeight - Viewport height.
  * @param elapsed - Milliseconds since the screen appeared (drives the fade-in).
- * @param won - True for the victory screen (the player made it to the end of spring).
  */
-function drawGameOver(
-  ctx: CanvasRenderingContext2D,
-  viewWidth: number,
-  viewHeight: number,
-  elapsed: number,
-  won: boolean,
-): void {
+function drawVictory(ctx: CanvasRenderingContext2D, viewWidth: number, viewHeight: number, elapsed: number): void {
   const fade = Math.min(1, elapsed / 600)
   const ease = 1 - (1 - fade) * (1 - fade)
 
@@ -420,9 +472,43 @@ function drawGameOver(
 
   const cardW = Math.min(780, viewWidth * 0.84)
   const cardH = Math.min(280, viewHeight * 0.6)
+  drawMessageCard(
+    ctx,
+    viewWidth / 2,
+    viewHeight / 2,
+    cardW,
+    cardH,
+    'Congratulations you made it to spring!',
+    '"Yay!" says your blue jay',
+    ease,
+  )
+}
+
+/**
+ * Draws a message on a parchment card with a double wooden border and a divider flanked by acorns.
+ *
+ * @param ctx - 2D canvas context in screen space.
+ * @param x - Center of the card.
+ * @param y - Center of the card.
+ * @param cardW - Card width.
+ * @param cardH - Card height.
+ * @param title - The message.
+ * @param subtitle - A line under the divider.
+ * @param ease - How far it has come in, 0-1.
+ */
+function drawMessageCard(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  cardW: number,
+  cardH: number,
+  title: string,
+  subtitle: string,
+  ease: number,
+): void {
   ctx.save()
   ctx.globalAlpha = ease
-  ctx.translate(viewWidth / 2, viewHeight / 2)
+  ctx.translate(x, y)
   ctx.scale(0.92 + 0.08 * ease, 0.92 + 0.08 * ease)
 
   // Card: parchment with a double wooden border and a soft shadow
@@ -444,7 +530,6 @@ function drawGameOver(
   ctx.stroke()
 
   // Title, sized to fit the card
-  const title = won ? 'Congratulations you made it to spring!' : 'You got a rumbly in your tumbly'
   let fontSize = Math.min(56, cardW * 0.075)
   ctx.font = `bold ${fontSize}px Georgia, serif`
   const maxTitleWidth = cardW - 80
@@ -473,7 +558,7 @@ function drawGameOver(
 
   ctx.fillStyle = '#6b4a2b'
   ctx.font = 'italic 24px Georgia, serif'
-  ctx.fillText(won ? '"Yay!" says your blue jay' : 'The jay went hungry. Reload the page to try again.', 0, cardH * 0.26)
+  ctx.fillText(subtitle, 0, cardH * 0.26)
   ctx.restore()
 }
 
@@ -6783,6 +6868,11 @@ function birdSpriteFor(player: Player, dpr: number): BirdSprite {
  * @param player - Bird pose and animation clock.
  */
 function drawBird(ctx: CanvasRenderingContext2D, player: Player): void {
+  if (player.death) {
+    // (One bird, in a pose that keeps changing and reaches past the cached bitmaps: drawn directly.)
+    drawBirdVector(ctx, player)
+    return
+  }
   const size = player.size
   const sprite = birdSpriteFor(player, ctx.getTransform().a)
   ctx.save()
@@ -6812,9 +6902,18 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   const dip = actionDip(player)
   const hopping = hopProgress(player)
   const beakGap = !player.held ? dip * 6 : eating ? 2 + Math.abs(Math.sin(eatProgress * Math.PI * 5)) * 7 : 8.5
+  // A starved bird slumps onto its belly (`slump` 0-1) and its eyes close.
+  const slump = player.death ? slumpOf(player.death) : 0
+  const closed = player.death ? eyesClosedOf(player.death) : 0
 
   ctx.save()
   ctx.translate(player.x + player.size / 2, player.y + player.size / 2 + bodyBob(player) * u)
+  if (slump > 0) {
+    // Lying along the ground's slope, turning about the spot under its feet.
+    ctx.translate(0, 50 * u)
+    ctx.rotate((player.death?.slope ?? 0) * slump)
+    ctx.translate(0, -50 * u)
+  }
   ctx.scale(player.facing * u, u)
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
@@ -6824,6 +6923,23 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.lineWidth = 4
   if (player.floating) {
     // Floating on the creek: the legs are under water, out of sight.
+  } else if (slump > 0) {
+    // The legs give way, ending up flat on the ground, stretched out backwards.
+    for (const hipX of [-6, 6]) {
+      ctx.save()
+      // (The far leg ends a little higher, so that both can be seen.)
+      ctx.translate(hipX - 15 * slump, 24 + (hipX > 0 ? 20 : 24) * slump)
+      ctx.rotate((Math.PI / 2) * slump)
+      ctx.beginPath()
+      ctx.moveTo(0, 0)
+      ctx.lineTo(0, 24)
+      // The foot turns from pointing forward to trailing behind, its toes spreading.
+      ctx.lineTo(7 - 11 * slump, 24 + 8 * slump)
+      ctx.moveTo(0, 24)
+      ctx.lineTo(7 - 4 * slump, 24 + 9 * slump)
+      ctx.stroke()
+      ctx.restore()
+    }
   } else if (flying) {
     // Legs tucked back in flight
     for (const dx of [-6, 4]) {
@@ -6851,15 +6967,18 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
 
   // Posture: upright when standing, a slight incline in flight (wings hinge on this axis)
   ctx.save()
-  ctx.translate(0, 6)
-  const bodyTilt = (flying ? -0.04 : -0.3) + dip * 0.6
+  // (Slumping, the whole body comes down until the belly is on the ground, and levels out.)
+  ctx.translate(0, 6 + SLUMP_DROP * slump)
+  const upright = (flying ? -0.04 : -0.3) + dip * 0.6
+  const bodyTilt = upright + (0.02 - upright) * slump
   ctx.rotate(bodyTilt)
   ctx.translate(0, -6)
-  // The head keeps one world tilt in every pose; only the body tilt changes (pivot at the neck).
-  const headTurn = -0.04 - bodyTilt + dip * 0.6
+  // The head keeps one world tilt in every pose; only the body tilt changes (pivot at the neck). A slumping
+  // bird's head sags forward and down.
+  const headTurn = -0.04 - bodyTilt + dip * 0.6 + slump * 0.25
   const tiltHead = (): void => {
     // While pecking the neck stretches forward and down so the beak reaches the ground.
-    ctx.translate(16 + dip * 10, -8 + dip * 18)
+    ctx.translate(16 + dip * 10 + slump * 5, -8 + dip * 18 + slump * 14)
     ctx.rotate(headTurn)
     ctx.translate(-16, 8)
   }
@@ -6880,7 +6999,13 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
     drawFlightWing(ctx, t + 0.04, true)
   }
 
+  ctx.save()
+  // (A slumped bird's tail sags toward the ground.)
+  ctx.translate(-24, 4)
+  ctx.rotate(-0.2 * slump)
+  ctx.translate(24, -4)
   drawTail(ctx, flying)
+  ctx.restore()
   drawBody(ctx, !flying)
 
   // Head: blue crown over a pale face (clipped to a round head)
@@ -6989,6 +7114,9 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.beginPath()
   ctx.arc(32.4, -18.4, 1.4, 0, Math.PI * 2)
   ctx.fill()
+  if (closed > 0) {
+    drawEyelid(ctx, closed)
+  }
 
   // Beak: upper and lower mandibles with a gap when open
   ctx.fillStyle = '#262a30'
@@ -7006,9 +7134,20 @@ function drawBirdVector(ctx: CanvasRenderingContext2D, player: Player): void {
   ctx.fill()
   ctx.restore()
 
-  // Near wing: folded along the body on the ground, spread and flapping in the air
+  // Near wing: folded along the body on the ground, spread and flapping in the air; a slumping bird's falls
+  // open, down to the ground.
   if (flying) {
     drawFlightWing(ctx, t, false)
+  } else if (slump > 0) {
+    const open = Math.min(1, slump / 0.35)
+    const before = ctx.globalAlpha
+    if (open < 1) {
+      ctx.globalAlpha = before * (1 - open)
+      drawFoldedWing(ctx)
+    }
+    ctx.globalAlpha = before * open
+    drawFallenWing(ctx, slump)
+    ctx.globalAlpha = before
   } else {
     drawFoldedWing(ctx)
   }
@@ -7527,6 +7666,108 @@ function drawFoldedWing(ctx: CanvasRenderingContext2D): void {
   }
   ctx.stroke()
   ctx.restore()
+}
+
+/** How far a slumping bird's body comes down (sprite units): until the belly is on the ground. */
+const SLUMP_DROP = 26.5
+
+/**
+ * Draws the near wing of a slumped bird: let go, it falls open from along the back, down the side, its long
+ * feathers lying on the ground.
+ *
+ * @param ctx - 2D canvas context in sprite space (body frame, head toward +x).
+ * @param slump - How far the bird has slumped, 0-1.
+ */
+function drawFallenWing(ctx: CanvasRenderingContext2D, slump: number): void {
+  // The feather tips along the back edge, from the longest (on the ground) up to the rump.
+  const tips: [number, number][] = [
+    [-33, 27],
+    [-34, 19],
+    [-33, 12],
+    [-30, 5],
+    [-25, -1],
+    [-18, -6],
+    [-9, -10],
+  ]
+  const trace = (): void => {
+    ctx.beginPath()
+    ctx.moveTo(3, -12)
+    // The leading edge, down the front of the wing to the longest feather.
+    ctx.bezierCurveTo(11, -1, 4, 20, -18, 28)
+    ctx.quadraticCurveTo(-26, 31, -33, 27)
+    let prev = tips[0] as [number, number]
+    for (const tip of tips.slice(1)) {
+      ctx.quadraticCurveTo((prev[0] + tip[0]) / 2 + 3, (prev[1] + tip[1]) / 2 + 1, tip[0], tip[1])
+      prev = tip
+    }
+    ctx.quadraticCurveTo(-3, -14, 3, -12)
+    ctx.closePath()
+  }
+  ctx.save()
+  // (It swings down from the shoulder.)
+  ctx.translate(1, -10)
+  ctx.rotate(0.9 * (1 - slump))
+  ctx.translate(-1, 10)
+  trace()
+  ctx.fillStyle = '#3669ad'
+  ctx.fill()
+  ctx.save()
+  trace()
+  ctx.clip()
+  // Teal over the long feathers, barred, behind a white wing bar.
+  ctx.fillStyle = '#3fa3d6'
+  ctx.beginPath()
+  ctx.moveTo(-3, -16)
+  ctx.quadraticCurveTo(-4, 12, -26, 36)
+  ctx.lineTo(-44, 36)
+  ctx.lineTo(-44, -16)
+  ctx.closePath()
+  ctx.fill()
+  ctx.strokeStyle = 'rgba(15, 30, 70, 0.7)'
+  ctx.lineWidth = 1.4
+  for (const [x, y] of tips) {
+    ctx.beginPath()
+    ctx.moveTo(0, -9)
+    ctx.quadraticCurveTo(x * 0.35, y * 0.7, x, y)
+    ctx.stroke()
+  }
+  ctx.strokeStyle = '#f4f7fa'
+  ctx.lineWidth = 3.4
+  ctx.beginPath()
+  ctx.moveTo(0, -11)
+  ctx.quadraticCurveTo(0, 12, -22, 30)
+  ctx.stroke()
+  ctx.restore()
+  // A soft edge sets it off from the body.
+  trace()
+  ctx.strokeStyle = 'rgba(20, 40, 80, 0.55)'
+  ctx.lineWidth = 1.2
+  ctx.stroke()
+  ctx.restore()
+}
+
+/**
+ * Draws a pale lid coming down over the eye, ending as a closed eye's curved line.
+ *
+ * @param ctx - 2D canvas context in sprite space (head frame).
+ * @param closed - How far shut, 0-1.
+ */
+function drawEyelid(ctx: CanvasRenderingContext2D, closed: number): void {
+  const edge = -22 + 10 * closed
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(31, -17, 4.8, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.fillStyle = '#c3d1de'
+  ctx.fillRect(25, -23, 12, edge + 23)
+  ctx.restore()
+  const line = Math.min(-15.2, edge)
+  ctx.strokeStyle = '#18263a'
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  ctx.moveTo(26.6, line - 0.8)
+  ctx.quadraticCurveTo(31, line + 3, 35.4, line - 0.8)
+  ctx.stroke()
 }
 
 /**
