@@ -638,6 +638,17 @@ function stayOutOfWater(npc: Npc, world: World, dt: number, speedScale: number):
 }
 
 /**
+ * Gives a bird of a world made in a background worker its memory of the actions it has seen. That memory (empty
+ * in a new world) cannot be sent between threads, so the worker leaves it out (see runWorker.ts).
+ *
+ * @param npc - A jay or squirrel that has just arrived.
+ */
+export function renewActionMemory(npc: Npc): void {
+  npc.seenActions = new WeakSet()
+  npc.missedActions = new WeakSet()
+}
+
+/**
  * Releases all simulated keys.
  *
  * @param keys - Key state to clear.

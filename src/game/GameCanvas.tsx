@@ -13,6 +13,7 @@ import { ControlsBox } from './ControlsBox'
 import { messageOf, startDeath, updateDeath } from './death'
 import { updateHunger } from './hunger'
 import { createKeyState } from './input'
+import { prepareNextRun, type NextRun } from './nextRun'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
 import {
@@ -170,7 +171,9 @@ export function GameCanvas() {
     let retryOffered = false
     let loading = true
     let loadedFrames = 0
-    let warmUp: Generator<void> | null = warmUpScene(
+    // The run after this one, made ready from the moment the jay starves (see nextRun.ts).
+    let nextRun: NextRun | null = null
+    let warmUp: Generator<'wait' | void> | null = warmUpScene(
       world,
       player,
       (window.devicePixelRatio || 1) * scale,
@@ -179,14 +182,29 @@ export function GameCanvas() {
     let lastBuried = -1
 
     /**
-     * Rebuilds world scenery and resets the player to the starting pose.
+     * Rebuilds world scenery and resets the player to the starting pose, taking the run already made ready if
+     * there is one for this view.
      */
     function regenerate(): void {
-      world = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+      const dpr = (window.devicePixelRatio || 1) * scale
+      const next = nextRun
+      nextRun = null
+      // (A world's width only matters to its forest in views wider than three times their height.)
+      const spanFor = (width: number): number => Math.max(width, LOGICAL_VIEW_HEIGHT * 3)
+      if (next?.ready && spanFor(next.viewWidth) === spanFor(logicalWidth())) {
+        world = next.ready.world
+        player = next.ready.player
+        // What is left of its preparation is finished behind the loading screen (all of it again, as far as it
+        // is not made, if the window has been rescaled since).
+        warmUp = next.dpr === dpr ? next.steps : warmUpScene(world, player, dpr)
+      } else {
+        next?.cancel()
+        world = createWorld(logicalWidth(), LOGICAL_VIEW_HEIGHT)
+        player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
+        warmUp = warmUpScene(world, player, dpr)
+      }
       ;(window as unknown as { __world?: unknown }).__world = world
       worldRef.current = world
-      player = createPlayer(world, playerSizeForView(LOGICAL_VIEW_HEIGHT))
-      warmUp = warmUpScene(world, player, (window.devicePixelRatio || 1) * scale)
       won = false
       loading = true
       loadedFrames = 0
@@ -225,8 +243,15 @@ export function GameCanvas() {
 
       const width = logicalWidth()
       const height = LOGICAL_VIEW_HEIGHT
-      if (warmUp && warmUp.next().done) {
-        warmUp = null
+      // Behind the loading screen, steps are taken for a good part of the frame (until there is only waiting to do).
+      const stepsUntil = performance.now() + (loading ? 12 : 0)
+      while (warmUp) {
+        const step = warmUp.next()
+        if (step.done) {
+          warmUp = null
+        } else if (step.value === 'wait' || performance.now() >= stepsUntil) {
+          break
+        }
       }
       if (loading) {
         // Nothing moves until the forest is made: first the warm-up, then a few frames drawn so that the
@@ -251,6 +276,8 @@ export function GameCanvas() {
       if (player.death) {
         // The starved jay takes no controls: it collapses while the forest goes on around it.
         updateDeath(player, world, dt)
+        // One small step a frame toward the next run.
+        nextRun?.steps.next()
         world.time += dt
         updateNpcs(world, dt, player)
         updateAcorns(world, player.size, dt)
@@ -277,6 +304,8 @@ export function GameCanvas() {
         if (player.hunger <= 0) {
           startDeath(player, world)
           setStarved(true)
+          nextRun?.cancel()
+          nextRun = prepareNextRun(logicalWidth(), LOGICAL_VIEW_HEIGHT, (window.devicePixelRatio || 1) * scale)
         }
         // Surviving to the end of spring wins the game (with the debug tools open it just goes on).
         won = reachedEnd && !player.death && !debugOpenRef.current
@@ -315,6 +344,7 @@ export function GameCanvas() {
 
     return () => {
       dispose()
+      nextRun?.cancel()
       window.removeEventListener('resize', resize)
       window.cancelAnimationFrame(animationId)
     }

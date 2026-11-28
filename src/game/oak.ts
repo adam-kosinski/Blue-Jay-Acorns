@@ -1279,6 +1279,19 @@ function storePart(key: string, sprite: TreeSprite): void {
 /** Parts that came from the background worker and are not in use yet (each is given to the graphics card in a frame of its own). */
 const partArrivals: { key: string; sprite: TreeSprite }[] = []
 
+/**
+ * Numbers trees that were made elsewhere (in a background worker, with its own count) as if made here, since their
+ * bitmaps are kept by number.
+ *
+ * @param shapes - The trees.
+ */
+export function adoptShapes(shapes: TreeShape[]): void {
+  for (const shape of shapes) {
+    nextShapeId += 1
+    shape.id = nextShapeId
+  }
+}
+
 /** In the background worker parts are painted by the processor, so the graphics card stays free for the game's frames. */
 const WORKER_CONTEXT = typeof document === 'undefined' ? { willReadFrequently: true } : undefined
 

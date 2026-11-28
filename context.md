@@ -675,3 +675,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 - The debug panel has a "Kill" button that empties the player's hunger.
 
 - Drifting down is now over twice as fast (at most about 1.8 s), and the slump and eye closing 50% faster, with the dark and message following that much sooner.
+
+## Next run made ready during the collapse
+- At starving, `prepareNextRun` (`nextRun.ts`) starts `runWorker.ts`, which makes a new world and paints its layer grounds and litter tiles; the page takes them as they come and runs `warmUpScene` in background mode (one step a frame; oaks, bushes and the summer images in the vegetation worker, behind the current game's). Try again takes that run and finishes whatever is left behind the loading screen. Without workers, or if the window's shape changed too much, the run is made as before.
+- The death message block is centered halfway between the top of the screen and the top of the circle of light (`deathMessageLayout`, `LIGHT_OUTER`).

@@ -14,7 +14,7 @@ import {
   TYPICAL_ASPECT_RATIO,
 } from './constants'
 import { darknessOf, eyesClosedOf, hungerBarOf, messageOf, slumpOf } from './death'
-import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type LeafLayer, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
+import { queueOakPart, peekOakPart, oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type LeafLayer, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
 import { burialQuality } from './burial'
@@ -426,7 +426,7 @@ function drawDeathScreen(
   const y = player.y + size * 0.72 - camera.y
   const dark = darknessOf(death)
   if (dark > 0) {
-    const light = ctx.createRadialGradient(x, y, size * 0.7, x, y, size * 1.9)
+    const light = ctx.createRadialGradient(x, y, size * LIGHT_INNER, x, y, size * LIGHT_OUTER)
     light.addColorStop(0, 'rgba(0, 0, 0, 0)')
     light.addColorStop(0.5, 'rgba(0, 0, 0, 0.6)')
     light.addColorStop(1, 'rgba(0, 0, 0, 1)')
@@ -459,9 +459,18 @@ function drawDeathScreen(
   }
 }
 
+/** The circle of light around a starved jay, in bird sizes: clear to the first, black from the second. */
+const LIGHT_INNER = 0.7
+const LIGHT_OUTER = 1.9
+
+/** The message's block: how far its title reaches above the button's top, and the button's height. */
+const MESSAGE_ABOVE_BUTTON = 99
+const BUTTON_HEIGHT = 52
+
 /**
- * Where the starved jay's message goes, above the bird (screen space): its middle, the baselines of its two
- * lines and the top of the button to try again, which sits right under them.
+ * Where the starved jay's message goes (screen space): its middle, the baselines of its two lines and the top of
+ * the button to try again, which sits right under them. The whole of it is centered halfway between the top of the
+ * screen and the top of the circle of light around the bird.
  *
  * @param viewWidth - Viewport width.
  * @param camera - View origin.
@@ -474,9 +483,8 @@ export function deathMessageLayout(
 ): { x: number; titleY: number; subtitleY: number; buttonTop: number } {
   const half = Math.min(viewWidth / 2, 390)
   const x = Math.max(half, Math.min(viewWidth - half, player.x + player.size / 2 - camera.x))
-  // The button (52 tall) ends just where the dark is complete above the bird; the lines stack on top of it.
-  const bird = player.y + player.size * 0.72 - camera.y
-  const buttonTop = Math.max(150, bird - player.size * 1.85 - 52)
+  const circleTop = player.y + player.size * 0.72 - camera.y - player.size * LIGHT_OUTER
+  const buttonTop = Math.max(MESSAGE_ABOVE_BUTTON + 12, circleTop / 2 + (MESSAGE_ABOVE_BUTTON - BUTTON_HEIGHT) / 2)
   return { x, titleY: buttonTop - 64, subtitleY: buttonTop - 22, buttonTop }
 }
 
@@ -710,7 +718,7 @@ function drawForest(
     const below = base - strip.originY + stripHeight
     // Blits a strip bitmap in slabs, each cut at its own cull line (the +1 px overlap hides seams).
     const blit = (
-      source: HTMLCanvasElement,
+      source: HTMLCanvasElement | OffscreenCanvas | ImageBitmap,
       fillBelow: boolean,
       alpha = 1,
       groundColor = layer.groundColor,
@@ -1242,7 +1250,8 @@ const tintCanvases = new Map<number, HTMLCanvasElement>()
 
 /** Pre-rendered forest layer: horizon, trees, bushes and logs drawn once into a wide bitmap. */
 type ForestStrip = {
-  canvas: HTMLCanvasElement
+  /** (A bitmap when it was painted in a background worker, see `buildStripSync`.) */
+  canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap
   /** Bitmap pixels per CSS pixel. */
   resolution: number
   /** Y of the layer's base line inside the bitmap. */
@@ -2166,10 +2175,61 @@ function drawVegetation(
  * @param world - Play space (terrain source).
  */
 function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
-  const cached = forestStrips.get(layer)
-  if (cached) {
-    return cached
+  return forestStrips.get(layer) ?? keepStrip(layer, paintStrip(layer, world))
+}
+
+/**
+ * Puts a painted layer in use.
+ *
+ * @param layer - Forest layer.
+ * @param strip - Its strip.
+ */
+function keepStrip(layer: ForestLayer, strip: ForestStrip): ForestStrip {
+  forestStrips.set(layer, strip)
+  if (workerUsable()) {
+    const id = registerLayer(layer, strip.veg)
+    if (id >= 0) {
+      workerLayerIds.set(layer, id)
+    }
   }
+  return strip
+}
+
+/** A layer's strip as a background worker hands it over: its ground as a bitmap. */
+export type ForestStripImage = Omit<ForestStrip, 'canvas'> & { canvas: ImageBitmap }
+
+/**
+ * For a background worker: paints a layer's ground and hands it over.
+ *
+ * @param layer - Forest layer.
+ * @param world - Its world.
+ */
+export function buildStripSync(layer: ForestLayer, world: World): ForestStripImage {
+  const strip = paintStrip(layer, world)
+  return { ...strip, canvas: (strip.canvas as OffscreenCanvas).transferToImageBitmap() }
+}
+
+/**
+ * Takes a layer's strip painted in a background worker (unless the layer has one already).
+ *
+ * @param layer - Forest layer.
+ * @param strip - Its strip.
+ */
+export function adoptStrip(layer: ForestLayer, strip: ForestStripImage): void {
+  if (forestStrips.has(layer)) {
+    strip.canvas.close()
+    return
+  }
+  keepStrip(layer, strip)
+}
+
+/**
+ * Paints a layer's ground (see `ForestStrip`) and records where its scenery stands.
+ *
+ * @param layer - Forest layer.
+ * @param world - Its world.
+ */
+function paintStrip(layer: ForestLayer, world: World): ForestStrip {
   // The layer's elevation is the foreground's coarse elevation and hill scaled horizontally by the
   // layer's parallax factor about the screen center (so features line up with the foreground's the
   // way perspective demands), plus the layer's own fine noise on top.
@@ -2227,13 +2287,13 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   const originY = Math.ceil(treeHeight + (world.groundY - minGround) * Math.max(relief, creekScale) + 20)
   const resolution = layer.parallax < 0.4 ? 0.5 : 0.75
   const veg: VegPlan = { trees: [], logs: [], props: [], backBottom: 0, frontTop: 0, frontBottom: 0 }
-  const canvas = document.createElement('canvas')
+  const canvas = newCanvas()
   canvas.width = Math.ceil(layer.span * resolution)
   // Extra depth below the horizon so the layer's whole ground can carry leaf litter.
   const litterDepth = Math.round(world.viewHeight * 0.4)
   const bottomPad = 6 + Math.ceil(bedBottom) + litterDepth
   canvas.height = Math.ceil((originY + bottomPad) * resolution)
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   const flowers: FlowerPatch[] = []
   if (ctx) {
     ctx.scale(resolution, resolution)
@@ -2433,15 +2493,7 @@ function forestStripFor(layer: ForestLayer, world: World): ForestStrip {
   }
   veg.frontTop = Math.max(0, Math.floor(highest))
   veg.frontBottom = originY + bottomPad
-  const strip = { canvas, resolution, originY, waterLine, columnGround, veg, rise: Math.max(0, -highestGround) + 20, flowers }
-  forestStrips.set(layer, strip)
-  if (workerUsable()) {
-    const id = registerLayer(layer, veg)
-    if (id >= 0) {
-      workerLayerIds.set(layer, id)
-    }
-  }
-  return strip
+  return { canvas, resolution, originY, waterLine, columnGround, veg, rise: Math.max(0, -highestGround) + 20, flowers }
 }
 
 /**
@@ -2559,7 +2611,7 @@ const LEAF_TILE_WIDTH = 1024
 /** Most litter tiles kept per world (the rest are rebuilt when they come into view again). */
 const LEAF_TILE_LIMIT = 9
 
-type LeafTile = { canvas: HTMLCanvasElement; res: number }
+type LeafTile = { canvas: HTMLCanvasElement | OffscreenCanvas | ImageBitmap; res: number }
 
 /** Cached leaf-litter tiles per world, keyed by tile index; a Map keeps least-recently-used order. */
 const leafTiles = new WeakMap<World, { top: number; tiles: Map<number, LeafTile> }>()
@@ -2581,6 +2633,38 @@ function leafTileEntry(world: World): { top: number; tiles: Map<number, LeafTile
     leafTiles.set(world, entry)
   }
   return entry
+}
+
+/**
+ * How many tiles a world's leaf litter takes.
+ *
+ * @param world - Play space.
+ */
+export function leafTileCount(world: World): number {
+  return Math.ceil(world.width / LEAF_TILE_WIDTH)
+}
+
+/**
+ * For a background worker: paints one of a world's litter tiles (at 1 pixel per world pixel) and hands it over.
+ *
+ * @param world - Play space.
+ * @param index - Which tile.
+ */
+export function buildLeafTileSync(world: World, index: number): ImageBitmap {
+  const { top } = leafTileEntry(world)
+  const tile = buildLeafTile(world.leaves, index, top, world.height - top + 12, 1)
+  return (tile.canvas as OffscreenCanvas).transferToImageBitmap()
+}
+
+/**
+ * Takes a litter tile painted in a background worker.
+ *
+ * @param world - Play space.
+ * @param index - Which tile.
+ * @param bitmap - The tile.
+ */
+export function adoptLeafTile(world: World, index: number, bitmap: ImageBitmap): void {
+  leafTileEntry(world).tiles.set(index, { canvas: bitmap, res: 1 })
 }
 
 /**
@@ -2660,10 +2744,10 @@ function drawLeafLitter(
  * @param res - Bitmap pixels per world pixel.
  */
 function buildLeafTile(leaves: LeafLitter[], index: number, top: number, height: number, res: number): LeafTile {
-  const canvas = document.createElement('canvas')
+  const canvas = newCanvas()
   canvas.width = Math.ceil(LEAF_TILE_WIDTH * res)
   canvas.height = Math.ceil(height * res)
-  const ctx = canvas.getContext('2d')
+  const ctx = canvas.getContext('2d', WORKER_CONTEXT) as CanvasRenderingContext2D | null
   if (ctx) {
     ctx.scale(res, res)
     ctx.translate(-index * LEAF_TILE_WIDTH, -top)
@@ -8361,18 +8445,31 @@ function drawHungerBar(
 
 /**
  * Pre-builds the expensive cached bitmaps (forest layers, the oaks, and the common jay poses) in
- * small steps so none of it has to happen mid-game as the camera moves. Run one `next()` per frame.
+ * small steps so none of it has to happen mid-game as the camera moves. Run one `next()` per frame; it
+ * yields 'wait' while there is nothing to do but wait for a background worker. What is already made is
+ * left as it is.
  *
  * @param world - Generated play space.
  * @param player - The main bird (template for the jay poses).
  * @param dpr - Device pixel ratio the game renders at.
+ * @param background - Set when this runs behind a game that is still on screen: the work then goes to the
+ *   background workers as far as it can, behind that game's own, and waits for what a worker is still making
+ *   of this world (a layer's ground, the litter).
  */
-export function* warmUpScene(world: World, player: Player, dpr: number): Generator<void> {
+export function* warmUpScene(
+  world: World,
+  player: Player,
+  dpr: number,
+  background?: { stripComing: (layer: ForestLayer) => boolean; tilesComing: () => boolean },
+): Generator<'wait' | void> {
   // Only summer is made before play: each layer's ground and its summer images for the chunks around the
   // player. The other seasons' images, and the chunks farther away, are made a little at a time while the
   // game is played (see `planVegetation`).
   const startCameraX = Math.max(0, player.x - (world.viewHeight * TYPICAL_ASPECT_RATIO) / 2)
   for (const layer of world.forest) {
+    while (background?.stripComing(layer)) {
+      yield 'wait'
+    }
     const strip = forestStripFor(layer, world)
     yield
     const { first, last } = visibleChunks(layer, startCameraX, world.viewHeight * TYPICAL_ASPECT_RATIO)
@@ -8382,10 +8479,14 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
       let waiting = 0
       for (let chunk = first; chunk <= last; chunk += 1) {
         for (const part of ['back', 'front'] as const) {
+          if (vegMap(layer).has(vegKey(0, part, chunk))) {
+            continue
+          }
           waiting += 1
           requestImage({
             key: `warm|${workerId}|${part}|${chunk}`,
-            priority: 0,
+            // (Behind a game still on screen, that game's own images of the moment come first.)
+            priority: background ? 3 : 0,
             id: workerId,
             k: 0,
             part,
@@ -8399,7 +8500,7 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
         }
       }
       while (waiting > 0 && workerUsable()) {
-        yield
+        yield 'wait'
       }
       if (waiting <= 0) {
         continue
@@ -8407,6 +8508,9 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
     }
     for (let chunk = first; chunk <= last; chunk += 1) {
       for (const part of ['back', 'front'] as const) {
+        if (vegMap(layer).has(vegKey(0, part, chunk))) {
+          continue
+        }
         const steps = buildVegImage(layer, strip.veg, 0, part, chunk)
         let step = steps.next()
         let sliceStart = performance.now()
@@ -8422,6 +8526,38 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
       }
     }
     yield
+  }
+  if (background && workerUsable()) {
+    // The oaks and bushes are made in the worker, and taken up a little each frame.
+    const wanted = (): boolean => {
+      let missing = false
+      for (const tree of world.trees) {
+        for (const part of ['trunk', 'c0'] as const) {
+          if (!peekOakPart(tree.shape, TRUNK_COLOR, dpr, part)) {
+            queueOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, part, 3)
+            missing = true
+          }
+        }
+      }
+      for (const bush of world.bushes) {
+        for (const part of ['wood', 'c0'] as const) {
+          if (!bushPartSprite(bush, dpr, part, false)) {
+            queueBushPart(bush, dpr, part, 3)
+            missing = true
+          }
+        }
+      }
+      return missing
+    }
+    for (;;) {
+      // (What has arrived is taken up first, or it would be asked for again.)
+      settleOakArrivals(2)
+      settleProps(2)
+      if (!wanted() || !workerUsable()) {
+        break
+      }
+      yield 'wait'
+    }
   }
   for (const tree of world.trees) {
     touchBitmap(getOakPart(tree.shape, OAK_TONES, TRUNK_COLOR, dpr, 'trunk').canvas)
@@ -8443,26 +8579,33 @@ export function* warmUpScene(world: World, player: Player, dpr: number): Generat
   // The foreground's rocks and ferns (their summer bitmaps are otherwise made when first drawn).
   const rocks = [...world.rocks, ...world.frontRocks.map((front) => front.rock)]
   const ferns = [...world.ferns, ...world.frontFerns.map((front) => front.fern)]
+  // (Fewer at a time behind a game on screen.)
+  const batch = background ? 2 : 6
   for (const [index, rock] of rocks.entries()) {
     warmRockSprite(rock, dpr)
-    if (index % 6 === 5) {
+    if (index % batch === batch - 1) {
       yield
     }
   }
   for (const [index, fern] of ferns.entries()) {
     warmFernSprite(fern, dpr)
-    if (index % 6 === 5) {
+    if (index % batch === batch - 1) {
       yield
     }
   }
   yield
   // The other looks of the foreground are made in the background as they come near (see `drawBush`, `drawCrowns`).
   // Leaf-litter tiles for the whole ground, one per step (at the usual resolution of 1 px per world px).
+  while (background?.tilesComing()) {
+    yield 'wait'
+  }
   const { top, tiles } = leafTileEntry(world)
   const tileHeight = world.height - top + 12
-  for (let index = 0; index * LEAF_TILE_WIDTH < world.width; index += 1) {
-    tiles.set(index, buildLeafTile(world.leaves, index, top, tileHeight, 1))
-    yield
+  for (let index = 0; index < leafTileCount(world); index += 1) {
+    if (!tiles.has(index)) {
+      tiles.set(index, buildLeafTile(world.leaves, index, top, tileHeight, 1))
+      yield
+    }
   }
 
   const acorn = {
