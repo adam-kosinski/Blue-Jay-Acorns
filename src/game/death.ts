@@ -66,6 +66,14 @@ export function eyesClosedOf(death: Death): number {
   return drowsy + (1 - drowsy) * through(downFor(death), EYES)
 }
 
+/** Seconds the hunger bar takes to fade away once the bird has starved. */
+const HUNGER_BAR_FADE_SECONDS = 2
+
+/** How solid the hunger bar still is, 1 down to 0 over the start of the collapse. */
+export function hungerBarOf(death: Death): number {
+  return 1 - through(death.time, { from: 0, seconds: HUNGER_BAR_FADE_SECONDS })
+}
+
 /** How far the world around it has gone dark, 0-1. */
 export function darknessOf(death: Death): number {
   return through(downFor(death), DARK)

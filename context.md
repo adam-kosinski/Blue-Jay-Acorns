@@ -669,3 +669,7 @@ The seasonal base rate now peaks at 2.4 in the middle of mid fall (was 1.25) and
 ## Starving: collapse and spotlight
 - A starved player gets `Player.death` (`death.ts`): no more controls, a held acorn falls, the jay sinks with weak wingbeats (over or beside the creek it makes for the nearer bank), lands, slumps onto its belly along the slope (legs flat backwards, near wing fallen open, head sagging) and closes its eyes. NPCs and acorns go on; the season clock and acorn drops stop.
 - Then `drawDeathScreen` darkens all but a soft circle round the bird and shows the card above it; a page button "Try again" (`.retry-button`, placed each frame) restarts. The controls box is hidden from the moment of starving. All timings are the constants at the top of `death.ts`.
+
+## Death screen text, Kill button
+- The death message is white text on the dark (no parchment card; the victory screen keeps its card), with "Try again" right under it; `deathMessageLayout` places both. The hunger bar fades out over the first 2 s of the collapse (`hungerBarOf`).
+- The debug panel has a "Kill" button that empties the player's hunger.

@@ -13,7 +13,7 @@ import {
   TRUNK_COLOR,
   TYPICAL_ASPECT_RATIO,
 } from './constants'
-import { darknessOf, eyesClosedOf, messageOf, slumpOf } from './death'
+import { darknessOf, eyesClosedOf, hungerBarOf, messageOf, slumpOf } from './death'
 import { oakArrivalsPending, oakCacheReport, drawLeafyDisk, drawLeafLayer, type LeafLayer, drawOakCrown, drawOakSteps, getOakPart, paintBark, seededRandom, drawOak, drawCrossfade, endCrossfade, settleOakArrivals } from './oak'
 import { enqueueJob, pendingJobs, runWork } from './work'
 import { holdAheadWork, pendingRequests, registerLayer, requestImage, requestWork, workerUsable } from './vegClient'
@@ -371,9 +371,12 @@ export function renderScene(
   if (showMinimap) {
     drawMinimap(ctx, viewWidth, world, camera, viewHeight, player)
   }
-  // (A starved jay has no use for it, and it would show through the circle of light around the bird.)
-  if (!player.death) {
+  // (Once the jay has starved it fades away.)
+  const barAlpha = player.death ? hungerBarOf(player.death) : 1
+  if (barAlpha > 0) {
+    ctx.globalAlpha = barAlpha
     drawHungerBar(ctx, viewWidth, viewHeight, player)
+    ctx.globalAlpha = 1
   }
   if (outcome === 'playing') {
     drawHopTip(ctx, viewWidth, world, camera, player)
@@ -434,12 +437,47 @@ function drawDeathScreen(
   }
   const shown = messageOf(death)
   if (shown > 0) {
-    const cardW = Math.min(660, viewWidth * 0.9)
-    const cardH = 180
-    const cardX = Math.max(cardW / 2 + 12, Math.min(viewWidth - cardW / 2 - 12, x))
-    const cardY = Math.max(cardH / 2 + 12, y - size * 1.5 - cardH / 2)
-    drawMessageCard(ctx, cardX, cardY, cardW, cardH, 'You got a rumbly in your tumbly', 'The jay went hungry.', shown)
+    // White lettering straight on the dark.
+    const at = deathMessageLayout(viewWidth, camera, player)
+    const title = 'You got a rumbly in your tumbly'
+    ctx.save()
+    ctx.globalAlpha = shown
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#fff'
+    let fontSize = 46
+    ctx.font = `bold ${fontSize}px Georgia, serif`
+    const widest = viewWidth - 32
+    const measured = ctx.measureText(title).width
+    if (measured > widest) {
+      fontSize *= widest / measured
+      ctx.font = `bold ${fontSize}px Georgia, serif`
+    }
+    ctx.fillText(title, at.x, at.titleY)
+    ctx.font = 'italic 24px Georgia, serif'
+    ctx.fillText('The jay went hungry.', at.x, at.subtitleY)
+    ctx.restore()
   }
+}
+
+/**
+ * Where the starved jay's message goes, above the bird (screen space): its middle, the baselines of its two
+ * lines and the top of the button to try again, which sits right under them.
+ *
+ * @param viewWidth - Viewport width.
+ * @param camera - View origin.
+ * @param player - The collapsing bird.
+ */
+export function deathMessageLayout(
+  viewWidth: number,
+  camera: Camera,
+  player: Player,
+): { x: number; titleY: number; subtitleY: number; buttonTop: number } {
+  const half = Math.min(viewWidth / 2, 390)
+  const x = Math.max(half, Math.min(viewWidth - half, player.x + player.size / 2 - camera.x))
+  // The button (52 tall) ends just where the dark is complete above the bird; the lines stack on top of it.
+  const bird = player.y + player.size * 0.72 - camera.y
+  const buttonTop = Math.max(150, bird - player.size * 1.85 - 52)
+  return { x, titleY: buttonTop - 64, subtitleY: buttonTop - 22, buttonTop }
 }
 
 /** When the victory screen first appeared (ms timestamp), or 0 while it is not up. */

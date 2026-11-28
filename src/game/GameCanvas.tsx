@@ -16,6 +16,7 @@ import { createKeyState } from './input'
 import { updateNpcs } from './npc'
 import { createPlayer, updatePlayer } from './player'
 import {
+  deathMessageLayout,
   forestReady,
   renderScene,
   setBurialHeatmap,
@@ -76,6 +77,7 @@ function loadDropMode(): AcornDropMode {
 export function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const restartRef = useRef<() => void>(() => {})
+  const killRef = useRef<() => void>(() => {})
   const worldRef = useRef<World | null>(null)
   const [dropMode, setDropMode] = useState<AcornDropMode>(loadDropMode)
   const [pauseHunger, setPauseHunger] = useState<boolean>(loadPauseHunger)
@@ -195,6 +197,11 @@ export function GameCanvas() {
     }
 
     restartRef.current = regenerate
+    // Debug "Kill": the jay's hunger runs out at once (a meal in progress is given up).
+    killRef.current = () => {
+      player.eatTimer = 0
+      player.hunger = 0
+    }
 
     /**
      * Matches the backing store to the window and rescales the logical view to fit.
@@ -291,13 +298,12 @@ export function GameCanvas() {
           retryOffered = true
           setOfferRetry(true)
         }
-        // The button sits below the bird, wherever that is on the screen.
+        // The button sits right under the message, which stands above the bird.
         const button = retryRef.current
         if (button) {
-          const x = Math.max(90, Math.min(width - 90, player.x + player.size / 2 - camera.x))
-          const y = Math.min(height - 70, player.y + player.size * 1.75 - camera.y)
-          button.style.left = `${x * scale}px`
-          button.style.top = `${y * scale}px`
+          const at = deathMessageLayout(width, camera, player)
+          button.style.left = `${at.x * scale}px`
+          button.style.top = `${at.buttonTop * scale}px`
         }
       }
       animationId = window.requestAnimationFrame(frame)
@@ -425,6 +431,16 @@ export function GameCanvas() {
                 />
                 Turn invisible
               </label>
+              <button
+                type="button"
+                className="debug-button"
+                onClick={(event) => {
+                  killRef.current()
+                  event.currentTarget.blur()
+                }}
+              >
+                Kill
+              </button>
             </fieldset>
           )}
         </div>

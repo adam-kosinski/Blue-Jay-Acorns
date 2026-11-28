@@ -85,6 +85,11 @@ body,
   padding: 4px 12px;
 }
 
+/* ("Kill", under the panel's toggles.) */
+.debug-panel .debug-button {
+  margin-top: 8px;
+}
+
 .restart-button:hover,
 .debug-button:hover {
   background: #fffdf6;
@@ -349,19 +354,24 @@ body,
   color: #f2c230;
 }
 
-/* Offered under the jay once it has starved (the game places it there). Sized with the game's picture. */
+/*
+ * Offered under the message once the jay has starved (the game places it there). Sized with the game's picture,
+ * which is 800 logical pixels tall.
+ */
 .retry-button {
+  --px: calc(100vh / 800);
   position: absolute;
   left: 50%;
-  top: 80%;
+  top: 40%;
   z-index: 3;
   transform: translateX(-50%);
-  padding: calc(10px + 0.4vh) calc(24px + 1vh);
-  border: 3px solid #6b3e1d;
-  border-radius: 12px;
-  background: #f4ead2;
-  color: #4a2d14;
-  font: bold calc(12px + 1.4vh) Georgia, serif;
+  height: calc(52 * var(--px));
+  padding: 0 calc(32 * var(--px));
+  border: calc(2 * var(--px)) solid #fff;
+  border-radius: calc(10 * var(--px));
+  background: #000;
+  color: #fff;
+  font: bold calc(22 * var(--px)) Georgia, serif;
   white-space: nowrap;
   cursor: pointer;
   animation: retry-in 0.6s ease-out;
@@ -369,7 +379,8 @@ body,
 
 .retry-button:hover,
 .retry-button:focus-visible {
-  background: #fffdf6;
+  background: #fff;
+  color: #000;
 }
 
 @keyframes retry-in {
